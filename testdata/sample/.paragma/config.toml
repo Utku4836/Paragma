@@ -1,0 +1,6 @@
+# Paragma vault settings
+version = 1
+budget = 800        # default output budget in tokens for list-like commands
+read_limit = 1500   # pg read shows an outline instead when the target is bigger (override: --full)
+stale_days = 90     # semantic notes not verified for this long are flagged [stale?]
+hints = true        # print one-line "next:" hints
