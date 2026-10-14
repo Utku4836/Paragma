@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,14 +58,19 @@ func (a *app) fileMeta(s *store, f *index.File) string {
 func (a *app) outlineCmd() *cobra.Command {
 	var depth int
 	c := &cobra.Command{
-		Use:   "outline <addr>",
-		Short: "Heading skeleton with a token estimate per heading",
-		Long: `Heading skeleton of a note (or of one heading's subtree) with the token
-cost of reading each heading. Use it before pg read on anything large.`,
-		Example: "pg outline architecture\npg outline architecture#Katmanlar --depth 3",
-		Args:    cobra.ExactArgs(1),
+		Use:   "outline [addr]",
+		Short: "Map of the vault, or the heading skeleton of one note",
+		Long: `Without an address: a map of every note by layer with its token cost.
+With an address: the heading skeleton of a note (or of one heading's
+subtree) with the cost of reading each heading. Use it before pg read on
+anything large.`,
+		Example: "pg outline\npg outline architecture\npg outline architecture#Katmanlar --depth 3",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(args[0])
+			if len(args) == 0 {
+				return a.vaultMap()
+			}
+			s, t, err := a.resolve(strings.Join(args, " ")) // an unquoted "note#Two words" arrives split
 			if err != nil {
 				return err
 			}
@@ -156,20 +162,48 @@ func (a *app) outline(s *store, t *addr.Target, depth int) error {
 func (a *app) readCmd() *cobra.Command {
 	var full, withMeta, numbers bool
 	c := &cobra.Command{
-		Use:   "read <addr>",
-		Short: "Print only the addressed note, heading, block or lines",
+		Use:   "read <addr>...",
+		Short: "Print only the addressed notes, headings, blocks or lines",
 		Long: `Print the addressed part of a note. A heading includes its sub-headings.
-If the target is bigger than read_limit (config, default 1500 tokens) pg shows
-its outline instead, or cuts it and prints the line range to continue with;
---full disables that. The header line carries the file hash for later edits.`,
-		Example: "pg read architecture#Middleware\npg read auth-refactor^t3f2\npg read stack:10-24\npg read rules --full",
-		Args:    cobra.ExactArgs(1),
+Several addresses can be read in one call; each gets its own header line
+(address, file:lines to cite, token cost, hash). If a target is bigger than
+read_limit (config, default 1500 tokens) pg shows its outline instead, or
+cuts it and prints the line range to continue with; --full disables that.`,
+		Example: "pg read architecture#Middleware\npg read rules^r003 jwt-exp-timezone#Çözüm\npg read stack:10-24\npg read rules --full",
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(args[0])
-			if err != nil {
-				return err
+			args = a.regroupArgs(args)
+			if len(args) == 1 {
+				s, t, err := a.resolve(args[0])
+				if err != nil {
+					return err
+				}
+				return a.read(s, t, full, withMeta, numbers)
 			}
-			return a.read(s, t, full, withMeta, numbers)
+			// several targets: keep going past a bad address, report it in
+			// place so the output stays in the order asked for
+			var failed error
+			for i, arg := range args {
+				if i > 0 && !a.jsonOut {
+					a.println("")
+				}
+				s, t, err := a.resolve(arg)
+				if err == nil {
+					err = a.read(s, t, full, withMeta, numbers)
+				}
+				if err != nil {
+					a.println("error: " + err.Error())
+					failed = err
+				}
+			}
+			if failed != nil {
+				var e *Error
+				if errors.As(failed, &e) {
+					return &Error{Code: e.Code}
+				}
+				return &Error{Code: ExitInternal}
+			}
+			return nil
 		},
 	}
 	c.Flags().BoolVar(&full, "full", false, "never replace a large target with its outline or cut it")
@@ -196,11 +230,16 @@ func (a *app) read(s *store, t *addr.Target, full, withMeta, numbers bool) error
 		return a.emitJSON(map[string]any{"addr": address, "from": from, "to": to, "tokens": tokens, "hash": t.File.Hash, "text": text})
 	}
 	limit := a.budgetOr(s.v.Cfg.ReadLimit)
-	header := join(address, fmt.Sprintf("L%d-%d", from, to), textutil.FmtTokens(tokens), "hash:"+t.File.Hash)
+	header := join(address, fmt.Sprintf("%s:%d-%d", notePath(s, t.File), from, to), textutil.FmtTokens(tokens), "hash:"+t.File.Hash)
 
 	if full || tokens <= limit {
 		a.println(header)
 		a.printLines(body, from, numbers)
+		if s.v.Cfg.Hints && (t.Kind == addr.KindFile || t.Kind == addr.KindSection) {
+			if bl, err := a.backlinks(s, t); err == nil && len(bl) > 0 {
+				a.printf("next: pg backlinks %s (%d links in)\n", address, len(bl))
+			}
+		}
 		return nil
 	}
 
@@ -271,9 +310,9 @@ func (a *app) peekCmd() *cobra.Command {
 		Use:     "peek <addr>",
 		Short:   "First lines of a target plus how much is left",
 		Example: "pg peek rules --lines 5\npg peek architecture#Middleware",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(args[0])
+			s, t, err := a.resolve(strings.Join(args, " ")) // an unquoted "note#Two words" arrives split
 			if err != nil {
 				return err
 			}
@@ -298,7 +337,7 @@ func (a *app) peekCmd() *cobra.Command {
 			if a.jsonOut {
 				return a.emitJSON(map[string]any{"addr": address, "lines": shown, "rest_tokens": rest})
 			}
-			a.println(join(address, fmt.Sprintf("L%d-%d", t.From, t.To), textutil.FmtTokens(textutil.Tokens(strings.Join(body, "\n")))))
+			a.println(join(address, fmt.Sprintf("%s:%d-%d", notePath(s, t.File), t.From, t.To), textutil.FmtTokens(textutil.Tokens(strings.Join(body, "\n")))))
 			for _, l := range shown {
 				a.println(l)
 			}
@@ -310,4 +349,28 @@ func (a *app) peekCmd() *cobra.Command {
 	}
 	c.Flags().IntVar(&n, "lines", 5, "number of non-blank lines to show")
 	return c
+}
+
+// regroupArgs re-joins addresses the shell split at spaces. Agents often
+// write `pg read note#Kök neden` without quotes; an argument holding '#'
+// that does not resolve is extended with the following arguments until the
+// joined text does.
+func (a *app) regroupArgs(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		cur := args[i]
+		if strings.Contains(cur, "#") && i+1 < len(args) {
+			if _, _, err := a.resolve(cur); err != nil {
+				for j := i + 1; j < len(args) && j <= i+6; j++ {
+					cand := strings.Join(args[i:j+1], " ")
+					if _, _, err := a.resolve(cand); err == nil {
+						cur, i = cand, j
+						break
+					}
+				}
+			}
+		}
+		out = append(out, cur)
+	}
+	return out
 }

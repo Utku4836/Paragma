@@ -80,10 +80,9 @@ func (a *app) rootCmd() *cobra.Command {
 	return root
 }
 
-// groups is the help index. Commands not built yet are listed so agents
-// know the shape of the tool, and marked with *.
+// groups is the help index printed by pg help.
 var groups = []struct{ name, cmds string }{
-	{"read", "search outline read peek links backlinks find"},
+	{"read", "outline search read peek links backlinks find"},
 	{"admin", "init status reindex"},
 }
 
@@ -108,12 +107,14 @@ func (a *app) helpCmd(root *cobra.Command) *cobra.Command {
 
 func (a *app) printHelp(c *cobra.Command) {
 	if c.Parent() == nil {
-		a.println("pg - agent memory (Paragma). Markdown notes in .paragma/, pulled on demand.")
+		a.println("pg - agent memory (Paragma). Notes are Markdown under .paragma/; pg returns only the part you need.")
+		a.println("start: pg outline (map of notes) -> pg search <words> -> pg read <addr> [<addr>...] (copy addresses from output)")
 		a.println("addresses: note | note#Heading | note#Up/Down | note^block | note:10-24 | @id | ~note (global)")
 		a.println("commands (pg help <command>):")
 		for _, g := range groups {
 			a.printf("  %-6s %s\n", g.name, g.cmds)
 		}
+		a.println("rule: read memory through pg, not by opening .paragma files; pg read prints file:lines for citing")
 		a.println("flags: --json --budget N --vault PATH --scope project|global|all")
 		a.println("exit: 0 ok, 1 no results, 2 usage, 3 not found, 5 no vault, 7 internal")
 		return

@@ -49,6 +49,7 @@ func run(t *testing.T, vault string, args ...string) (string, string, int) {
 
 func TestCommands(t *testing.T) {
 	v := copyVault(t)
+	t.Chdir(filepath.Dir(v)) // read headers print paths relative to the working directory
 	cases := []struct {
 		args []string
 		code int
@@ -63,11 +64,11 @@ func TestCommands(t *testing.T) {
 		{[]string{"search", "wal", "--layer", "semantic"}, 0, []string{"knowledge/"}, []string{"episodes/"}},
 		{[]string{"search", "wal", "--layer", "nope"}, 2, nil, nil},
 		{[]string{"outline", "architecture"}, 0, []string{"### Katmanlar/Depolama", "[!rule]", "tasks 1/2"}, nil},
-		{[]string{"read", "architecture#depolama"}, 0, []string{"knowledge/architecture#Katmanlar/Depolama  L20-27", "busy_timeout=5000"}, []string{"## Middleware"}},
+		{[]string{"read", "architecture#depolama"}, 0, []string{"knowledge/architecture#Katmanlar/Depolama  .paragma/knowledge/architecture.md:20-27", "busy_timeout=5000"}, []string{"## Middleware"}},
 		{[]string{"read", "auth-refactor^t002"}, 0, []string{"Refresh endpoint", "Testler ^t004"}, []string{"Prod migration"}},
 		{[]string{"read", "^t005"}, 0, []string{"work/sessions/auth-refactor^t005", "Prod migration"}, nil},
 		{[]string{"read", "stack:12-13"}, 0, []string{"knowledge/stack:12-13", "Go 1.24"}, nil},
-		{[]string{"read", "@01JA3Z8K2MSTACK"}, 0, []string{"knowledge/stack  L9-", "## CI"}, []string{"verified:"}},
+		{[]string{"read", "@01JA3Z8K2MSTACK"}, 0, []string{"knowledge/stack  .paragma/knowledge/stack.md:9-", "## CI"}, []string{"verified:"}},
 		{[]string{"read", "stack", "--meta"}, 0, []string{"verified: 2026-05-01"}, nil},
 		{[]string{"read", "architecture#Middlewre"}, 3, nil, nil},
 		{[]string{"read", "archtecture"}, 3, nil, nil},
@@ -167,5 +168,50 @@ func TestNoVault(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := Execute([]string{"search", "x"}, &out, &errb, strings.NewReader("")); code != ExitNoVault {
 		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+}
+
+func TestVaultMapAndHints(t *testing.T) {
+	v := copyVault(t)
+	t.Chdir(filepath.Dir(v))
+	out, _, code := run(t, v, "outline")
+	if code != 0 || !strings.Contains(out, "semantic\n  knowledge/architecture") || !strings.Contains(out, "inactive\n") {
+		t.Fatalf("vault map:\n%s", out)
+	}
+	out, _, _ = run(t, v, "outline", "--budget", "40")
+	if !strings.Contains(out, "episodes/errors/  2 notes") {
+		t.Fatalf("directory summary expected:\n%s", out)
+	}
+	out, _, _ = run(t, v, "read", "sqlite-database-locked")
+	if !strings.Contains(out, "next: pg backlinks episodes/errors/sqlite-database-locked (3 links in)") {
+		t.Fatalf("backlink hint missing:\n%s", out)
+	}
+}
+
+func TestReadMany(t *testing.T) {
+	v := copyVault(t)
+	t.Chdir(filepath.Dir(v))
+	out, _, code := run(t, v, "read", "rules^r003", "jwt-exp-timezone#Çözüm")
+	if code != 0 || !strings.Contains(out, "knowledge/rules^r003  .paragma/knowledge/rules.md:19-20") || !strings.Contains(out, "clock.Fixed") {
+		t.Fatalf("multi read:\n%s", out)
+	}
+	out, _, code = run(t, v, "read", "rules^r003", "nope#x", "stack#CI")
+	if code != ExitNotFound || !strings.Contains(out, "error: not found: nope") || !strings.Contains(out, "golangci-lint") {
+		t.Fatalf("multi read with a bad address: exit %d\n%s", code, out)
+	}
+}
+
+func TestUnquotedHeading(t *testing.T) {
+	v := copyVault(t)
+	for _, args := range [][]string{
+		{"read", "jwt-exp-timezone#Kök", "neden"},
+		{"read", "jwt-exp-timezone#Kök", "neden", "rules^r003"},
+		{"peek", "jwt-exp-timezone#Kök", "neden"},
+		{"outline", "rules#Kod", "stili"},
+	} {
+		out, errs, code := run(t, v, args...)
+		if code != 0 || strings.Contains(out, "error:") {
+			t.Errorf("pg %v: exit %d\n%s%s", args, code, out, errs)
+		}
 	}
 }

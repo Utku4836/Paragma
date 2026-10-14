@@ -33,9 +33,9 @@ func (a *app) linksCmd() *cobra.Command {
 resolved target address (or the raw target if broken), then the link kind:
 wiki, embed, md, or a typed key such as fixes:: / supersedes::.`,
 		Example: "pg links sqlite-database-locked\npg links architecture#Middleware",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(args[0])
+			s, t, err := a.resolve(strings.Join(args, " ")) // an unquoted "note#Two words" arrives split
 			if err != nil {
 				return err
 			}
@@ -123,65 +123,72 @@ func fileKeys(f *index.File) []string {
 	return keys
 }
 
+// backlink is one incoming link.
+type backlink struct {
+	Addr    string `json:"addr"`
+	Kind    string `json:"kind"`
+	Line    int    `json:"line"`
+	Context string `json:"context"`
+}
+
+// backlinks returns the links that land on target t (inside its range when t
+// is a heading, block or line range).
+func (a *app) backlinks(s *store, t *addr.Target) ([]backlink, error) {
+	ls, err := s.db.LinksTo(fileKeys(t.File))
+	if err != nil {
+		return nil, fail(ExitInternal, "%v", err)
+	}
+	var rows []backlink
+	secCache := map[int64]*index.Section{}
+	for _, l := range ls {
+		src, err := s.db.FileByID(l.SrcFile)
+		if err != nil {
+			continue
+		}
+		tt, err := resolveLink(s.res, src, l.Target)
+		if err != nil || tt.File.ID != t.File.ID {
+			continue
+		}
+		if t.Kind != addr.KindFile {
+			// a heading/block/range query matches links that land inside it
+			if tt.Kind == addr.KindFile || tt.From < t.From || tt.From > t.To {
+				continue
+			}
+		}
+		srcAddr := src.Addr()
+		if l.SrcSection > 0 {
+			sec, ok := secCache[l.SrcSection]
+			if !ok {
+				sec, _ = s.db.SectionByID(l.SrcSection)
+				secCache[l.SrcSection] = sec
+			}
+			if sec != nil && sec.Path != "" && !sec.IsTitle {
+				srcAddr += "#" + sec.Path
+			}
+		}
+		rows = append(rows, backlink{a.prefix(s) + srcAddr, l.Kind, l.Line, l.Context})
+	}
+	return rows, nil
+}
+
 func (a *app) backlinksCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "backlinks <addr>",
 		Short:   "Incoming links to a note or heading, with the linking line",
 		Example: "pg backlinks architecture#Middleware\npg backlinks sqlite-database-locked",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(args[0])
+			s, t, err := a.resolve(strings.Join(args, " ")) // an unquoted "note#Two words" arrives split
 			if err != nil {
 				return err
 			}
-			ls, err := s.db.LinksTo(fileKeys(t.File))
+			rows, err := a.backlinks(s, t)
 			if err != nil {
-				return fail(ExitInternal, "%v", err)
-			}
-			// same-file links ([[#Heading]]) are keyed by the file's own path
-			type out struct {
-				Addr    string `json:"addr"`
-				Kind    string `json:"kind"`
-				Line    int    `json:"line"`
-				Context string `json:"context"`
-			}
-			var rows []out
-			secCache := map[int64]*index.Section{}
-			fileCache := map[int64]*index.File{}
-			for _, l := range ls {
-				src := fileCache[l.SrcFile]
-				if src == nil {
-					if src, err = s.db.FileByID(l.SrcFile); err != nil {
-						continue
-					}
-					fileCache[l.SrcFile] = src
-				}
-				tt, err := resolveLink(s.res, src, l.Target)
-				if err != nil || tt.File.ID != t.File.ID {
-					continue
-				}
-				if t.Kind != addr.KindFile {
-					// a heading/block/range query matches links that land inside it
-					if tt.Kind == addr.KindFile || tt.From < t.From || tt.From > t.To {
-						continue
-					}
-				}
-				srcAddr := src.Addr()
-				if l.SrcSection > 0 {
-					sec := secCache[l.SrcSection]
-					if sec == nil {
-						sec, _ = s.db.SectionByID(l.SrcSection)
-						secCache[l.SrcSection] = sec
-					}
-					if sec != nil && sec.Path != "" {
-						srcAddr += "#" + sec.Path
-					}
-				}
-				rows = append(rows, out{a.prefix(s) + srcAddr, l.Kind, l.Line, l.Context})
+				return err
 			}
 			if a.jsonOut {
 				if rows == nil {
-					rows = []out{}
+					rows = []backlink{}
 				}
 				return a.emitJSON(rows)
 			}
