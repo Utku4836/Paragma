@@ -92,7 +92,7 @@ var typeDirs = map[string]string{
 }
 
 func (a *app) newCmd() *cobra.Command {
-	var dir, tags string
+	var dir, tags, keywords string
 	c := &cobra.Command{
 		Use:   "new <type> <title> [text|-]",
 		Short: "Create a note from a template: note, concept, error, decision",
@@ -135,7 +135,7 @@ pg new note "Deploy checklist" --dir knowledge/ops`,
 				tagList = append(tagList, strings.TrimPrefix(t, "#"))
 			}
 			rel := freePath(s, d+"/"+name+".md")
-			lines := a.template(s, typ, title, tagList, text)
+			lines := withKeywords(a.template(s, typ, title, tagList, text), keywords)
 			return a.withLock(s, func() error {
 				n := newNote(s, rel, lines)
 				if err := a.save(n); err != nil {
@@ -151,6 +151,7 @@ pg new note "Deploy checklist" --dir knowledge/ops`,
 	}
 	c.Flags().StringVar(&dir, "dir", "", "directory inside the vault (default by type)")
 	c.Flags().StringVar(&tags, "tags", "", "comma separated tags")
+	c.Flags().StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language")
 	return c
 }
 

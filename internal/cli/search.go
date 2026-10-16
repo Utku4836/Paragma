@@ -129,10 +129,16 @@ func (a *app) search(q string, sf searchFlags) error {
 		hits = hits[:sf.limit]
 	}
 	if len(hits) == 0 {
+		if sf.offset == 0 {
+			for _, st := range stores {
+				recordMiss(st, "search", q)
+			}
+		}
 		if a.jsonOut {
 			a.emitJSON([]any{})
 		} else {
 			a.println("no results")
+			a.searchHint(stores[0], q)
 		}
 		return errNoResults
 	}

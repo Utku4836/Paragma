@@ -13,7 +13,7 @@ import (
 
 // schemaVersion is bumped whenever the schema or the parser output changes;
 // a mismatch triggers a full rebuild.
-const schemaVersion = 7
+const schemaVersion = 8
 
 const schema = `
 CREATE TABLE files (

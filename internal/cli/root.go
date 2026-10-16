@@ -88,6 +88,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.verifyCmd(), a.staleCmd(), a.primeCmd(), a.indexCmd(), a.skillCmd(), a.installCmd(), a.hookCmd(),
 		a.grepCmd(), a.recentCmd(), a.doctorCmd(),
 		a.relatedCmd(), a.contextCmd(), a.neighborsCmd("neighbors"), a.graphCmd(), a.orphansCmd(), a.brokenCmd(),
+		a.keywordsCmd(), a.missesCmd(), a.dupesCmd(), a.gcCmd(),
 	)
 	root.SetHelpCommand(a.helpCmd(root))
 	root.SetHelpFunc(func(c *cobra.Command, _ []string) { a.printHelp(c) })
@@ -98,7 +99,7 @@ func (a *app) rootCmd() *cobra.Command {
 // groups is the help index printed by pg help.
 var groups = []struct{ name, cmds string }{
 	{"read", "outline search read peek links backlinks find grep recent index"},
-	{"write", "new append write insert edit section link mv archive rm"},
+	{"write", "new append write insert edit section link keywords mv archive rm"},
 	{"task", "task add|list|show|start|done|block|cancel|ask|reopen|note|move|edit|next|claim"},
 	{"session", "session start|plan|status|log|checkpoint|resume|fork|list|switch|close"},
 	{"project", "project new|list|switch|info|archive  branch new|list|switch|status|merge|close"},
@@ -107,7 +108,7 @@ var groups = []struct{ name, cmds string }{
 	{"graph", "related context neighbors graph orphans broken"},
 	{"mark", "mark highlight callout unmark marks"},
 	{"agent", "prime skill install hook"},
-	{"admin", "init status reindex doctor"},
+	{"admin", "init status reindex doctor dupes gc misses"},
 }
 
 func (a *app) helpCmd(root *cobra.Command) *cobra.Command {

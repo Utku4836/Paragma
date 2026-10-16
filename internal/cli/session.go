@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Utku-Private/Paragma/internal/index"
 	"github.com/Utku-Private/Paragma/internal/md"
@@ -750,10 +751,16 @@ func (a *app) sessionCloseCmd() *cobra.Command {
 // journalAppend adds "- HH:MM text" under today's heading in
 // episodes/journal/YYYY-MM.md and returns the day's address.
 func (a *app) journalAppend(s *store, text string) (string, error) {
-	month := now().Format("2006-01")
+	return a.journalAppendAt(s, now(), text)
+}
+
+// journalAppendAt writes the entry under the day of when (gc files old
+// sessions under the day they ended).
+func (a *app) journalAppendAt(s *store, when time.Time, text string) (string, error) {
+	month := when.Format("2006-01")
 	rel := "episodes/journal/" + month + ".md"
-	day := today()
-	entry := "- " + clock() + " " + text
+	day := when.Format("2006-01-02")
+	entry := "- " + when.Format("15:04") + " " + text
 	var n *note
 	if f, err := s.res.ResolveFile(strings.TrimSuffix(rel, ".md")); err == nil && f.Path == rel {
 		if n, err = a.load(s, f); err != nil {

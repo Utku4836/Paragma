@@ -246,7 +246,10 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 	}
 	fid, _ := res.LastInsertId()
 
-	fileTags := strings.Join(tags, " ")
+	// keywords are search terms the writer added for later lookups
+	// (synonyms, the other language, the words a future search will use);
+	// they are searchable with the tags but are not tags
+	fileTags := strings.TrimSpace(strings.Join(tags, " ") + " " + strings.Join(doc.FrontList("keywords"), " "))
 	secIDs := make([]int64, len(doc.Sections))
 	for i, s := range doc.Sections {
 		bodyStart := s.Line

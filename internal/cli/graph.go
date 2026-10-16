@@ -253,7 +253,9 @@ pg context sqlite-database-locked`,
 			}
 			items := a.gatherContext(s, q)
 			if len(items) == 0 {
+				recordMiss(s, "context", q)
 				a.println("no results")
+				a.searchHint(s, q)
 				return errNoResults
 			}
 			return a.printContext(s, q, items, budget)

@@ -24,16 +24,17 @@ type Vault struct {
 
 // Config is .paragma/config.toml.
 type Config struct {
-	Version   int    `toml:"version"`
-	Budget    int    `toml:"budget"`
-	ReadLimit int    `toml:"read_limit"`
-	StaleDays int    `toml:"stale_days"`
-	Hints     bool   `toml:"hints"`
-	Lang      string `toml:"lang"` // language of section headings pg writes: en | tr
+	Version     int    `toml:"version"`
+	Budget      int    `toml:"budget"`
+	ReadLimit   int    `toml:"read_limit"`
+	StaleDays   int    `toml:"stale_days"`
+	Hints       bool   `toml:"hints"`
+	AutoPromote bool   `toml:"auto_promote"` // a fix seen 3 times becomes a rule
+	Lang        string `toml:"lang"`         // language of section headings pg writes: en | tr
 }
 
 func DefaultConfig() Config {
-	return Config{Version: 1, Budget: 800, ReadLimit: 1500, StaleDays: 90, Hints: true, Lang: "en"}
+	return Config{Version: 1, Budget: 800, ReadLimit: 1500, StaleDays: 90, Hints: true, Lang: "en", AutoPromote: true}
 }
 
 const configTemplate = `# Paragma vault settings
@@ -42,6 +43,7 @@ budget = 800        # default output budget in tokens for list-like commands
 read_limit = 1500   # pg read shows an outline instead when the target is bigger (override: --full)
 stale_days = 90     # semantic notes not verified for this long are flagged [stale?]
 hints = true        # print one-line "next:" hints
+auto_promote = true # an error fix that worked 3 times becomes a rule in knowledge/rules.md
 lang = "%s"         # language of section headings in notes pg creates: en | tr
 `
 
@@ -211,7 +213,7 @@ func Init(root string, newID func() string, today, lang string) (*Vault, bool, e
 	// (pg rule add creates rules.md, pg task add creates work/inbox.md, ...)
 	files := map[string]string{
 		"config.toml": fmt.Sprintf(configTemplate, lang),
-		".gitignore":  "index.db\nindex.db-*\nlock\nstate.json\nlast-run.json\n",
+		".gitignore":  "index.db\nindex.db-*\nlock\nstate.json\nlast-run.json\nmisses.log\n",
 	}
 	_, _ = t, newID
 	for rel, content := range files {
@@ -337,6 +339,8 @@ func readConfig(path string, c *Config) error {
 			c.StaleDays, err = num()
 		case "lang":
 			c.Lang = val
+		case "auto_promote":
+			c.AutoPromote = val == "true"
 		case "hints":
 			c.Hints = val == "true"
 		}

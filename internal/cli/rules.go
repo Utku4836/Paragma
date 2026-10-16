@@ -21,7 +21,7 @@ func (a *app) decisionCmd() *cobra.Command {
 		Use:   "decision",
 		Short: "Architecture decision records (ADR): decision record",
 	}
-	var ctx, dec, alts, cons, supersedes, tags string
+	var ctx, dec, alts, cons, supersedes, tags, keywords string
 	rec := &cobra.Command{
 		Use:   "record <title> --context TEXT --decision TEXT",
 		Short: "Write a numbered decision record (context, decision, alternatives, consequences)",
@@ -43,7 +43,7 @@ pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-re
 			}
 			num := fmt.Sprintf("%04d", nextDecisionNumber(s))
 			name := num + "-" + slug(title)
-			lines := a.template(s, "decision", num+": "+title, tagList, "")
+			lines := withKeywords(a.template(s, "decision", num+": "+title, tagList, ""), keywords)
 			for _, kv := range []struct{ key, text string }{{"context", ctx}, {"decision", dec}, {"options", alts}, {"outcome", cons}} {
 				if kv.text != "" {
 					lines = fillSection(lines, "## "+a.sec(s, kv.key), splitText(kv.text))
@@ -82,6 +82,7 @@ pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-re
 	f.StringVar(&cons, "consequences", "", "what follows from it")
 	f.StringVar(&supersedes, "supersedes", "", "earlier decision this replaces")
 	f.StringVar(&tags, "tags", "", "comma separated tags")
+	f.StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language")
 	c.AddCommand(rec)
 	return c
 }

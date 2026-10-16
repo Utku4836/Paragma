@@ -155,7 +155,7 @@ func (a *app) errorCmd() *cobra.Command {
 }
 
 func (a *app) errorRecordCmd() *cobra.Command {
-	var sig, title, symptom, cause, fix, files, tags string
+	var sig, title, symptom, cause, fix, files, tags, keywords string
 	var fromLast, force, global bool
 	c := &cobra.Command{
 		Use:   "record --sig TEXT|--from-last --cause TEXT --fix TEXT",
@@ -218,6 +218,7 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 			lines = setFront(lines, "status", "resolved")
 			lines = setFront(lines, "sig", strconv.Quote(sig))
 			lines = setFront(lines, "verified", today())
+			lines = withKeywords(lines, keywords)
 			lines = fillSection(lines, "## "+a.sec(s, "symptom"), splitText(symptom))
 			lines = fillSection(lines, "## "+a.sec(s, "cause"), splitText(cause))
 			lines = fillSection(lines, "## "+a.sec(s, "fix"), splitText(fix))
@@ -252,6 +253,7 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 	f.StringVar(&fix, "fix", "", "what fixed it")
 	f.StringVar(&files, "files", "", "comma separated files involved")
 	f.StringVar(&tags, "tags", "", "comma separated tags")
+	f.StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language, how others will search for it")
 	f.BoolVar(&force, "new", false, "record even if a matching error exists")
 	f.BoolVar(&global, "global", false, "record in the global vault: errors that are not about this project (toolchain, OS, CI)")
 	return c
@@ -314,6 +316,11 @@ go test ./... 2>&1 | pg error find -`,
 				return a.emitJSON(out)
 			}
 			if len(ms) == 0 {
+				if ls := errsig.Lines(text, 1); len(ls) > 0 {
+					recordMiss(s, "error find", ls[0].Raw)
+				} else {
+					recordMiss(s, "error find", text)
+				}
 				a.println("no results")
 				return errNoResults
 			}
@@ -360,8 +367,32 @@ func (a *app) errorSeenCmd() *cobra.Command {
 					}
 					a.ok(fmt.Sprintf("%s seen:%d", t.File.Addr(), seen))
 					if seen >= 3 && !strings.Contains(strings.Join(n.lines, "\n"), "promoted::") {
-						fixAddr, _ := a.fixText(s, t.File, 0)
-						a.printf("next: seen %d times; make it a rule: pg promote %s\n", seen, shellQuote(fixAddr))
+						fixAddr, fix := a.fixText(s, t.File, 0)
+						// a fix that keeps working becomes a project rule, when it
+						// is short enough to be one; a long fix needs a person
+						// (or the agent) to phrase the rule: pg promote --text
+						if s.v.Cfg.AutoPromote && fix != "" && len([]rune(fix)) <= 300 && !a.dryRun {
+							g, err := s.res.ResolveFile(t.File.Addr())
+							if err != nil {
+								return err
+							}
+							src := shortRef(s, g) + strings.TrimPrefix(fixAddr, g.Addr())
+							ruleAddr, err := a.addRule(s, fix, "", src)
+							if err != nil {
+								return err
+							}
+							en, err := a.load(s, g)
+							if err != nil {
+								return err
+							}
+							en.lines, _ = place(en.lines, lastLine(en.lines, 1, len(en.lines)), []string{"promoted:: [[" + strings.TrimPrefix(ruleAddr, "knowledge/") + "]]"})
+							if err := a.save(en); err != nil {
+								return err
+							}
+							a.ok(fmt.Sprintf("seen %d times: promoted to rule %s (edit or move it: pg read %s)", seen, ruleAddr, ruleAddr))
+						} else {
+							a.printf("next: seen %d times; make it a rule: pg promote %s --text \"<one sentence>\"\n", seen, shellQuote(fixAddr))
+						}
 					}
 					return nil
 				})
