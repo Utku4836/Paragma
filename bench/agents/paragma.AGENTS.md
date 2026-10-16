@@ -8,12 +8,14 @@ START
 
 READ
 - Run tests and builds through `pg run -- <cmd>`: on failure it prints the known fix if memory has one
+- Before changing a file: `pg related <path>` (its rules, decisions, past errors)
+- A topic or task: `pg context "<topic>"` (one call: matching rules, decisions, fixes)
 - An error seen elsewhere: `pg error find "<error line>"`
-- A rule, decision or fact: `pg search "<words>"`, then `pg read <addr>` (copy addresses from the output; several at once is fine)
-- A big note: `pg outline <addr>` first
+- A specific fact: `pg search "<words>"`, then `pg read <addr>`
 
 WRITE
-- Fixed a non-obvious error: `pg error record --from-last --cause "..." --fix "..."`
+- Fixed a non-obvious error: `pg error record --from-last --cause "..." --fix "..." --keywords "<other words for it>"`
+- A search missed a note that exists: `pg keywords <addr> "<the words you searched>"`
 - A recorded fix worked again: `pg error seen <addr>`
 - An architectural choice: `pg decision record "<title>" --context "..." --decision "..."`
 - A project rule from the user: `pg rule add "<rule>"`

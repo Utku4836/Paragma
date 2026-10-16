@@ -1,4 +1,4 @@
 /bin/
 *.prof
 *.test.exe
-/bench/runs/
+/bench/runs*/
