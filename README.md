@@ -13,7 +13,28 @@ Tasarım: [docs/TASARIM.md](docs/TASARIM.md)
   - `session`: `start`, `plan`, `log`, `checkpoint`, `resume`, `fork`, `close`, …
   - `project`, `branch`
   - işaretleme: `mark`, `highlight`, `callout`, `unmark`, `marks`
+- **Faz 3 (episodik + ajan) tamam, MVP:**
+  - hata hafızası: `error record`, `find`, `seen`, `reopen`
+  - `pg run -- <komut>`: başarısız olursa bilinen çözümü ekler
+  - `decision record`, `journal`, `rule add`, `rule list`, `promote`, `supersede`, `verify`, `stale`
+  - `prime`, `index`, `skill`, `install claude|agents-md|gemini`, isteğe bağlı hook'lar
+  - `grep`, `recent`, `doctor`
 - **Karşılaştırma testi:** Paragma'lı, düz dosyalı ve hafızasız koşullar için [bench/](bench/README.md).
+
+Bir ajana öğretmek için:
+
+```sh
+pg install agents-md          # AGENTS.md'ye "Memory (Paragma)" bölümü (Antigravity, Codex, pi …)
+pg install claude --hooks     # Claude Code: skill + oturum başı prime + sıkıştırma öncesi checkpoint
+```
+
+Hata hafızası:
+
+```sh
+pg run -- go test ./...       # başarısızsa: "--- paragma: known error ... #Fix" + bilinen çözüm
+pg error record --from-last --cause "CRLF checkout" --fix "Load içinde satır sonlarını normalize et"
+pg error find "database is locked (5)"
+```
 
 Uzun iş akışı:
 

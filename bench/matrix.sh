@@ -13,7 +13,7 @@ mkdir -p "$OUT"
 {
 	for rep in $(seq 1 "$REPS"); do
 		for sc in s1-recurring-error s2-continuation s3-project-rules; do
-			for cond in none files paragma; do
+			for cond in ${CONDS:-none files paragma}; do
 				echo "$sc $cond $rep"
 			done
 		done
