@@ -24,15 +24,16 @@ type Vault struct {
 
 // Config is .paragma/config.toml.
 type Config struct {
-	Version   int  `toml:"version"`
-	Budget    int  `toml:"budget"`
-	ReadLimit int  `toml:"read_limit"`
-	StaleDays int  `toml:"stale_days"`
-	Hints     bool `toml:"hints"`
+	Version   int    `toml:"version"`
+	Budget    int    `toml:"budget"`
+	ReadLimit int    `toml:"read_limit"`
+	StaleDays int    `toml:"stale_days"`
+	Hints     bool   `toml:"hints"`
+	Lang      string `toml:"lang"` // language of section headings pg writes: en | tr
 }
 
 func DefaultConfig() Config {
-	return Config{Version: 1, Budget: 800, ReadLimit: 1500, StaleDays: 90, Hints: true}
+	return Config{Version: 1, Budget: 800, ReadLimit: 1500, StaleDays: 90, Hints: true, Lang: "en"}
 }
 
 const configTemplate = `# Paragma vault settings
@@ -41,6 +42,7 @@ budget = 800        # default output budget in tokens for list-like commands
 read_limit = 1500   # pg read shows an outline instead when the target is bigger (override: --full)
 stale_days = 90     # semantic notes not verified for this long are flagged [stale?]
 hints = true        # print one-line "next:" hints
+lang = "%s"         # language of section headings in notes pg creates: en | tr
 `
 
 // ErrNoVault is returned when no vault can be found.
@@ -109,6 +111,10 @@ func Find(explicit, scope string) (*Vault, error) {
 	}
 	if scope == "project" {
 		return nil, fmt.Errorf("%w: no project vault above %s (pg init)", ErrNoVault, cwd)
+	}
+	// outside any project directory: the project chosen with pg project switch
+	if root, err := LoadRegistry().ActiveVault(); err == nil && isVault(root) {
+		return Open(root)
 	}
 	if isVault(groot) {
 		return Open(groot)
@@ -185,20 +191,36 @@ var layout = []string{
 }
 
 // Init creates a vault at root. It is idempotent: existing files are kept.
-func Init(root string, newID func() string, today string) (*Vault, bool, error) {
+func Init(root string, newID func() string, today, lang string) (*Vault, bool, error) {
+	if lang != "tr" {
+		lang = "en"
+	}
+	t := func(en, tr string) string {
+		if lang == "tr" {
+			return tr
+		}
+		return en
+	}
 	created := !isVault(root)
 	for _, d := range layout {
 		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(d)), 0o755); err != nil {
 			return nil, false, err
 		}
 	}
+	note := func(typ, layer, title string, verified bool) string {
+		v := ""
+		if verified {
+			v = "verified: " + today + "\n"
+		}
+		return fmt.Sprintf("---\nid: %s\ntype: %s\nlayer: %s\ntitle: %s\ncreated: %s\n%s---\n# %s\n", newID(), typ, layer, title, today, v, title)
+	}
 	files := map[string]string{
-		"config.toml":               configTemplate,
-		".gitignore":                "index.db\nindex.db-*\nlock\n",
-		"knowledge/rules.md":        fmt.Sprintf("---\nid: %s\ntype: rule\nlayer: semantic\ntitle: Rules\ncreated: %s\nverified: %s\n---\n# Rules\n\nProject rules, one `> [!rule]` callout each.\n", newID(), today, today),
-		"knowledge/architecture.md": fmt.Sprintf("---\nid: %s\ntype: note\nlayer: semantic\ntitle: Architecture\ncreated: %s\nverified: %s\n---\n# Architecture\n", newID(), today, today),
-		"knowledge/stack.md":        fmt.Sprintf("---\nid: %s\ntype: note\nlayer: semantic\ntitle: Stack\ncreated: %s\nverified: %s\n---\n# Stack\n", newID(), today, today),
-		"work/inbox.md":             fmt.Sprintf("---\nid: %s\ntype: note\nlayer: working\ntitle: Inbox\ncreated: %s\n---\n# Inbox\n", newID(), today),
+		"config.toml":               fmt.Sprintf(configTemplate, lang),
+		".gitignore":                "index.db\nindex.db-*\nlock\nstate.json\n",
+		"knowledge/rules.md":        note("rule", "semantic", t("Rules", "Kurallar"), true) + "\n" + t("Project rules, one `> [!rule]` callout each.", "Proje kuralları, her biri bir `> [!rule]` callout'u.") + "\n",
+		"knowledge/architecture.md": note("note", "semantic", t("Architecture", "Mimari"), true),
+		"knowledge/stack.md":        note("note", "semantic", t("Stack", "Teknoloji"), true),
+		"work/inbox.md":             note("note", "working", t("Inbox", "Gelen kutusu"), false),
 	}
 	for rel, content := range files {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -241,7 +263,7 @@ func InferType(rel string) string {
 		return "journal"
 	case strings.HasPrefix(r, "work/sessions/"), strings.Contains(r, "/sessions/") && strings.HasPrefix(r, "work/branches/"):
 		return "session"
-	case strings.HasPrefix(r, "work/branches/") && strings.HasSuffix(r, "/branch.md"):
+	case strings.HasPrefix(r, "work/branches/") && (strings.HasSuffix(r, "/branch.md") || strings.Count(r, "/") == 2):
 		return "branch"
 	case r == "knowledge/rules.md":
 		return "rule"
@@ -294,6 +316,8 @@ func readConfig(path string, c *Config) error {
 			c.ReadLimit, err = num()
 		case "stale_days":
 			c.StaleDays, err = num()
+		case "lang":
+			c.Lang = val
 		case "hints":
 			c.Hints = val == "true"
 		}

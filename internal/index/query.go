@@ -28,7 +28,8 @@ type File struct {
 	Tokens   int
 	Size     int64
 	NLines   int
-	BodyLine int // first line after the frontmatter
+	BodyLine int    // first line after the frontmatter
+	Branch   string // front matter "branch" (sessions, branch notes)
 	Mtime    int64
 }
 
@@ -72,11 +73,11 @@ func (f *File) Stale(days int) bool {
 	return time.Since(t) > time.Duration(days)*24*time.Hour
 }
 
-const fileCols = `id, path, COALESCE(ulid,''), type, layer, status, title, created, updated, verified, hash, tags, fm_error, seen, tokens, size, lines, body_line, mtime`
+const fileCols = `id, path, COALESCE(ulid,''), type, layer, status, title, created, updated, verified, hash, tags, fm_error, seen, tokens, size, lines, body_line, COALESCE(branch, ''), mtime`
 
 func scanFile(sc interface{ Scan(...any) error }) (*File, error) {
 	f := &File{}
-	err := sc.Scan(&f.ID, &f.Path, &f.ULID, &f.Type, &f.Layer, &f.Status, &f.Title, &f.Created, &f.Updated, &f.Verified, &f.Hash, &f.Tags, &f.FMError, &f.Seen, &f.Tokens, &f.Size, &f.NLines, &f.BodyLine, &f.Mtime)
+	err := sc.Scan(&f.ID, &f.Path, &f.ULID, &f.Type, &f.Layer, &f.Status, &f.Title, &f.Created, &f.Updated, &f.Verified, &f.Hash, &f.Tags, &f.FMError, &f.Seen, &f.Tokens, &f.Size, &f.NLines, &f.BodyLine, &f.Branch, &f.Mtime)
 	return f, err
 }
 

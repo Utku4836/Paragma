@@ -13,7 +13,7 @@ import (
 
 // schemaVersion is bumped whenever the schema or the parser output changes;
 // a mismatch triggers a full rebuild.
-const schemaVersion = 2
+const schemaVersion = 4
 
 const schema = `
 CREATE TABLE files (
@@ -23,7 +23,7 @@ CREATE TABLE files (
   type TEXT, layer TEXT, status TEXT, title TEXT,
   mtime INTEGER, size INTEGER, hash TEXT,
   created TEXT, updated TEXT, verified TEXT,
-  seen INTEGER, tags TEXT, tokens INTEGER, lines INTEGER, body_line INTEGER, fm_json TEXT, fm_error TEXT
+  seen INTEGER, tags TEXT, tokens INTEGER, lines INTEGER, body_line INTEGER, branch TEXT, fm_json TEXT, fm_error TEXT
 );
 CREATE INDEX files_ulid ON files(ulid);
 

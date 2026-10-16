@@ -77,6 +77,7 @@ type Task struct {
 	Done     string
 	Blocked  string
 	By       string
+	Meta     [][2]string // every @key(value) in order, the ones above included
 	Tags     []string
 	Section  int
 }
@@ -96,6 +97,7 @@ type Mark struct {
 	Line    int
 	Section int
 	BlockID string
+	Note    string // from @note(...) on the same line
 }
 
 // MarkTags are inline tags that double as marks.
@@ -115,7 +117,9 @@ var (
 	reQuote     = regexp.MustCompile(`^\s*>`)
 	reCodeSpan  = regexp.MustCompile("`[^`\n]*`")
 	rePriority  = regexp.MustCompile(`(?:^|\s)!(p[0-9])(?:\s|$)`)
-	reMeta      = regexp.MustCompile(`(?:^|\s)@(due|done|blocked|by|why|created)\(([^)]*)\)`)
+	reMeta      = regexp.MustCompile(`(?:^|\s)@([A-Za-z][\w-]*)\(([^)]*)\)`)
+	reNote      = regexp.MustCompile(`(?:^|\s)@note\(([^)]*)\)`)
+	reTrailMark = regexp.MustCompile(`\s+(?:#[\p{L}\p{N}_][\p{L}\p{N}_/-]*|@note\([^)]*\))\s*$`)
 	reOnlyDigit = regexp.MustCompile(`^[0-9]+$`)
 )
 
@@ -209,7 +213,7 @@ func (d *Doc) parseSections(code []bool) {
 			continue
 		}
 		if m := reHeading.FindStringSubmatch(d.Lines[i]); m != nil {
-			t := strings.TrimSpace(strings.TrimRight(m[2], "#"))
+			t := HeadingText(m[2])
 			if t == "" {
 				continue
 			}
@@ -324,7 +328,24 @@ func (d *Doc) parseLines(code []bool) {
 		}
 		raw := d.Lines[i]
 		ln := i + 1
-		if reHeading.MatchString(raw) && strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(raw), "#")) != "" {
+		if m := reHeading.FindStringSubmatch(raw); m != nil && HeadingText(m[2]) != "" {
+			// trailing #tags / @note() on a heading mark the whole section
+			sec := d.SectionAt(ln)
+			trail := strings.TrimPrefix(strings.TrimSpace(strings.TrimRight(m[2], "#")), HeadingText(m[2]))
+			note := ""
+			if nm := reNote.FindStringSubmatch(trail); nm != nil {
+				note = nm[1]
+			}
+			for _, tm := range reTag.FindAllStringSubmatch(trail, -1) {
+				t := strings.ToLower(tm[1])
+				if !tagSeen[t] {
+					tagSeen[t] = true
+					d.Tags = append(d.Tags, t)
+				}
+				if MarkTags[t] {
+					d.Marks = append(d.Marks, Mark{Kind: t, Line: ln, Section: sec, Note: note})
+				}
+			}
 			continue
 		}
 		clean := reCodeSpan.ReplaceAllStringFunc(raw, func(s string) string { return strings.Repeat(" ", len(s)) })
@@ -398,9 +419,13 @@ func (d *Doc) parseLines(code []bool) {
 		if m := reBlockID.FindStringSubmatch(clean); m != nil {
 			lineBlock = m[1]
 		}
+		note := ""
+		if nm := reNote.FindStringSubmatch(clean); nm != nil {
+			note = nm[1]
+		}
 		for _, t := range lineTags {
 			if MarkTags[t] {
-				d.Marks = append(d.Marks, Mark{Kind: t, Line: ln, Section: sec, BlockID: lineBlock})
+				d.Marks = append(d.Marks, Mark{Kind: t, Line: ln, Section: sec, BlockID: lineBlock, Note: note})
 			}
 		}
 
@@ -462,6 +487,7 @@ func parseTask(s string) Task {
 		t.Priority = m[1]
 	}
 	for _, m := range reMeta.FindAllStringSubmatch(s, -1) {
+		t.Meta = append(t.Meta, [2]string{m[1], m[2]})
 		switch m[1] {
 		case "due":
 			t.Due = m[2]
@@ -484,6 +510,87 @@ func parseTask(s string) Task {
 	text = reTag.ReplaceAllString(text, " ")
 	t.Text = strings.Join(strings.Fields(text), " ")
 	return t
+}
+
+// HeadingText cleans raw heading text: closing #s and trailing mark tags or
+// @note(...) are not part of the heading's name (or its address).
+func HeadingText(raw string) string {
+	t := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(raw), "#"))
+	for {
+		u := reTrailMark.ReplaceAllString(t, "")
+		if u == t || u == "" {
+			return strings.TrimSpace(t)
+		}
+		t = strings.TrimSpace(u)
+	}
+}
+
+// TaskLine is a parsed task line that can be changed and written back.
+type TaskLine struct {
+	Indent string // leading whitespace
+	Marker string // "-", "*" or "+"
+	State  byte
+	Task
+}
+
+var reTaskLine = regexp.MustCompile(`^(\s*)([-*+]) \[(.)\](?:\s+(.*))?$`)
+
+// ParseTaskLine parses one task line; ok is false for any other line.
+func ParseTaskLine(line string) (TaskLine, bool) {
+	m := reTaskLine.FindStringSubmatch(line)
+	if m == nil {
+		return TaskLine{}, false
+	}
+	return TaskLine{Indent: m[1], Marker: m[2], State: m[3][0], Task: parseTask(m[4])}, true
+}
+
+// Get returns a metadata value ("" when absent).
+func (t *TaskLine) Get(key string) string {
+	for _, kv := range t.Meta {
+		if kv[0] == key {
+			return kv[1]
+		}
+	}
+	return ""
+}
+
+// Set sets (or with value "" removes) a metadata value.
+func (t *TaskLine) Set(key, value string) {
+	out := t.Meta[:0:0]
+	done := false
+	for _, kv := range t.Meta {
+		if kv[0] == key {
+			if value != "" && !done {
+				out = append(out, [2]string{key, value})
+				done = true
+			}
+			continue
+		}
+		out = append(out, kv)
+	}
+	if value != "" && !done {
+		out = append(out, [2]string{key, value})
+	}
+	t.Meta = out
+}
+
+// String renders the task line: text, ^id, !priority, @meta, #tags.
+func (t *TaskLine) String() string {
+	var b strings.Builder
+	b.WriteString(t.Indent + t.Marker + " [" + string(t.State) + "] " + t.Text)
+	if t.ID != "" {
+		b.WriteString(" ^" + t.ID)
+	}
+	if t.Priority != "" {
+		b.WriteString(" !" + t.Priority)
+	}
+	for _, kv := range t.Meta {
+		b.WriteString(" @" + kv[0] + "(" + kv[1] + ")")
+	}
+	for _, tag := range t.Tags {
+		b.WriteString(" #" + tag)
+	}
+	return b.String()
 }
 
 // blockExtent returns the 1-based [start,end] of the Markdown block holding

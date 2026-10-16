@@ -44,6 +44,9 @@ type app struct {
 	vaultFlag string
 	scope     string
 	quiet     bool
+	ifHash    string
+	dryRun    bool
+	textFile  string
 
 	stdout *bufio.Writer
 	stdin  io.Reader
@@ -161,6 +164,12 @@ func (a *app) resolve(raw string) (*store, *addr.Target, error) {
 	}
 	t, err := s.res.Resolve(p)
 	if err != nil {
+		// a bare task/block id ("t3f2") written without its ^
+		if p.File != "" && p.Heading == "" && p.Block == "" && p.From == 0 && !strings.ContainsAny(p.File, "/.") {
+			if bt, berr := s.res.Resolve(addr.Addr{Block: p.File}); berr == nil {
+				return s, bt, nil
+			}
+		}
 		return nil, nil, err
 	}
 	return s, t, nil

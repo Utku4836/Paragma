@@ -16,6 +16,7 @@ import (
 
 func (a *app) initCmd() *cobra.Command {
 	var global bool
+	var lang, name string
 	c := &cobra.Command{
 		Use:   "init [dir]",
 		Short: "Create a vault (.paragma/) in dir (default: current directory)",
@@ -39,7 +40,7 @@ Safe to re-run; existing files are kept.`,
 				}
 				root = filepath.Join(abs, vault.DirName)
 			}
-			v, created, err := vault.Init(root, ulid.New, time.Now().Format("2006-01-02"))
+			v, created, err := vault.Init(root, ulid.New, time.Now().Format("2006-01-02"), lang)
 			if err != nil {
 				return fail(ExitInternal, "init: %v", err)
 			}
@@ -51,6 +52,11 @@ Safe to re-run; existing files are kept.`,
 			st, err := db.Sync()
 			if err != nil {
 				return fail(ExitInternal, "sync: %v", err)
+			}
+			if !global {
+				reg := vault.LoadRegistry()
+				reg.Register(name, v.Root)
+				_ = reg.Save()
 			}
 			if a.jsonOut {
 				return a.emitJSON(map[string]any{"vault": v.Root, "created": created, "files": st.Files})
@@ -64,6 +70,8 @@ Safe to re-run; existing files are kept.`,
 		},
 	}
 	c.Flags().BoolVar(&global, "global", false, "create the global vault (~/.paragma)")
+	c.Flags().StringVar(&lang, "lang", "en", "language of section headings pg writes: en | tr")
+	c.Flags().StringVar(&name, "name", "", "project name in the registry (default: directory name)")
 	return c
 }
 

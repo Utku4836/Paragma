@@ -132,12 +132,12 @@ type writer struct {
 }
 
 var stmts = map[string]string{
-	"file":    `INSERT INTO files (path, ulid, type, layer, status, title, mtime, size, hash, created, updated, verified, seen, tags, tokens, lines, body_line, fm_json, fm_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	"file":    `INSERT INTO files (path, ulid, type, layer, status, title, mtime, size, hash, created, updated, verified, seen, tags, tokens, lines, body_line, branch, fm_json, fm_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 	"section": `INSERT INTO sections (file_id, ord, heading_path, level, line_start, body_end, line_end, tokens, sub_tokens, body, kinds, tags, is_title) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 	"block":   `INSERT OR IGNORE INTO blocks (file_id, block_id, section_id, line, line_end) VALUES (?,?,?,?,?)`,
 	"link":    `INSERT INTO links (src_file, src_section, line, target, target_file, target_sub, kind, context) VALUES (?,?,?,?,?,?,?,?)`,
 	"task":    `INSERT INTO tasks (file_id, section_id, block_id, parent, line, line_end, state, text, priority, due, tags, done_at, blocked_by, claimed_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-	"mark":    `INSERT INTO marks (file_id, section_id, block_id, line, kind) VALUES (?,?,?,?,?)`,
+	"mark":    `INSERT INTO marks (file_id, section_id, block_id, line, kind, note) VALUES (?,?,?,?,?,?)`,
 	"tag":     `INSERT INTO tags (file_id, tag) VALUES (?,?)`,
 	"sig":     `INSERT INTO error_sigs (file_id, sig_norm, sig_hash) VALUES (?,?,?)`,
 }
@@ -237,7 +237,7 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 
 	res, err := w.stmt["file"].Exec(rel, nullStr(doc.FrontString("id")), typ, layer, status, title, mtime, size, hash,
 		doc.FrontString("created"), doc.FrontString("updated"), doc.FrontString("verified"),
-		seen, strings.Join(tags, " "), textutil.Tokens(body), len(doc.Lines), doc.BodyLine, fmJSON, fmErr)
+		seen, strings.Join(tags, " "), textutil.Tokens(body), len(doc.Lines), doc.BodyLine, doc.FrontString("branch"), fmJSON, fmErr)
 	if err != nil {
 		return err
 	}
@@ -289,7 +289,7 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 		}
 	}
 	for _, m := range doc.Marks {
-		if _, err := w.stmt["mark"].Exec(fid, secID(m.Section), nullStr(m.BlockID), m.Line, m.Kind); err != nil {
+		if _, err := w.stmt["mark"].Exec(fid, secID(m.Section), nullStr(m.BlockID), m.Line, m.Kind, m.Note); err != nil {
 			return err
 		}
 	}
@@ -401,4 +401,51 @@ func (d *DB) scan() map[string]diskFile {
 	walk(d.V.Root, "")
 	wg.Wait()
 	return disk
+}
+
+// IndexFile re-indexes one note right after pg wrote, moved or deleted it, so
+// the next query sees the change without waiting for a full scan.
+func (d *DB) IndexFile(rels ...string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	w, err := newWriter(tx, d.V)
+	if err != nil {
+		return err
+	}
+	defer w.close()
+	for _, rel := range rels {
+		p := filepath.Join(d.V.Root, filepath.FromSlash(rel))
+		info, err := os.Stat(p)
+		if err != nil {
+			if err := w.deleteFile(rel); err != nil {
+				return err
+			}
+			continue
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if err := w.writeFile(rel, src, info.ModTime().UnixNano(), info.Size(), hashBytes(src)); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	d.files = nil
+	return nil
+}
+
+// HashBytes is the content hash pg prints as hash:… and checks for --if-hash.
+func HashBytes(b []byte) string { return hashBytes(b) }
+
+// BlockExists reports whether a block id is used anywhere in the vault.
+func (d *DB) BlockExists(id string) bool {
+	var n int
+	d.QueryRow(`SELECT COUNT(*) FROM blocks WHERE block_id = ? COLLATE NOCASE`, id).Scan(&n)
+	return n > 0
 }

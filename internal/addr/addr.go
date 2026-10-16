@@ -353,6 +353,19 @@ func (r *Resolver) ResolveFile(name string) (*index.File, error) {
 		return exact[0], nil
 	}
 	cands := append(exact, suffix...)
+	if len(cands) == 0 && !strings.Contains(key, "/") {
+		// names written without their date or number prefix:
+		// "auth-refactor" for 2026-10-12-auth-refactor, "wal-mode" for 0007-wal-mode
+		for _, f := range r.files {
+			base := index.FileKey(f.Path)
+			base = base[strings.LastIndex(base, "/")+1:]
+			if i := strings.Index(base, "-"); i > 0 && isDigits(base[:i]) && strings.HasSuffix(base, "-"+key) {
+				if p := base[:len(base)-len(key)-1]; isDatePrefix(p) || isDigits(p) {
+					cands = append(cands, f)
+				}
+			}
+		}
+	}
 	if len(cands) == 1 {
 		return cands[0], nil
 	}
@@ -453,4 +466,21 @@ func prefixAll(p string, xs []string) string {
 		out[i] = p + x
 	}
 	return strings.Join(out, ", ")
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isDatePrefix matches YYYY-MM-DD.
+func isDatePrefix(s string) bool {
+	return len(s) == 10 && isDigits(s[:4]) && s[4] == '-' && isDigits(s[5:7]) && s[7] == '-' && isDigits(s[8:])
 }
