@@ -1,0 +1,5 @@
+Add refund support to the payments package:
+
+    func Refund(ctx context.Context, p Provider, pay *Payment, amount int64) error
+
+Follow this project's rules and conventions. Add tests and run them at the end.

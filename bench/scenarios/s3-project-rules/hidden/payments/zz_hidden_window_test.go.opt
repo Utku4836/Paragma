@@ -1,0 +1,19 @@
+package payments
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+// The window error is the documented sentinel ErrRefundWindow (ADR 0014).
+// Copied in only when the identifier exists, so a missing sentinel fails
+// this one check instead of breaking the build of every hidden test.
+func TestHidden_WindowSentinel(t *testing.T) {
+	pin(t)
+	pay := &Payment{ID: "pay_9", Amount: 1000, At: pinnedNow.Add(-40 * 24 * time.Hour)}
+	if err := Refund(context.Background(), &hiddenProvider{}, pay, 100); !errors.Is(err, ErrRefundWindow) {
+		t.Fatalf("got %v, want ErrRefundWindow", err)
+	}
+}

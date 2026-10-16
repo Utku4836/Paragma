@@ -1,0 +1,6 @@
+version = 1
+budget = 800
+read_limit = 1500
+stale_days = 90
+hints = true
+lang = "en"

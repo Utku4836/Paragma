@@ -6,7 +6,25 @@ Tasarım: [docs/TASARIM.md](docs/TASARIM.md)
 
 ## Durum
 
-Faz 1 (çekirdek okuma) tamam: `init`, `reindex`, artımlı senkron, adres çözücü, `search`, `outline`, `read`, `peek`, `links`, `backlinks`, `find`, `status`.
+- **Faz 1 (okuma) tamam:** `init`, `reindex`, artımlı senkron, adres çözücü, `search`, `outline`, `read`, `peek`, `links`, `backlinks`, `find`, `status`.
+- **Faz 2 (yazma ve görev) tamam:**
+  - yazma: `new`, `append`, `write`, `insert`, `edit`, `section add`, `link`, `mv`, `archive`, `rm`
+  - `task`: `add`, `list`, `next`, `done`, …
+  - `session`: `start`, `plan`, `log`, `checkpoint`, `resume`, `fork`, `close`, …
+  - `project`, `branch`
+  - işaretleme: `mark`, `highlight`, `callout`, `unmark`, `marks`
+- **Karşılaştırma testi:** Paragma'lı, düz dosyalı ve hafızasız koşullar için [bench/](bench/README.md).
+
+Uzun iş akışı:
+
+```sh
+pg session resume                         # yeni konuşmada: hedef, ilerleme, açık task'lar, devir notu
+pg session start "Ödeme akışı" --goal "Stripe ile kart ödemesi"
+pg session plan "Webhook" "İmza doğrulama" "Testler"     # her argüman bir task, ID'leri döner
+pg task done t3f2                         # sıradaki task'ı da söyler
+pg session log "karar: indirim vergiden önce uygulanır"
+pg session checkpoint "Webhook bitti; sıradaki: testler"
+```
 
 ## Kurulum
 

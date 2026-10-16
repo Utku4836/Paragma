@@ -1,0 +1,13 @@
+We are adding discounts to the cart. My decisions:
+1. Two kinds: a percentage discount and a fixed amount discount (in kuruş).
+2. A percentage discount can be at most 50%.
+3. The discount is applied to the net subtotal BEFORE VAT is added.
+4. The cart total never goes below zero.
+
+Plan:
+(a) pricing/discount.go: type Discount with constructors Percent(p int) (Discount, error) and Fixed(amount int64) (Discount, error), and a method Amount(net int64) int64 that returns how much to take off.
+(b) cart: add the field `Discount *pricing.Discount` to Cart and apply it in Total().
+(c) table tests for (a) and (b).
+(d) a short README section about discounts.
+
+In this conversation do only step (a), then stop. We will do the rest in another conversation.
