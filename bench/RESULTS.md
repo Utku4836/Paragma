@@ -1,46 +1,67 @@
-# Results: Paragma vs no memory
+# Results
 
-Run on 2026-10-16 with Paragma at the end of phase 3 (MVP). Agent: Antigravity CLI with Gemini 3.8 Flash High. One run per cell. Setup, scenarios and hidden checks are described in [README.md](README.md).
+Agent: Antigravity CLI with Gemini 3.8 Flash High. One run per cell. Setup, scenarios and hidden checks are described in [README.md](README.md). Raw logs are not committed; `evaluate.py` and `why_flagged.py` reproduce the tables from a runs directory.
 
-**Summary.** With Paragma the agent got all three tasks fully right. Without memory it fixed the recurring error the wrong way and broke a project rule it could not know. On the recurring error, Paragma also cut the work sharply: 71% fewer tool calls, 87% fewer tokens processed and 80% less wall time.
+Three conditions:
+- **No memory:** the repository only.
+- **Plain notes:** the same 149 notes as Markdown files in `memory/`, Obsidian-style, plus an `AGENTS.md` saying where things are and when to read and write them. The agent reads them with its own tools.
+- **Paragma:** the same notes behind `pg`, plus the `AGENTS.md` section written by `pg install agents-md`.
 
-## Scores
+## Summary
 
-| Scenario | No memory | Paragma |
-| --- | --- | --- |
-| S1 recurring error | 80%: tests green, but the fix is wrong | **100%** |
-| S2 continuation (2 conversations) | invalid run (see below) | **100%** |
-| S3 project rules | 71%: no 30-day refund window | **100%** |
+- **Memory decides correctness.** Without memory the agent fixed the recurring error the wrong way and missed a project rule it could not know. With the same knowledge, as plain notes or through Paragma, every task was fully right.
+- **Paragma vs plain notes is an efficiency question, and the answer depends on the task.**
+  - Recurring error: Paragma clearly ahead. `pg run` puts the recorded fix next to the failure.
+  - Project rules: Paragma processed fewer tokens but took longer.
+  - Continuation: plain notes were slightly cheaper.
+- At this memory size (149 notes, about 17k tokens) reading plain files is still affordable. Whether Paragma's lead grows with a larger memory was not measured.
+
+## Correctness
+
+| Scenario | No memory | Plain notes | Paragma |
+| --- | --- | --- | --- |
+| S1 recurring error | 80%: tests green, wrong fix | 100% | 100% |
+| S2 continuation (2 conversations) | invalid run (see below) | 100% | 100% |
+| S3 project rules | 71%: no 30-day refund window | 100% | 100% |
 
 ## Cost
 
+Paragma was run twice: once at the end of phase 3 and once at the end of phase 5, whose instructions add `pg related` and `pg context`. Both runs are shown because the difference between them is a fair picture of run-to-run variance.
+
 | Scenario | Condition | Tool calls | Tokens processed | Uncached tokens | Wall time |
 | --- | --- | --- | --- | --- | --- |
-| S1 | no memory | 58 | 2,483,133 | 321,194 | 570 s |
-| S1 | Paragma | **17** | **316,438** | **161,241** | **115 s** |
-| S2, second conversation | Paragma | 37 | — | — | — |
-| S3 | no memory | 37 | 1,312,232 | 267,403 | 395 s |
-| S3 | Paragma | 46 | 1,972,619 | 279,925 | 495 s |
+| S1 | no memory | 58 | 2.48M | 321k | 570 s |
+| S1 | plain notes | 54 | 2.35M | 285k | 385 s |
+| S1 | Paragma (phase 3) | **17** | **0.32M** | **161k** | **115 s** |
+| S1 | Paragma (phase 5) | 36 | 1.09M | 230k | 279 s |
+| S2 | plain notes | 73 (31 in 2nd conv.) | 2.72M | 472k | 846 s |
+| S2 | Paragma (phase 3) | 79 (37) | 3.15M | 462k | 921 s |
+| S2 | Paragma (phase 5) | 83 (39) | 2.90M | 523k | 815 s |
+| S3 | no memory | 37 | 1.31M | 267k | 395 s |
+| S3 | plain notes | 64 | 3.31M | 305k | 545 s |
+| S3 | Paragma (phase 3) | 46 | 1.97M | 280k | 495 s |
+| S3 | Paragma (phase 5) | 60 | 2.70M | 349k | 879 s |
 
-"Tokens processed" counts input, cached input, output and thinking over every model call, i.e. everything the agent had to read and write. In S2 the Paragma run used 79 tool calls over both conversations; its second conversation needed 37 to finish the work.
+"Tokens processed" counts input, cached input, output and thinking over every model call, i.e. everything the agent read and wrote. The no-memory S3 run is cheap because it never looked for rules it did not know existed, and it is wrong.
 
 ## What happened
 
-**S1: recurring error.** `go test` fails on a Windows checkout because the catalog file has CRLF line endings and its pinned checksum is computed over the LF file.
-- Without memory, the agent debugged for 58 tool calls. It made the tests pass by rewriting `testdata/catalog.json` with LF endings. The next Windows checkout breaks again, and the hidden test that loads a CRLF file fails.
-- With Paragma, `pg run -- go test ./...` printed the recorded fix on the first failure: normalise line endings in `catalog.Load` and keep the pinned checksum. The agent applied it in 17 tool calls; all hidden checks pass.
+**S1: recurring error.** `go test` fails on a Windows checkout: the catalog file has CRLF line endings and its pinned checksum is computed over the LF file.
+- No memory: tests made green by rewriting the test data with LF endings. The next Windows checkout breaks again.
+- Plain notes: the agent found `memory/episodes/errors/catalog-checksum-crlf.md` by grepping and applied the right fix (15 memory file reads).
+- Paragma: `pg run -- go test ./...` printed the recorded fix on the first failure. Fewest tool calls and tokens in both runs.
 
-**S2: continuation.** The user gave four decisions and a plan in conversation 1 ("do only step a"). Conversation 2 was a new agent profile with no access to the first transcript: "continue and finish".
-- With Paragma, the first conversation saved a session (plan, decisions, handoff). The second started with `pg session resume` and finished steps b–d. All checks pass, including "discount before VAT" and "total never below zero", which exist only in conversation 1.
-- The no-memory run is **invalid**. Twice, its second conversation searched the machine for the lost context, found this benchmark's directory, and ran the hidden tests against its own code. The leak detector (`why_flagged.py`) caught both runs and the result is excluded. An agent without memory searching outside its workspace for a lost conversation is itself the failure mode Paragma addresses.
+**S2: continuation.** The user gives four decisions and a plan in conversation 1 ("do only step a"). Conversation 2 has a fresh agent profile with no access to the first transcript: "continue and finish".
+- Plain notes and Paragma both saved the decisions in conversation 1 and finished correctly in conversation 2. Paragma's session commands (start, plan, log, checkpoint, task done) cost more calls than writing one Markdown session note.
+- The no-memory run is **invalid**. Twice its second conversation searched the machine for the lost context, found this benchmark's directory and ran the hidden tests against its own code. The leak detector caught both runs and they are excluded. That an agent without memory goes looking outside its workspace for a lost conversation is itself the failure mode both memory conditions avoid.
 
 **S3: project rules.** Add `Refund(...)` and follow the project's rules.
-- Without memory, the code is clean and its own tests pass. It has no 30-day refund window and no `ErrRefundWindow`, because that rule exists only in the project memory (ADR 0014). Two of six hidden checks fail.
-- With Paragma, the agent searched the rules and the decision, then implemented the window, the sentinel error, over-refund protection, auditing and `clock.Now()`. It spent about 25% more tool calls than the no-memory run, mostly reading memory; uncached tokens were about the same.
+- No memory: clean code, but no 30-day refund window and no `ErrRefundWindow`. That rule exists only in the project memory.
+- Plain notes and Paragma: both implemented every rule. Paragma processed 18–40% fewer tokens than plain notes, but the phase-5 run took longer in wall time.
 
 ## Limits
 
-- One run per cell, one model. Agent runs vary a lot between repetitions; treat the cost numbers as indicative.
-- The scenarios were written by the Paragma author and chosen because memory matters in them. The hidden checks only test what the user asked for or what the project's memory states.
-- The stronger baseline, the same memory as plain Markdown files (`files` condition), is in the harness but not in this run. In an earlier single S1 run (`PRELIMINARY.md`), plain files were also correct but needed 49 tool calls and 1.95M tokens, against 29 and 0.79M for Paragma.
-- Isolation: every conversation runs in a fresh agent profile, in a random temp directory, with a clean environment, and a detector counts any access outside the workspace. In S2 that was still not enough to stop a determined agent; see above.
+- One run per cell and one model. The two Paragma runs differ by up to 2x in the same scenario, so differences smaller than that are not meaningful.
+- The scenarios were written by the Paragma author and chosen because memory matters in them.
+- The memory is 149 notes. Plain notes stay workable at this size; larger memories were not tested.
+- Isolation: every conversation runs in a fresh agent profile, in a random temp directory, with a clean environment. A detector flags access outside the workspace; flagged runs were inspected, and only the no-memory S2 runs were excluded. The plain-notes S1 run read its own background task logs, which is allowed.

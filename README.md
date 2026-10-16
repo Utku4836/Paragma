@@ -26,7 +26,7 @@ Tasarım: [docs/TASARIM.md](docs/TASARIM.md)
   - proje hafızası git'e girmez (`init` `.gitignore`'a ekler) ve boş başlar
   - global hafıza (`~/.paragma`): projeden bağımsız hatalar için `error record --global`; `pg run` önce projeye, sonra global'e bakar
 - **Faz 5 tamam (modelsiz):** `keywords`, sonuç yokken arama ipucu, `misses`, `dupes`, otomatik terfi, `gc`
-- **Karşılaştırma testi:** [bench/RESULTS.md](bench/RESULTS.md). Tekrar eden hatada %71 daha az araç çağrısı ve %87 daha az token; üç görevin üçü de doğru (hafızasız: yanlış düzeltme, eksik kural). Düzenek: [bench/](bench/README.md)
+- **Karşılaştırma testi:** [bench/RESULTS.md](bench/RESULTS.md). Hafıza doğruluğu belirliyor: hafızasız ajan iki görevi yanlış yaptı, düz notlarla ve Paragma ile hepsi doğru. Düz notlara göre Paragma tekrar eden hatada belirgin şekilde verimli, diğer görevlerde fark küçük ya da yok. Düzenek: [bench/](bench/README.md)
 
 Bir ajana öğretmek için:
 
