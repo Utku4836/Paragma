@@ -205,6 +205,7 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 			label += "  [rules matching]"
 		} else if g.f.Tokens <= wholeNoteTokens {
 			text = a.wholeNote(s, g.f, lines)
+			label += "  (whole note)"
 		} else {
 			sort.SliceStable(g.items, func(i, j int) bool { return g.items[i].from < g.items[j].from })
 			last := 0
@@ -251,27 +252,53 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	}
 
 	// the project's rules, which apply to every change
-	a.printProjectRules(s, proj, shownRules)
-
-	// coverage: what else memory has on the topic
-	var other []string
 	printed := map[int64]bool{}
 	for _, g := range groups {
 		printed[g.f.ID] = true
 	}
+	if id := a.printProjectRules(s, proj, shownRules); id != 0 {
+		printed[id] = true
+	}
+
+	// what else mentions the topic: each with its point, so that listing a
+	// note does not send the agent to read it
+	var other []string
 	more := 0
 	if hits, err := s.db.Search(index.SearchOpts{Query: q, Max: 60}); err == nil {
+		var pick []index.Hit
 		seenF := map[int64]bool{}
 		for _, h := range hits {
 			if printed[h.File.ID] || seenF[h.File.ID] || h.File.Type == "journal" {
 				continue
 			}
 			seenF[h.File.ID] = true
-			if len(other) < 6 {
-				other = append(other, fmt.Sprintf("%s %s", h.File.Addr(), textutil.FmtTokens(h.File.Tokens)))
+			if len(pick) < 6 {
+				pick = append(pick, h)
 			} else {
 				more++
 			}
+		}
+		s.db.Hydrate(pick)
+		for _, h := range pick {
+			lines, err := fileLines(s, h.File)
+			if err != nil {
+				continue
+			}
+			from, to, ad, max := h.File.BodyLine, h.File.NLines, h.File.Addr(), 400
+			if h.Sec != nil && !h.Sec.IsTitle && h.File.Tokens > 120 {
+				from, to, ad, max = h.Sec.Line, h.Sec.BodyEnd, h.File.Addr()+"#"+h.Sec.Path, 400
+			}
+			text := textutil.OneLine(strings.Join(sectionText(lines, from, to, false), " "), max)
+			if strings.HasPrefix(text, h.File.Title) {
+				text = strings.TrimSpace(strings.TrimPrefix(text, h.File.Title))
+			}
+			other = append(other, fmt.Sprintf("- %s %s: %s", ad, textutil.FmtTokens(h.File.Tokens), text))
+		}
+	}
+	if len(other) > 0 {
+		a.printf("## also mentions %q, not shown above (their gist; read one only if it matters)\n", q)
+		for _, o := range other {
+			a.println(o)
 		}
 	}
 	var parts []string
@@ -286,16 +313,13 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	}
 	line := "covered: " + strings.Join(parts, ", ")
 	if len(notShown) > 0 {
-		line += "; over budget: " + strings.Join(notShown[:min(len(notShown), 6)], ", ")
+		line += "; over budget (pg read <addr>): " + strings.Join(notShown[:min(len(notShown), 6)], ", ")
 	}
-	if len(other) > 0 {
-		line += "; also mentions it: " + strings.Join(other, ", ")
-		if more > 0 {
-			line += fmt.Sprintf(" (+%d: pg search %s)", more, shellQuote(q))
-		}
+	if more > 0 {
+		line += fmt.Sprintf("; %d more notes mention it in passing (pg search %s)", more, shellQuote(q))
 	}
-	if len(notShown) == 0 && len(other) == 0 {
-		line += ". Nothing else in memory matches; this is all of it."
+	if len(notShown) == 0 && more == 0 {
+		line += ". This is everything memory has on it."
 	} else {
 		line += ". Nothing else matches."
 	}
@@ -306,17 +330,17 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 // printProjectRules prints the rules of project p that were not printed
 // above: all of them when they are few, else an index of rule groups. Once
 // per conversation (see shown); later packs print one line instead.
-func (a *app) printProjectRules(s *store, p string, already map[string]bool) {
+func (a *app) printProjectRules(s *store, p string, already map[string]bool) int64 {
 	if p == "" {
-		return
+		return 0
 	}
 	f, err := s.res.ResolveFile(p + "/rules")
 	if err != nil || f.Path != p+"/rules.md" {
-		return
+		return 0
 	}
 	rows, err := s.db.Query(`SELECT COALESCE(m.block_id,''), m.line, COALESCE(x.heading_path,'') FROM marks m LEFT JOIN sections x ON x.id = m.section_id WHERE m.file_id = ? AND m.kind = 'rule' ORDER BY m.line`, f.ID)
 	if err != nil {
-		return
+		return 0
 	}
 	type rule struct {
 		addr, sec, text string
@@ -341,13 +365,13 @@ func (a *app) printProjectRules(s *store, p string, already map[string]bool) {
 	}
 	rows.Close()
 	if len(rs) == 0 {
-		return
+		return 0
 	}
 	sh := loadShown(s)
 	key := "rules:" + p
 	if sh.recent(key, shownWindow) {
 		a.printf("## %s: %d more project rules, printed earlier in this conversation (pg rule list)\n", f.Addr(), len(rs))
-		return
+		return 0
 	}
 	total := 0
 	for _, r := range rs {
@@ -387,4 +411,5 @@ func (a *app) printProjectRules(s *store, p string, already map[string]bool) {
 	}
 	sh.mark(key)
 	a.saveShown(s, sh)
+	return f.ID
 }

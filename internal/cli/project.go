@@ -513,6 +513,17 @@ func (a *app) printProject(s *store, p string, full bool) error {
 	if full {
 		maxOpen = 30
 	}
+	if full {
+		var done []string
+		for _, t := range ts {
+			if t.Closed() {
+				done = append(done, fmt.Sprintf("^%s [%s] %s", t.ID, t.State, textutil.OneLine(t.Text, 120)))
+			}
+		}
+		if len(done) > 0 {
+			a.println("done: " + strings.Join(done, "; "))
+		}
+	}
 	if len(open) > 0 {
 		a.println("open:")
 		for _, l := range open[:min(len(open), maxOpen)] {
@@ -533,8 +544,12 @@ func (a *app) printProject(s *store, p string, full bool) error {
 		return nil
 	}
 	if len(notes) > 0 {
-		k := min(len(notes), 5)
-		a.printf("log (last %d of %d):\n", k, len(notes))
+		k := min(len(notes), 12)
+		if k == len(notes) {
+			a.println("log:")
+		} else {
+			a.printf("log (last %d of %d; all: pg read %s#%s):\n", k, len(notes), f.Addr(), a.sec(s, "notes"))
+		}
 		for _, l := range notes[len(notes)-k:] {
 			a.println("  " + strings.TrimSpace(l))
 		}
@@ -545,6 +560,9 @@ func (a *app) printProject(s *store, p string, full bool) error {
 			a.printf("next: ^%s %s  (pg done %s when finished)\n", nt.ID, textutil.OneLine(nt.Text, 100), nt.ID)
 		} else if tc.Total == 0 {
 			a.println(`next: pg plan "step 1" "step 2" ...`)
+		}
+		if len(notes) <= 12 {
+			a.println("(this is the whole project note; no need to read it)")
 		}
 	}
 	return nil

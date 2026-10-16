@@ -80,7 +80,7 @@ func TestRelatedAndContext(t *testing.T) {
 		t.Errorf("context over budget: %d tokens", n)
 	}
 	small := mustRun(t, v, "context", "jwt timezone", "--budget", "120")
-	if !strings.Contains(small, "over budget: ") {
+	if !strings.Contains(small, "over budget (pg read <addr>): ") {
 		t.Errorf("small budget should list what did not fit:\n%s", small)
 	}
 }
