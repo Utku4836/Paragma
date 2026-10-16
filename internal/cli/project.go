@@ -211,6 +211,9 @@ If the project exists, nothing is created: continue it with pg resume.`,
 			rel := p + "/" + p + ".md"
 			return a.withLock(s, func() error {
 				n := newNote(s, rel, a.projectTemplate(s, title, goal, decisions))
+				if h := a.gitHead(); h != "" {
+					n.lines = setFront(n.lines, "base", h) // where the work began, for pg resume
+				}
 				if len(steps) > 0 {
 					taken := map[string]bool{}
 					var block []string
@@ -555,6 +558,11 @@ func (a *app) printProject(s *store, p string, full bool) error {
 		}
 	}
 	a.printProjectFiles(s, p, f)
+	if f != nil {
+		if lines, err := fileLines(s, f); err == nil {
+			a.printCodeChanges(frontValue(lines, "base"))
+		}
+	}
 	if f != nil {
 		if nt, _ := a.nextTask(s, f); nt != nil {
 			a.printf("next: ^%s %s  (pg done %s when finished)\n", nt.ID, textutil.OneLine(nt.Text, 100), nt.ID)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,5 +104,38 @@ func TestNeighborsOrphansBroken(t *testing.T) {
 	os.WriteFile(filepath.Join(v, "Spaces", "main", "demo", "x.md"), []byte("# X\n\nsee [[jwt-exp-timzone]]\n"), 0o644)
 	if out := mustRun(t, v, "broken"); !strings.Contains(out, "[[jwt-exp-timzone]]  did you mean jwt-exp-timezone") {
 		t.Fatal(out)
+	}
+}
+
+func TestResumeShowsCodeChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	repo := t.TempDir()
+	t.Chdir(repo)
+	git := func(args ...string) {
+		c := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a\n\nfunc Old() {}\n"), 0o644)
+	git("add", "-A")
+	git("commit", "-qm", "init")
+	mustRun(t, v, "start", "feature", "--step", "x")
+	os.MkdirAll(filepath.Join(repo, "pricing"), 0o755)
+	os.WriteFile(filepath.Join(repo, "pricing", "discount.go"), []byte("package pricing\n\ntype Discount struct {\n\tp int\n}\n\nfunc Percent(p int) (Discount, error) { return Discount{p}, nil }\n"), 0o644)
+	git("add", "-A")
+	git("commit", "-qm", "step a")
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a\n\nfunc Old() {}\n\nfunc New() int { return 1 }\n"), 0o644)
+	out := mustRun(t, v, "resume", "feature")
+	for _, want := range []string{"code changed since the project started (git):", "A pricing/discount.go: type Discount struct; func Percent(p int) (Discount, error)", "M a.go: func Old(); func New() int"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resume lacks %q:\n%s", want, out)
+		}
 	}
 }

@@ -60,7 +60,7 @@ func (a *app) outlineCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:     "outline [addr]",
 		Aliases: []string{"ls", "map", "tree", "toc"},
-		Short: "Map of the space (notes by project), or the heading skeleton of one note",
+		Short:   "Map of the space (notes by project), or the heading skeleton of one note",
 		Long: `Without an address: a map of every note by layer with its token cost.
 With an address: the heading skeleton of a note (or of one heading's
 subtree) with the cost of reading each heading. Use it before pg read on
@@ -165,7 +165,7 @@ func (a *app) readCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:     "read <addr>...",
 		Aliases: []string{"show", "cat", "view", "get", "open"},
-		Short: "Print only the addressed notes, headings, blocks or lines",
+		Short:   "Print only the addressed notes, headings, blocks or lines",
 		Long: `Print the addressed part of a note. A heading includes its sub-headings.
 Several addresses can be read in one call; each gets its own header line
 (address, file:lines to cite, token cost, hash). If a target is bigger than
