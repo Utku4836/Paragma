@@ -49,6 +49,8 @@ type app struct {
 	textFile  string
 
 	stdout *bufio.Writer
+	rawOut io.Writer // unbuffered stdout and stderr, for pg run
+	rawErr io.Writer
 	stdin  io.Reader
 
 	// opened lazily
@@ -63,7 +65,7 @@ type store struct {
 }
 
 func newApp(stdout io.Writer, stdin io.Reader) *app {
-	return &app{stdout: bufio.NewWriterSize(stdout, 32*1024), stdin: stdin, stores: map[bool]*store{}}
+	return &app{stdout: bufio.NewWriterSize(stdout, 32*1024), rawOut: stdout, rawErr: os.Stderr, stdin: stdin, stores: map[bool]*store{}}
 }
 
 func (a *app) close() {

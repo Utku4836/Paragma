@@ -393,12 +393,16 @@ func newBlockID(s *store, prefix string, taken map[string]bool) string {
 	}
 }
 
-func now() time.Time       { return time.Now() }
-func today() string        { return now().Format("2006-01-02") }
-func clock() string        { return now().Format("15:04") }
-func stamp() string        { return now().Format("2006-01-02 15:04") }
+func now() time.Time { return time.Now() }
+func today() string  { return now().Format("2006-01-02") }
+func clock() string  { return now().Format("15:04") }
+func stamp() string  { return now().Format("2006-01-02 15:04") }
 func (a *app) ok(s string) {
-	if !a.dryRun {
+	switch {
+	case a.dryRun:
+	case a.quiet:
+		a.println(strings.Fields(s)[0]) // the address alone
+	default:
 		a.println("ok " + s)
 	}
 }

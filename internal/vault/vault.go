@@ -216,7 +216,7 @@ func Init(root string, newID func() string, today, lang string) (*Vault, bool, e
 	}
 	files := map[string]string{
 		"config.toml":               fmt.Sprintf(configTemplate, lang),
-		".gitignore":                "index.db\nindex.db-*\nlock\nstate.json\n",
+		".gitignore":                "index.db\nindex.db-*\nlock\nstate.json\nlast-run.json\n",
 		"knowledge/rules.md":        note("rule", "semantic", t("Rules", "Kurallar"), true) + "\n" + t("Project rules, one `> [!rule]` callout each.", "Proje kuralları, her biri bir `> [!rule]` callout'u.") + "\n",
 		"knowledge/architecture.md": note("note", "semantic", t("Architecture", "Mimari"), true),
 		"knowledge/stack.md":        note("note", "semantic", t("Stack", "Teknoloji"), true),

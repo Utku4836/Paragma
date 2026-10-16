@@ -18,6 +18,7 @@ var Version = "0.1.0-dev (Paragma)"
 // Execute runs pg and returns the process exit code.
 func Execute(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 	a := newApp(stdout, stdin)
+	a.rawErr = stderr
 	root := a.rootCmd()
 	unprotect(root)
 	root.SetArgs(protectArgs(args))
@@ -83,6 +84,9 @@ func (a *app) rootCmd() *cobra.Command {
 		a.mvCmd(), a.archiveCmd(), a.rmCmd(),
 		a.taskCmd(), a.sessionCmd(), a.projectCmd(), a.branchCmd(),
 		a.markCmd(), a.highlightCmd(), a.calloutCmd(), a.unmarkCmd(), a.marksCmd(),
+		a.errorCmd(), a.runCmd(), a.decisionCmd(), a.journalCmd(), a.ruleCmd(), a.promoteCmd(), a.supersedeCmd(),
+		a.verifyCmd(), a.staleCmd(), a.primeCmd(), a.indexCmd(), a.skillCmd(), a.installCmd(), a.hookCmd(),
+		a.grepCmd(), a.recentCmd(), a.doctorCmd(),
 	)
 	root.SetHelpCommand(a.helpCmd(root))
 	root.SetHelpFunc(func(c *cobra.Command, _ []string) { a.printHelp(c) })
@@ -92,13 +96,16 @@ func (a *app) rootCmd() *cobra.Command {
 
 // groups is the help index printed by pg help.
 var groups = []struct{ name, cmds string }{
-	{"read", "outline search read peek links backlinks find"},
+	{"read", "outline search read peek links backlinks find grep recent index"},
 	{"write", "new append write insert edit section link mv archive rm"},
 	{"task", "task add|list|show|start|done|block|cancel|ask|reopen|note|move|edit|next|claim"},
 	{"session", "session start|plan|status|log|checkpoint|resume|fork|list|switch|close"},
 	{"project", "project new|list|switch|info|archive  branch new|list|switch|status|merge|close"},
+	{"error", "run  error record|find|seen|reopen  decision record  journal"},
+	{"rule", "rule add|list  promote supersede verify stale"},
 	{"mark", "mark highlight callout unmark marks"},
-	{"admin", "init status reindex"},
+	{"agent", "prime skill install hook"},
+	{"admin", "init status reindex doctor"},
 }
 
 func (a *app) helpCmd(root *cobra.Command) *cobra.Command {
@@ -112,6 +119,13 @@ func (a *app) helpCmd(root *cobra.Command) *cobra.Command {
 			}
 			c, _, err := root.Find(args)
 			if err != nil || c == root {
+				// a group from the pg help index that is not itself a command
+				for _, g := range groups {
+					if len(args) == 1 && g.name == args[0] {
+						a.printGroup(root, g.cmds)
+						return nil
+					}
+				}
 				return fail(ExitUsage, "unknown command %q (see: pg help)", strings.Join(args, " "))
 			}
 			a.printHelp(c)
@@ -213,5 +227,26 @@ func unprotect(c *cobra.Command) {
 	}
 	for _, sc := range c.Commands() {
 		unprotect(sc)
+	}
+}
+
+// printGroup lists the commands of a help group, one line each with its
+// first example.
+func (a *app) printGroup(root *cobra.Command, cmds string) {
+	for _, name := range strings.Fields(cmds) {
+		name = strings.SplitN(name, "|", 2)[0]
+		c, _, err := root.Find([]string{name})
+		if err != nil || c == root {
+			continue
+		}
+		if c.HasAvailableSubCommands() {
+			a.printf("  %-10s %s (pg help %s)\n", c.Name(), c.Short, c.Name())
+			continue
+		}
+		ex := ""
+		if c.Example != "" {
+			ex = "  e.g. " + strings.TrimSpace(strings.SplitN(c.Example, "\n", 2)[0])
+		}
+		a.printf("  %-10s %s%s\n", c.Name(), c.Short, ex)
 	}
 }

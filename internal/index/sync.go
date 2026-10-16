@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Utku-Private/Paragma/internal/errsig"
 	"github.com/Utku-Private/Paragma/internal/md"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 	"github.com/Utku-Private/Paragma/internal/vault"
@@ -298,8 +299,16 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 			return err
 		}
 	}
-	if sn := doc.FrontString("sig_norm"); sn != "" {
-		if _, err := w.stmt["sig"].Exec(fid, sn, hashBytes([]byte(sn))); err != nil {
+	// error signatures: every raw `sig` (one or a list), normalised here so
+	// hand-written notes match too, plus an explicit sig_norm if present
+	sigSeen := map[string]bool{}
+	for _, raw := range append(doc.FrontList("sig"), doc.FrontString("sig_norm")) {
+		sn := errsig.Normalize(raw)
+		if sn == "" || sigSeen[sn] {
+			continue
+		}
+		sigSeen[sn] = true
+		if _, err := w.stmt["sig"].Exec(fid, sn, errsig.Hash(sn)); err != nil {
 			return err
 		}
 	}

@@ -638,3 +638,28 @@ func prefixCols(p, cols string) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// SigRow is one indexed error signature.
+type SigRow struct {
+	FileID int64
+	Norm   string
+	Hash   string
+}
+
+// ErrorSigs returns every error signature in the vault.
+func (d *DB) ErrorSigs() ([]SigRow, error) {
+	rows, err := d.Query(`SELECT file_id, sig_norm, sig_hash FROM error_sigs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SigRow
+	for rows.Next() {
+		var s SigRow
+		if err := rows.Scan(&s.FileID, &s.Norm, &s.Hash); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
