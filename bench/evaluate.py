@@ -18,9 +18,26 @@ OUT = sys.argv[2] if len(sys.argv) > 2 else None
 HIDDEN_TOTAL = {"s1-recurring-error": 4, "s2-continuation": 4, "s3-project-rules": 6}
 
 
-def conv_metrics(path):
+WINPATH = re.compile(r"[A-Za-z]:(?:\\|\|/)[^\s\"'|;,)]*")
+ALLOWED_OUTSIDE = ("c:/program files/go", "c:/program")  # the Go toolchain; paths are cut at spaces
+
+
+def outside_paths(text, ws):
+    """Absolute paths in a tool call that are outside the run's workspace."""
+    out = []
+    for m in WINPATH.findall(text):
+        p = m.replace("\\\\", "/").replace("\\", "/").lower()
+        if ws and p.startswith(ws):
+            continue
+        if p.startswith(ALLOWED_OUTSIDE):
+            continue
+        out.append(p)
+    return out
+
+
+def conv_metrics(path, ws=""):
     m = dict(steps=0, tools=0, input=0, cached=0, output=0, thinking=0, seconds=0.0,
-             pg=0, mem_reads=0, status="missing", asked=False)
+             pg=0, mem_reads=0, status="missing", asked=False, outside=0)
     if not os.path.exists(path):
         return m
     seen_tools = set()
@@ -54,6 +71,14 @@ def conv_metrics(path):
             info = su.get("tool_info") or {}
             params = json.dumps(info.get("parameters", {}), ensure_ascii=False)
             cmd = (info.get("parameters") or {}).get("CommandLine", "") or ""
+            if info.get("name") == "manage_task":
+                continue  # the agent's own background tasks; paths point into its own profile
+            seen_text = (params + " " + (info.get("output") or "")).replace("\\\\", "/").replace("\\", "/").lower()
+            own = ws.rsplit("/", 1)[-1] if ws else ""
+            param_text = params.replace("\\\\", "/").replace("\\", "/").lower()
+            foreign_ws = [w for w in re.findall(r"/(ws-[a-z0-9]{8})", param_text) if w != own]
+            if outside_paths(params, ws) or "paragma/bench" in seen_text or foreign_ws or re.search(r"c:/users/[^/]+/.gemini/", seen_text):
+                m["outside"] += 1
             if re.search(r"(^|[\s;&|(])pg(\.exe)?\s", cmd + " "):
                 m["pg"] += 1
             elif "memory" in params.replace("\\\\", "/") or ".paragma" in params:
@@ -94,6 +119,8 @@ def extra_checks(scenario, run):
                 if f.endswith("_test.go"):
                     tests += open(os.path.join(repo, d, f), encoding="utf-8", errors="replace").read()
         checks["discount tests written"] = "Discount" in tests or "Percent(" in tests
+        cart = open(os.path.join(repo, "cart", "cart.go"), encoding="utf-8", errors="replace").read()
+        checks["API as specified"] = re.search(r"Discount\s+\*pricing\.Discount", cart) is not None
     return checks
 
 
@@ -107,11 +134,20 @@ for scenario in sorted(os.listdir(RUNS)):
         if not os.path.isdir(rdir) or "-" not in run:
             continue
         cond, rep = run.rsplit("-", 1)
-        convs = [conv_metrics(os.path.join(rdir, f"conv{i}.jsonl")) for i in (1, 2)]
+        if not os.path.exists(os.path.join(rdir, "repo", "go.mod")):
+            continue  # unfinished run (the repo copy is the last step)
+        ws = ""
+        wsf = os.path.join(rdir, "workspace.txt")
+        if os.path.exists(wsf):
+            w = open(wsf, encoding="utf-8").read().strip()
+            if w.startswith("/") and len(w) > 2 and w[2] == "/":
+                w = w[1] + ":" + w[2:]
+            ws = w.replace("\\", "/").lower()
+        convs = [conv_metrics(os.path.join(rdir, f"conv{i}.jsonl"), ws) for i in (1, 2)]
         convs = [c for c in convs if c["status"] != "missing"]
         tot = defaultdict(float)
         for c in convs:
-            for k in ("steps", "tools", "input", "cached", "output", "thinking", "seconds", "pg", "mem_reads"):
+            for k in ("steps", "tools", "input", "cached", "output", "thinking", "seconds", "pg", "mem_reads", "outside"):
                 tot[k] += c[k]
         passed, failed = hidden_results(os.path.join(rdir, "hidden.json"))
         extras = extra_checks(scenario, rdir)
@@ -124,14 +160,14 @@ for scenario in sorted(os.listdir(RUNS)):
                          extras=extras, score=score_items / score_total if score_total else 0,
                          tokens=int(tot["input"] + tot["cached"] + tot["output"] + tot["thinking"]),
                          uncached=int(tot["input"] + tot["output"] + tot["thinking"]),
-                         **{k: tot[k] for k in ("steps", "tools", "seconds", "pg", "mem_reads")},
+                         **{k: tot[k] for k in ("steps", "tools", "seconds", "pg", "mem_reads", "outside")},
                          last_conv_tools=int(convs[-1]["tools"]) if convs else 0))
 
 order = {"none": 0, "files": 1, "paragma": 2}
 lines = []
 p = lines.append
-p("| scenario | condition | runs | score (mean) | full pass | tool calls | tokens processed | uncached tokens | wall s | pg calls | memory file reads |")
-p("|---|---|---|---|---|---|---|---|---|---|---|")
+p("| scenario | condition | runs | score (mean) | full pass | tool calls | last conversation tool calls | tokens processed | uncached tokens | wall s | pg calls | memory file reads | outside-workspace calls |")
+p("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 agg = defaultdict(list)
 for r in rows:
     agg[(r["scenario"], r["cond"])].append(r)
@@ -144,8 +180,8 @@ def mean(xs):
 for (sc, cond), rs in sorted(agg.items(), key=lambda kv: (kv[0][0], order.get(kv[0][1], 9))):
     full = sum(1 for r in rs if abs(r["score"] - 1) < 1e-9)
     p(f"| {sc} | {cond} | {len(rs)} | {mean([r['score'] for r in rs]):.0%} | {full}/{len(rs)} | "
-      f"{mean([r['tools'] for r in rs]):.1f} | {mean([r['tokens'] for r in rs]):,.0f} | {mean([r['uncached'] for r in rs]):,.0f} | "
-      f"{mean([r['seconds'] for r in rs]):.0f} | {mean([r['pg'] for r in rs]):.1f} | {mean([r['mem_reads'] for r in rs]):.1f} |")
+      f"{mean([r['tools'] for r in rs]):.1f} | {mean([r['last_conv_tools'] for r in rs]):.1f} | {mean([r['tokens'] for r in rs]):,.0f} | {mean([r['uncached'] for r in rs]):,.0f} | "
+      f"{mean([r['seconds'] for r in rs]):.0f} | {mean([r['pg'] for r in rs]):.1f} | {mean([r['mem_reads'] for r in rs]):.1f} | {sum(r['outside'] for r in rs):.0f} |")
 p("")
 p("Per run:")
 p("")

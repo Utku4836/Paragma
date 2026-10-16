@@ -19,5 +19,5 @@ mkdir -p "$OUT"
 		done
 	done
 } >"$OUT/cells.txt"
-xargs -P "$PAR" -L 1 bash -c 'bash "'"$B"'/run.sh" "$0" "$1" "$2" "'"$OUT"'" >>"'"$OUT"'/progress.log" 2>&1' <"$OUT/cells.txt"
+xargs -P "$PAR" -L 1 bash -c '[ -f "'"$OUT"'/$0/$1-$2/repo/go.mod" ] && exit 0; bash "'"$B"'/run.sh" "$0" "$1" "$2" "'"$OUT"'" >>"'"$OUT"'/progress.log" 2>&1' <"$OUT/cells.txt"
 echo "matrix finished $(date)" >>"$OUT/progress.log"
