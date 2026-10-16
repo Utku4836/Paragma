@@ -141,6 +141,7 @@ var stmts = map[string]string{
 	"mark":    `INSERT INTO marks (file_id, section_id, block_id, line, kind, note) VALUES (?,?,?,?,?,?)`,
 	"tag":     `INSERT INTO tags (file_id, tag) VALUES (?,?)`,
 	"sig":     `INSERT INTO error_sigs (file_id, sig_norm, sig_hash) VALUES (?,?,?)`,
+	"code":    `INSERT INTO code_refs (file_id, section_id, line, ref) VALUES (?,?,?,?)`,
 }
 
 func newWriter(tx *sql.Tx, v *vault.Vault) (*writer, error) {
@@ -179,6 +180,7 @@ func (w *writer) deleteFile(rel string) error {
 		`DELETE FROM marks WHERE file_id=?`,
 		`DELETE FROM tags WHERE file_id=?`,
 		`DELETE FROM error_sigs WHERE file_id=?`,
+		`DELETE FROM code_refs WHERE file_id=?`,
 		`DELETE FROM files WHERE id=?`,
 	} {
 		if _, err := w.tx.Exec(q, id); err != nil {
@@ -296,6 +298,11 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 	}
 	for _, t := range tags {
 		if _, err := w.stmt["tag"].Exec(fid, t); err != nil {
+			return err
+		}
+	}
+	for _, c := range doc.CodeRefs {
+		if _, err := w.stmt["code"].Exec(fid, secID(c.Section), c.Line, c.Ref); err != nil {
 			return err
 		}
 	}

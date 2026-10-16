@@ -87,6 +87,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.errorCmd(), a.runCmd(), a.decisionCmd(), a.journalCmd(), a.ruleCmd(), a.promoteCmd(), a.supersedeCmd(),
 		a.verifyCmd(), a.staleCmd(), a.primeCmd(), a.indexCmd(), a.skillCmd(), a.installCmd(), a.hookCmd(),
 		a.grepCmd(), a.recentCmd(), a.doctorCmd(),
+		a.relatedCmd(), a.contextCmd(), a.neighborsCmd("neighbors"), a.graphCmd(), a.orphansCmd(), a.brokenCmd(),
 	)
 	root.SetHelpCommand(a.helpCmd(root))
 	root.SetHelpFunc(func(c *cobra.Command, _ []string) { a.printHelp(c) })
@@ -103,6 +104,7 @@ var groups = []struct{ name, cmds string }{
 	{"project", "project new|list|switch|info|archive  branch new|list|switch|status|merge|close"},
 	{"error", "run  error record|find|seen|reopen  decision record  journal"},
 	{"rule", "rule add|list  promote supersede verify stale"},
+	{"graph", "related context neighbors graph orphans broken"},
 	{"mark", "mark highlight callout unmark marks"},
 	{"agent", "prime skill install hook"},
 	{"admin", "init status reindex doctor"},

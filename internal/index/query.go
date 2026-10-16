@@ -663,3 +663,36 @@ func (d *DB) ErrorSigs() ([]SigRow, error) {
 	}
 	return out, rows.Err()
 }
+
+// CodeRefRow is one code reference in a note.
+type CodeRefRow struct {
+	FileID    int64
+	SectionID int64
+	Line      int
+	Ref       string
+}
+
+// CodeRefs returns every code reference in the vault.
+func (d *DB) CodeRefs() ([]CodeRefRow, error) {
+	rows, err := d.Query(`SELECT file_id, COALESCE(section_id, 0), line, ref FROM code_refs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CodeRefRow
+	for rows.Next() {
+		var c CodeRefRow
+		if err := rows.Scan(&c.FileID, &c.SectionID, &c.Line, &c.Ref); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// BlockAt returns the id of the block holding a line of a file ("" if none).
+func (d *DB) BlockAt(fileID int64, line int) string {
+	var id string
+	d.QueryRow(`SELECT block_id FROM blocks WHERE file_id=? AND line<=? AND line_end>=? ORDER BY line_end-line LIMIT 1`, fileID, line, line).Scan(&id)
+	return id
+}

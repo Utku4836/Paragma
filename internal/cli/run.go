@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Utku-Private/Paragma/internal/errsig"
+	"github.com/Utku-Private/Paragma/internal/md"
 	"github.com/Utku-Private/Paragma/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -109,8 +110,21 @@ func (a *app) afterFailure(command string, code int, output string) {
 		vault.WriteFileAtomic(lastRunPath(s), b)
 	}
 
+	// the project's own record wins; the global vault (errors that are not
+	// about one project: toolchain, OS, CI) is the fallback
 	done := make(chan []errMatch, 1)
-	go func() { done <- a.matchErrors(s, output, false) }()
+	from := s
+	go func() {
+		ms := a.matchErrors(s, output, false)
+		if len(ms) == 0 && !s.v.Global {
+			if g, err := a.openVault(true); err == nil {
+				if ms = a.matchErrors(g, output, false); len(ms) > 0 {
+					from = g
+				}
+			}
+		}
+		done <- ms
+	}()
 	var ms []errMatch
 	select {
 	case ms = <-done:
@@ -118,7 +132,10 @@ func (a *app) afterFailure(command string, code int, output string) {
 	}
 	if len(ms) > 0 {
 		m := ms[0]
-		addr, fix := a.fixText(s, m.f, 700)
+		addr, fix := a.fixText(from, m.f, 700)
+		if from != s {
+			addr = "~" + addr // global vault
+		}
 		a.printf("--- paragma: known error (%s match, seen %dx) %s\n", m.level, maxInt(m.f.Seen, 1), addr)
 		if fix != "" {
 			a.println(fix)
@@ -126,15 +143,46 @@ func (a *app) afterFailure(command string, code int, output string) {
 		if len(ms) > 1 {
 			var more []string
 			for _, x := range ms[1:min(len(ms), 3)] {
-				more = append(more, x.f.Addr())
+				more = append(more, globalMark(from, s)+x.f.Addr())
 			}
 			a.println("also: " + strings.Join(more, ", "))
 		}
-		a.printf("if it works: pg error seen %s\n", m.f.Addr())
+		a.printf("if it works: pg error seen %s%s\n", globalMark(from, s), m.f.Addr())
+		a.printFileRules(s, raw)
 		return
 	}
 	if s.v.Cfg.Hints && len(lines) > 0 {
 		a.println(`--- paragma: not in memory. After fixing it: pg error record --from-last --cause "..." --fix "..."`)
+	}
+	a.printFileRules(s, raw)
+}
+
+// printFileRules shows the rules and decisions about the source files named
+// in failing output (at most two lines): what the code there must respect.
+func (a *app) printFileRules(s *store, lines []string) {
+	var paths []string
+	seen := map[string]bool{}
+	for _, l := range lines {
+		for _, r := range md.CodeRefs(" " + l + " ") {
+			if strings.HasPrefix(r, "pkg:") || strings.HasSuffix(r, "/") || seen[r] {
+				continue
+			}
+			seen[r] = true
+			paths = append(paths, codePath(s, r))
+		}
+	}
+	if len(paths) == 0 {
+		return
+	}
+	n := 0
+	for _, h := range a.relatedNotes(s, paths, 2, false) {
+		if h.f.Type != "rule" && h.f.Type != "decision" {
+			continue
+		}
+		a.printf("rule for this file: %s (%s)\n", h.addr, h.why)
+		if n++; n == 2 {
+			break
+		}
 	}
 }
 
@@ -143,4 +191,12 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// globalMark is "~" when a match came from the global vault.
+func globalMark(from, project *store) string {
+	if from != project {
+		return "~"
+	}
+	return ""
 }

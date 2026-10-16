@@ -207,21 +207,13 @@ func Init(root string, newID func() string, today, lang string) (*Vault, bool, e
 			return nil, false, err
 		}
 	}
-	note := func(typ, layer, title string, verified bool) string {
-		v := ""
-		if verified {
-			v = "verified: " + today + "\n"
-		}
-		return fmt.Sprintf("---\nid: %s\ntype: %s\nlayer: %s\ntitle: %s\ncreated: %s\n%s---\n# %s\n", newID(), typ, layer, title, today, v, title)
-	}
+	// a vault starts empty: notes are created when something is written
+	// (pg rule add creates rules.md, pg task add creates work/inbox.md, ...)
 	files := map[string]string{
-		"config.toml":               fmt.Sprintf(configTemplate, lang),
-		".gitignore":                "index.db\nindex.db-*\nlock\nstate.json\nlast-run.json\n",
-		"knowledge/rules.md":        note("rule", "semantic", t("Rules", "Kurallar"), true) + "\n" + t("Project rules, one `> [!rule]` callout each.", "Proje kuralları, her biri bir `> [!rule]` callout'u.") + "\n",
-		"knowledge/architecture.md": note("note", "semantic", t("Architecture", "Mimari"), true),
-		"knowledge/stack.md":        note("note", "semantic", t("Stack", "Teknoloji"), true),
-		"work/inbox.md":             note("note", "working", t("Inbox", "Gelen kutusu"), false),
+		"config.toml": fmt.Sprintf(configTemplate, lang),
+		".gitignore":  "index.db\nindex.db-*\nlock\nstate.json\nlast-run.json\n",
 	}
+	_, _ = t, newID
 	for rel, content := range files {
 		p := filepath.Join(root, filepath.FromSlash(rel))
 		if _, err := os.Stat(p); err == nil {
@@ -233,6 +225,33 @@ func Init(root string, newID func() string, today, lang string) (*Vault, bool, e
 	}
 	v, err := Open(root)
 	return v, created, err
+}
+
+// IgnoreInRepo keeps the project memory out of git: it adds ".paragma/" to
+// the .gitignore of the project directory when that directory is a git
+// work tree (or already has a .gitignore). It reports whether it wrote.
+func IgnoreInRepo(base string) (bool, error) {
+	gi := filepath.Join(base, ".gitignore")
+	_, gitErr := os.Stat(filepath.Join(base, ".git"))
+	old, err := os.ReadFile(gi)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if os.IsNotExist(err) && gitErr != nil {
+		return false, nil // not a git repository: nothing to protect
+	}
+	for _, l := range strings.Split(string(old), "\n") {
+		switch strings.TrimSpace(l) {
+		case DirName, DirName + "/", "/" + DirName, "/" + DirName + "/":
+			return false, nil
+		}
+	}
+	text := string(old)
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += "# Paragma project memory (local, not shared)\n" + DirName + "/\n"
+	return true, WriteFileAtomic(gi, []byte(text))
 }
 
 // InferLayer guesses the memory layer from the top-level directory.

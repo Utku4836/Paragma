@@ -13,7 +13,7 @@ import (
 
 // schemaVersion is bumped whenever the schema or the parser output changes;
 // a mismatch triggers a full rebuild.
-const schemaVersion = 5
+const schemaVersion = 7
 
 const schema = `
 CREATE TABLE files (
@@ -86,6 +86,10 @@ CREATE INDEX tags_file ON tags(file_id);
 
 CREATE TABLE error_sigs (file_id INTEGER, sig_norm TEXT, sig_hash TEXT);
 CREATE INDEX error_sigs_hash ON error_sigs(sig_hash);
+
+CREATE TABLE code_refs (file_id INTEGER, section_id INTEGER, line INTEGER, ref TEXT);
+CREATE INDEX code_refs_ref ON code_refs(ref);
+CREATE INDEX code_refs_file ON code_refs(file_id);
 `
 
 // DB is an open index for one vault.

@@ -44,6 +44,18 @@ Safe to re-run; existing files are kept.`,
 			if err != nil {
 				return fail(ExitInternal, "init: %v", err)
 			}
+			ignored := false
+			if !global {
+				// project memory is local to this machine: keep it out of git
+				if ignored, err = vault.IgnoreInRepo(v.Base); err != nil {
+					return fail(ExitInternal, ".gitignore: %v", err)
+				}
+			}
+			defer func() {
+				if ignored && !a.jsonOut {
+					a.println("ok .gitignore: added .paragma/ (project memory stays local)")
+				}
+			}()
 			db, err := index.Open(v)
 			if err != nil {
 				return fail(ExitInternal, "%v", err)

@@ -33,6 +33,7 @@ type Doc struct {
 	Callouts []Callout
 	Marks    []Mark
 	Tags     []string // inline #tags in the whole body, deduplicated
+	CodeRefs []CodeRef
 }
 
 // Section is a heading and the lines below it. Index 0 may be a preamble
@@ -133,6 +134,7 @@ func Parse(src []byte) *Doc {
 	d.parseSections(code)
 	d.parseLines(code)
 	d.parseFrontLinks()
+	d.parseCodeRefs()
 	return d
 }
 

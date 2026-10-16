@@ -156,7 +156,7 @@ func (a *app) errorCmd() *cobra.Command {
 
 func (a *app) errorRecordCmd() *cobra.Command {
 	var sig, title, symptom, cause, fix, files, tags string
-	var fromLast, force bool
+	var fromLast, force, global bool
 	c := &cobra.Command{
 		Use:   "record --sig TEXT|--from-last --cause TEXT --fix TEXT",
 		Short: "Record a fixed error so it is recognised next time",
@@ -173,9 +173,15 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 			if err != nil {
 				return err
 			}
+			proj := s // where pg run saved the last failure
+			if global {
+				if s, err = a.openVault(true); err != nil {
+					return fail(ExitNoVault, "no global vault yet (pg init --global)")
+				}
+			}
 			var lr *lastRun
 			if fromLast {
-				if lr, err = loadLastRun(s); err != nil {
+				if lr, err = loadLastRun(proj); err != nil {
 					return err
 				}
 				if sig == "" && len(lr.Lines) > 0 {
@@ -229,9 +235,10 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 					return err
 				}
 				if fromLast && !a.dryRun {
-					os.Remove(lastRunPath(s))
+					os.Remove(lastRunPath(proj))
 				}
-				a.ok(n.addr())
+				a.ok(globalPrefix(global) + n.addr())
+				a.suggestLinks(s, n.addr(), title+" "+cause)
 				return nil
 			})
 		},
@@ -246,6 +253,7 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 	f.StringVar(&files, "files", "", "comma separated files involved")
 	f.StringVar(&tags, "tags", "", "comma separated tags")
 	f.BoolVar(&force, "new", false, "record even if a matching error exists")
+	f.BoolVar(&global, "global", false, "record in the global vault: errors that are not about this project (toolchain, OS, CI)")
 	return c
 }
 
@@ -416,4 +424,11 @@ func errorTitle(sig string) string {
 		t = u
 	}
 	return textutil.OneLine(t, 70)
+}
+
+func globalPrefix(global bool) string {
+	if global {
+		return "~"
+	}
+	return ""
 }

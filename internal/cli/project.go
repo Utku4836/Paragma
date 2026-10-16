@@ -57,6 +57,11 @@ pg project new thesis-notes`,
 			if err != nil {
 				return fail(ExitInternal, "%v", err)
 			}
+			if path != "" {
+				if _, err := vault.IgnoreInRepo(v.Base); err != nil {
+					return fail(ExitInternal, ".gitignore: %v", err)
+				}
+			}
 			p := reg.Register(name, v.Root)
 			reg.Active = p.Name
 			if err := reg.Save(); err != nil {

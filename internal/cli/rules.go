@@ -70,6 +70,7 @@ pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-re
 					}
 				}
 				a.ok(n.addr())
+				a.suggestLinks(s, n.addr(), title+" "+ctx+" "+dec)
 				return nil
 			})
 		},
