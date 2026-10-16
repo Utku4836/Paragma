@@ -1,29 +1,25 @@
 <!-- paragma:start -->
 ## Memory (Paragma)
 
-Project memory lives in `pg` (Paragma): rules, past errors and their fixes, decisions, session notes. Pull only what you need; do not open .paragma/ files directly.
+Memory lives in `pg` (Paragma): project notes, rules, decisions, past errors and their fixes. Pull only what you need, through pg; do not open its files.
 
 START
-- New conversation: `pg prime`; unfinished work: `pg session resume`
+- New conversation: `pg prime` (what memory holds, its projects). Continue earlier work: `pg resume <project>`.
+- New multi-step work: `pg start <project> --goal "..." --step "..." --step "..." --decision "<what the user decided>"`, once; the project stays current.
 
 READ
-- Run tests and builds through `pg run -- <cmd>`: on failure it prints the known fix if memory has one
-- Before changing a file: `pg related <path>` (its rules, decisions, past errors)
-- A topic or task: `pg context "<topic>"` (one call: matching rules, decisions, fixes)
-- An error seen elsewhere: `pg error find "<error line>"`
-- A specific fact: `pg search "<words>"`, then `pg read <addr>`
+- Tests and builds through `pg run -- <cmd>`: on failure it prints the known fix; on success, rules for the files you changed.
+- A topic or task: `pg context "<topic>"`: every matching rule, decision and fix in one call, and a last line saying what else exists.
+- Before changing a file: `pg related <path>`. An error seen elsewhere: `pg error find "<error line>"`.
+- A specific fact: `pg search "<words>"`, then `pg read <addr>`.
 
-WRITE
-- Fixed a non-obvious error: `pg error record --from-last --cause "..." --fix "..." --keywords "<other words for it>"`
-- A search missed a note that exists: `pg keywords <addr> "<the words you searched>"`
-- A recorded fix worked again: `pg error seen <addr>`
-- An architectural choice: `pg decision record "<title>" --context "..." --decision "..."`
-- A project rule from the user: `pg rule add "<rule>"`
-- Multi-step work: `pg session start "<title>" --goal "..."`, `pg session plan "step" "step"`, `pg task done <id>`
-- Decisions the user gives you: `pg session log "decision: ..."`; before stopping: `pg session checkpoint "<state, next step>"`
+WRITE (goes to the current project)
+- Step finished: `pg done <id>` (prints the next step). Finding: `pg log "..."`. Decision from the user: `pg decide "..."`.
+- Your own notes: `pg new note "<title>" --dir <folder>`; organise the project folder as you like.
+- Fixed a non-obvious error: `pg error record --from-last --cause "..." --fix "..."`. A recorded fix worked again: `pg error seen <addr>`.
+- Architectural choice: `pg decision record "<title>" --decision "..."`. Rule from the user: `pg rule add "<rule>"`.
 
 RULES
 - Exit code 1 means memory has nothing on it: solve it yourself, then record it. Do not record trivia.
-- Long text: pass `-` and stdin, or `--file PATH`.
-- Anything else (projects, branches, marks, rules): `pg help`, then `pg help <group>`.
+- Long text: `-` and stdin, or `--file PATH`. Anything else: `pg help`.
 <!-- paragma:end -->

@@ -14,8 +14,8 @@ import (
 	"github.com/Utku-Private/Paragma/internal/addr"
 	"github.com/Utku-Private/Paragma/internal/index"
 	"github.com/Utku-Private/Paragma/internal/md"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
-	"github.com/Utku-Private/Paragma/internal/vault"
 )
 
 // ---- text input ----
@@ -88,7 +88,7 @@ func splitText(s string) []string {
 // withLock runs fn while holding .paragma/lock, so concurrent agents never
 // interleave read-modify-write cycles on the same vault.
 func (a *app) withLock(s *store, fn func() error) error {
-	p := filepath.Join(s.v.Root, "lock")
+	p := s.v.Meta("lock")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
@@ -102,7 +102,7 @@ func (a *app) withLock(s *store, fn func() error) error {
 			continue
 		}
 		if time.Now().After(deadline) {
-			return fail(ExitConflict, "vault is locked by another pg process (%s); retry", filepath.ToSlash(p))
+			return fail(ExitConflict, "space is locked by another pg process (%s); retry", filepath.ToSlash(p))
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -163,7 +163,7 @@ func (a *app) save(n *note) error {
 			return fail(ExitConflict, "%s already exists", n.addr())
 		}
 	}
-	if err := vault.WriteFileAtomic(p, []byte(data)); err != nil {
+	if err := space.WriteFileAtomic(p, []byte(data)); err != nil {
 		return fail(ExitInternal, "write %s: %v", n.rel, err)
 	}
 	return a.reindex(n.s, n.rel)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/addr"
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
@@ -37,18 +38,15 @@ pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-re
 			if err != nil {
 				return err
 			}
+			p, err := a.writeProject(s)
+			if err != nil {
+				return err
+			}
 			var tagList []string
 			for _, t := range splitList([]string{tags}) {
 				tagList = append(tagList, strings.TrimPrefix(t, "#"))
 			}
-			num := fmt.Sprintf("%04d", nextDecisionNumber(s))
-			name := num + "-" + slug(title)
-			lines := withKeywords(a.template(s, "decision", num+": "+title, tagList, ""), keywords)
-			for _, kv := range []struct{ key, text string }{{"context", ctx}, {"decision", dec}, {"options", alts}, {"outcome", cons}} {
-				if kv.text != "" {
-					lines = fillSection(lines, "## "+a.sec(s, kv.key), splitText(kv.text))
-				}
-			}
+			rel, lines := a.decisionNote(s, p, title, tagList, keywords, ctx, dec, alts, cons)
 			var old *index.File
 			if supersedes != "" {
 				_, t, err := a.resolve(supersedes)
@@ -58,7 +56,6 @@ pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-re
 				old = t.File
 				lines = append(lines, "", "supersedes:: [["+shortRef(s, old)+"]]")
 			}
-			rel := freePath(s, "episodes/decisions/"+name+".md")
 			return a.withLock(s, func() error {
 				n := newNote(s, rel, lines)
 				if err := a.save(n); err != nil {
@@ -87,6 +84,40 @@ pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-re
 	return c
 }
 
+// decisionNote builds a numbered decision record for project p.
+func (a *app) decisionNote(s *store, p, title string, tags []string, keywords, ctx, dec, alts, cons string) (string, []string) {
+	num := fmt.Sprintf("%04d", nextDecisionNumber(s, p))
+	lines := withKeywords(a.template(s, "decision", num+": "+title, tags, ""), keywords)
+	for _, kv := range []struct{ key, text string }{{"context", ctx}, {"decision", dec}, {"options", alts}, {"outcome", cons}} {
+		if kv.text != "" {
+			lines = fillSection(lines, "## "+a.sec(s, kv.key), splitText(kv.text))
+		}
+	}
+	return freePath(s, p+"/decisions/"+num+"-"+slug(title)+".md"), lines
+}
+
+// writeDecision saves a decision record (the caller holds the lock).
+func (a *app) writeDecision(s *store, p, title, ctx, dec, alts, cons string) (string, error) {
+	rel, lines := a.decisionNote(s, p, title, nil, "", ctx, dec, alts, cons)
+	n := newNote(s, rel, lines)
+	if err := a.save(n); err != nil {
+		return "", err
+	}
+	return n.addr(), nil
+}
+
+// fillSection puts body right under the heading line in lines.
+func fillSection(lines []string, heading string, body []string) []string {
+	for i, l := range lines {
+		if l == heading {
+			out := append([]string(nil), lines[:i+1]...)
+			out = append(out, body...)
+			return append(out, lines[i+1:]...)
+		}
+	}
+	return lines
+}
+
 // markSuperseded sets status: superseded and superseded_by on an old note.
 func (a *app) markSuperseded(s *store, old *index.File, by string) error {
 	g, err := s.res.ResolveFile(old.Addr())
@@ -106,7 +137,7 @@ func (a *app) markSuperseded(s *store, old *index.File, by string) error {
 func (a *app) journalCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "journal <text|->",
-		Short:   "Add a time-stamped line to this month's journal",
+		Short:   "Add a time-stamped line to the current project's journal (this month)",
 		Example: `pg journal "v0.3 released; migration 0014 ran in prod"`,
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -118,8 +149,12 @@ func (a *app) journalCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			p, err := a.writeProject(s)
+			if err != nil {
+				return err
+			}
 			return a.withLock(s, func() error {
-				j, err := a.journalAppend(s, textutil.OneLine(text, 2000))
+				j, err := a.journalAppend(s, p, textutil.OneLine(text, 2000))
 				if err != nil {
 					return err
 				}
@@ -134,21 +169,21 @@ func (a *app) journalCmd() *cobra.Command {
 
 var reRuleID = regexp.MustCompile(`\^r(\d+)\b`)
 
-// rulesFile returns knowledge/rules.md, creating it if needed.
-func (a *app) rulesFile(s *store) (*index.File, error) {
-	if f, err := s.res.ResolveFile("knowledge/rules"); err == nil {
+// rulesFile returns <project>/rules.md, creating it if needed.
+func (a *app) rulesFile(s *store, p string) (*index.File, error) {
+	if f, err := s.res.ResolveFile(p + "/rules"); err == nil && f.Path == p+"/rules.md" {
 		return f, nil
 	}
 	title := map[string]string{"tr": "Kurallar"}[s.v.Cfg.Lang]
 	if title == "" {
 		title = "Rules"
 	}
-	n := newNote(s, "knowledge/rules.md", a.template(s, "note", title, nil, ""))
+	n := newNote(s, p+"/rules.md", a.template(s, "note", title, nil, ""))
 	n.lines = setFront(n.lines, "type", "rule")
 	if err := a.save(n); err != nil {
 		return nil, err
 	}
-	return s.res.ResolveFile("knowledge/rules")
+	return s.res.ResolveFile(p + "/rules")
 }
 
 func nextRuleID(lines []string) string {
@@ -163,10 +198,10 @@ func nextRuleID(lines []string) string {
 	return fmt.Sprintf("r%03d", maxN+1)
 }
 
-// addRule appends "> [!rule] text ^rNNN" to a section of rules.md and
-// returns the new rule's address.
-func (a *app) addRule(s *store, text, section, from string) (string, error) {
-	f, err := a.rulesFile(s)
+// addRule appends "> [!rule] text ^rNNN" to a section of project p's
+// rules.md and returns the new rule's address.
+func (a *app) addRule(s *store, p, text, section, from string) (string, error) {
+	f, err := a.rulesFile(s, p)
 	if err != nil {
 		return "", err
 	}
@@ -206,7 +241,7 @@ func (a *app) addRule(s *store, text, section, from string) (string, error) {
 func (a *app) ruleCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "rule",
-		Short: "Project rules (knowledge/rules.md): rule add, rule list",
+		Short: "Project rules (<project>/rules.md): rule add, rule list",
 	}
 	var section string
 	add := &cobra.Command{
@@ -223,8 +258,12 @@ func (a *app) ruleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			p, err := a.writeProject(s)
+			if err != nil {
+				return err
+			}
 			return a.withLock(s, func() error {
-				ad, err := a.addRule(s, text, section, "")
+				ad, err := a.addRule(s, p, text, section, "")
 				if err != nil {
 					return err
 				}
@@ -238,7 +277,7 @@ func (a *app) ruleCmd() *cobra.Command {
 	var in string
 	list := &cobra.Command{
 		Use:     "list",
-		Short:   "Every rule in the vault, one line each: address, section, text",
+		Short:   "Every rule in the space, one line each: address, section, text",
 		Example: "pg rule list\npg rule list --section Money",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -317,7 +356,7 @@ func (a *app) promoteCmd() *cobra.Command {
 		Use:   "promote <addr>",
 		Short: "Turn a verified fix or note into a project rule, linked both ways",
 		Long: `Make a rule from an episodic fix (or any heading/block) that proved
-itself. The rule goes to knowledge/rules.md with "from [[source]]"; the
+itself. The rule goes to the project's rules.md with "from [[source]]"; the
 source gets promoted:: [[rules^rNNN]]. Use --text when the source is longer
 than one rule sentence.`,
 		Example: `pg promote sqlite-database-locked#Fix --text "Open SQLite with WAL and busy_timeout=5000" --section Database`,
@@ -351,8 +390,14 @@ than one rule sentence.`,
 				}
 			}
 			srcRef := shortRef(s, t.File) + strings.TrimPrefix(t.Addr(), t.File.Addr())
+			p := space.ProjectOf(t.File.Path)
+			if p == "" {
+				if p, err = a.writeProject(s); err != nil {
+					return err
+				}
+			}
 			return a.withLock(s, func() error {
-				ruleAddr, err := a.addRule(s, text, section, srcRef)
+				ruleAddr, err := a.addRule(s, p, text, section, srcRef)
 				if err != nil {
 					return err
 				}
@@ -364,7 +409,7 @@ than one rule sentence.`,
 				if err != nil {
 					return err
 				}
-				link := "promoted:: [[" + strings.TrimPrefix(ruleAddr, "knowledge/") + "]]"
+				link := "promoted:: [[" + ruleAddr + "]]"
 				n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), []string{link})
 				if err := a.save(n); err != nil {
 					return err

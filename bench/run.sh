@@ -40,7 +40,8 @@ files)
 	cp "$B/agents/files.AGENTS.md" "$R/AGENTS.md"
 	;;
 paragma)
-	cp -r "$B/memory" "$R/.paragma"
+	# memory lives outside the repo, in the Paragma home (a space with one project)
+	bash "$B/to_space.sh" "$B/memory" "$WS/pghome"
 	cp "$B/agents/paragma.AGENTS.md" "$R/AGENTS.md"
 	;;
 *)
@@ -114,8 +115,8 @@ done
 (cd "$R" && git status --porcelain >"$W/changed.txt" && git diff >"$W/diff.patch")
 # keep the agent's final repo (without the memory copy) next to the logs
 mkdir -p "$W/repo"
-(cd "$R" && tar cf - --exclude=.git --exclude=memory --exclude=.paragma/index.db . ) | (cd "$W/repo" && tar xf -)
-cp -r "$R/.paragma/work" "$W/repo/paragma-work" 2>/dev/null
+(cd "$R" && tar cf - --exclude=.git --exclude=memory . ) | (cd "$W/repo" && tar xf -)
+[ -d "$WS/pghome/Spaces" ] && (cd "$WS/pghome" && tar cf - --exclude=.pg Spaces) | (cd "$W/repo" && tar xf -)
 cp -r "$R/memory/work" "$W/repo/memory-work" 2>/dev/null
 rm -rf "$WS"
 echo "done $SC $COND $REP"

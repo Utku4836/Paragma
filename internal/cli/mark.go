@@ -84,7 +84,7 @@ pg mark rules^r004 --as pin`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(fmt.Sprintf("%s%s [%s]", a.prefix(s), t.Addr(), kind))
+				a.ok(fmt.Sprintf("%s [%s]", t.Addr(), kind))
 				return nil
 			})
 		},
@@ -175,7 +175,7 @@ pg callout architecture:30-31 --kind rule`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(a.prefix(s) + t.Addr())
+				a.ok(t.Addr())
 				return nil
 			})
 		},
@@ -212,7 +212,7 @@ func (a *app) unmarkCmd() *cobra.Command {
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(a.prefix(s) + t.Addr())
+				a.ok(t.Addr())
 				return nil
 			})
 		},

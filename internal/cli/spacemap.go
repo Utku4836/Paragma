@@ -2,30 +2,17 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 )
 
-// notePath is the note's file path as the agent's shell sees it: relative
-// to the working directory when possible, so it can be cited or opened.
-func notePath(s *store, f *index.File) string {
-	p := filepath.Join(s.v.Root, filepath.FromSlash(f.Path))
-	if cwd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(cwd, p); err == nil && !strings.HasPrefix(rel, "..") {
-			return filepath.ToSlash(rel)
-		}
-	}
-	return filepath.ToSlash(p)
-}
-
-// vaultMap prints every note grouped by layer. When that does not fit the
-// budget it falls back to one line per directory.
-func (a *app) vaultMap() error {
+// spaceMap prints every note grouped by project, the current project first.
+// When that does not fit the budget it falls back to one line per folder.
+func (a *app) spaceMap() error {
 	s, err := a.main()
 	if err != nil {
 		return err
@@ -42,34 +29,34 @@ func (a *app) vaultMap() error {
 	if a.jsonOut {
 		var out []map[string]any
 		for _, f := range files {
-			out = append(out, map[string]any{"addr": f.Addr(), "title": f.Title, "layer": f.Layer, "type": f.Type,
+			out = append(out, map[string]any{"addr": f.Addr(), "project": space.ProjectOf(f.Path), "title": f.Title, "layer": f.Layer, "type": f.Type,
 				"status": f.Status, "tokens": f.Tokens, "tasks_open": tcs[f.ID].Open})
 		}
-		return a.emitJSON(map[string]any{"vault": s.v.Root, "notes": len(files), "tokens": total, "files": out})
+		return a.emitJSON(map[string]any{"space": s.v.Name, "notes": len(files), "tokens": total, "files": out})
 	}
 	if len(files) == 0 {
-		a.printf("vault %s is empty; add notes under knowledge/, episodes/ or work/\n", s.v.Display())
+		a.printf("space %s is empty; start a project: pg start <name> --goal \"...\"\n", s.v.Name)
 		return nil
 	}
 
-	byLayer := map[string][]*index.File{}
+	byProject := map[string][]*index.File{}
 	for _, f := range files {
-		l := f.Layer
-		if f.Inactive() {
-			l = "inactive"
-		}
-		byLayer[l] = append(byLayer[l], f)
+		byProject[space.ProjectOf(f.Path)] = append(byProject[space.ProjectOf(f.Path)], f)
 	}
-	order := []string{"semantic", "episodic", "working", "inactive", ""}
+	order := s.v.Projects()
+	sort.SliceStable(order, func(i, j int) bool { return order[i] == s.project && order[j] != s.project })
+	order = append(order, "")
 	var lines []string
-	for _, l := range order {
-		fs := byLayer[l]
+	for _, p := range order {
+		fs := byProject[p]
 		if len(fs) == 0 {
 			continue
 		}
-		name := l
-		if name == "" {
-			name = "other"
+		name := p + "/"
+		if p == "" {
+			name = "(space root)"
+		} else if p == s.project {
+			name += "  (current)"
 		}
 		lines = append(lines, name)
 		for _, f := range fs {
@@ -81,6 +68,9 @@ func (a *app) vaultMap() error {
 			if typ == "note" {
 				typ = ""
 			}
+			if f.Inactive() {
+				typ = join(typ, "[inactive]")
+			}
 			title := ""
 			base := f.Addr()[strings.LastIndex(f.Addr(), "/")+1:]
 			if textutil.Fold(f.Title) != textutil.Fold(base) {
@@ -89,7 +79,7 @@ func (a *app) vaultMap() error {
 			lines = append(lines, "  "+join(f.Addr(), typ, textutil.FmtTokens(f.Tokens), tasks, title))
 		}
 	}
-	a.printf("vault %s  %d notes  %s\n", s.v.Display(), len(files), textutil.FmtTokens(total))
+	a.printf("space %s  %d notes  %s\n", s.v.Name, len(files), textutil.FmtTokens(total))
 	budget := a.budgetOr(s.v.Cfg.Budget)
 	cost := 0
 	for _, l := range lines {
@@ -99,11 +89,11 @@ func (a *app) vaultMap() error {
 		for _, l := range lines {
 			a.println(l)
 		}
-		a.println("next: pg outline <note> | pg search <words> | pg read <addr>")
+		a.println("next: pg outline <note> | pg context <topic> | pg read <addr>")
 		return nil
 	}
 
-	// too many notes: summarise per directory
+	// too many notes: summarise per folder
 	type dir struct {
 		notes, tokens, open int
 	}
@@ -136,6 +126,6 @@ func (a *app) vaultMap() error {
 			break
 		}
 	}
-	a.println("next: pg find --layer <l> | pg find --type <t> | pg search <words>")
+	a.println("next: pg find --type <t> | pg context <topic> | pg search <words>")
 	return nil
 }

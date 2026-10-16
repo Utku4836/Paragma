@@ -14,8 +14,8 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/errsig"
 	"github.com/Utku-Private/Paragma/internal/md"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
-	"github.com/Utku-Private/Paragma/internal/vault"
 )
 
 // SyncStats reports what an incremental sync did.
@@ -128,12 +128,12 @@ func hashBytes(b []byte) string {
 
 type writer struct {
 	tx   *sql.Tx
-	v    *vault.Vault
+	v    *space.Space
 	stmt map[string]*sql.Stmt
 }
 
 var stmts = map[string]string{
-	"file":    `INSERT INTO files (path, ulid, type, layer, status, title, mtime, size, hash, created, updated, verified, seen, tags, tokens, lines, body_line, branch, fm_json, fm_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	"file":    `INSERT INTO files (path, ulid, type, layer, status, title, mtime, size, hash, created, updated, verified, seen, tags, tokens, lines, body_line, fm_json, fm_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 	"section": `INSERT INTO sections (file_id, ord, heading_path, level, line_start, body_end, line_end, tokens, sub_tokens, body, kinds, tags, is_title) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 	"block":   `INSERT OR IGNORE INTO blocks (file_id, block_id, section_id, line, line_end) VALUES (?,?,?,?,?)`,
 	"link":    `INSERT INTO links (src_file, src_section, line, target, target_file, target_sub, kind, context) VALUES (?,?,?,?,?,?,?,?)`,
@@ -144,7 +144,7 @@ var stmts = map[string]string{
 	"code":    `INSERT INTO code_refs (file_id, section_id, line, ref) VALUES (?,?,?,?)`,
 }
 
-func newWriter(tx *sql.Tx, v *vault.Vault) (*writer, error) {
+func newWriter(tx *sql.Tx, v *space.Space) (*writer, error) {
 	w := &writer{tx: tx, v: v, stmt: map[string]*sql.Stmt{}}
 	for k, q := range stmts {
 		s, err := tx.Prepare(q)
@@ -198,14 +198,14 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 
 	typ := doc.FrontString("type")
 	if typ == "" {
-		typ = vault.InferType(rel)
+		typ = space.InferType(rel)
 	}
 	layer := doc.FrontString("layer")
 	if layer == "" {
-		layer = vault.InferLayer(rel)
+		layer = space.InferLayer(rel)
 	}
 	status := doc.FrontString("status")
-	if strings.HasPrefix(rel, "archive/") && status == "" {
+	if space.Archived(rel) && status == "" {
 		status = "archived"
 	}
 	title := doc.FrontString("title")
@@ -240,7 +240,7 @@ func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash strin
 
 	res, err := w.stmt["file"].Exec(rel, nullStr(doc.FrontString("id")), typ, layer, status, title, mtime, size, hash,
 		doc.FrontString("created"), doc.FrontString("updated"), doc.FrontString("verified"),
-		seen, strings.Join(tags, " "), textutil.Tokens(body), len(doc.Lines), doc.BodyLine, doc.FrontString("branch"), fmJSON, fmErr)
+		seen, strings.Join(tags, " "), textutil.Tokens(body), len(doc.Lines), doc.BodyLine, fmJSON, fmErr)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,6 @@ func FileKey(s string) string {
 	s = strings.TrimSpace(strings.ReplaceAll(s, "\\", "/"))
 	s = strings.TrimPrefix(s, "./")
 	s = strings.TrimPrefix(s, "/")
-	s = strings.TrimPrefix(s, vault.DirName+"/")
 	if strings.HasSuffix(strings.ToLower(s), ".md") {
 		s = s[:len(s)-3]
 	}
@@ -462,7 +461,7 @@ func (d *DB) IndexFile(rels ...string) error {
 // HashBytes is the content hash pg prints as hash:… and checks for --if-hash.
 func HashBytes(b []byte) string { return hashBytes(b) }
 
-// BlockExists reports whether a block id is used anywhere in the vault.
+// BlockExists reports whether a block id is used anywhere in the space.
 func (d *DB) BlockExists(id string) bool {
 	var n int
 	d.QueryRow(`SELECT COUNT(*) FROM blocks WHERE block_id = ? COLLATE NOCASE`, id).Scan(&n)

@@ -5,22 +5,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Utku-Private/Paragma/internal/vault"
+	"github.com/Utku-Private/Paragma/internal/space"
 )
 
-// Run against a generated vault:
+// Run against a generated space:
 //
 //	go run ./tools/gen -n 500 -out /tmp/bench
-//	PARAGMA_BENCH_VAULT=/tmp/bench/.paragma go test ./internal/index -run Phases -v
+//	PARAGMA_BENCH_HOME=/tmp/bench go test ./internal/index -run Phases -v
 func TestPhases(t *testing.T) {
-	root := os.Getenv("PARAGMA_BENCH_VAULT")
-	if root == "" {
-		t.Skip("PARAGMA_BENCH_VAULT not set")
+	home := os.Getenv("PARAGMA_BENCH_HOME")
+	if home == "" {
+		t.Skip("PARAGMA_BENCH_HOME not set")
 	}
-	v, err := vault.Open(root)
+	v, err := space.Open(home, space.DefaultName)
 	if err != nil {
 		t.Fatal(err)
 	}
+	root := v.Root
 	db, err := Open(v)
 	if err != nil {
 		t.Fatal(err)

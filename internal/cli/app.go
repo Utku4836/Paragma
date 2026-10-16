@@ -14,8 +14,8 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/addr"
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
-	"github.com/Utku-Private/Paragma/internal/vault"
 )
 
 // Exit codes (see docs/TASARIM.md, "Çıkış kodları").
@@ -25,7 +25,7 @@ const (
 	ExitUsage      = 2
 	ExitNotFound   = 3
 	ExitConflict   = 4
-	ExitNoVault    = 5
+	ExitNoSpace    = 5
 	ExitValidation = 6
 	ExitInternal   = 7
 )
@@ -41,8 +41,8 @@ var errNoResults = &Error{Code: ExitNoResults}
 type app struct {
 	jsonOut   bool
 	budget    int
-	vaultFlag string
-	scope     string
+	homeFlag  string
+	spaceFlag string
 	quiet     bool
 	ifHash    string
 	dryRun    bool
@@ -53,51 +53,55 @@ type app struct {
 	rawErr io.Writer
 	stdin  io.Reader
 
-	// opened lazily
-	stores map[bool]*store // keyed by Global
+	st *store // opened lazily
 }
 
-// store is one opened vault with its synced index.
+// store is the opened space with its synced index.
 type store struct {
-	v   *vault.Vault
-	db  *index.DB
-	res *addr.Resolver
+	v       *space.Space
+	db      *index.DB
+	res     *addr.Resolver
+	project string // current project in this work directory ("" = none)
 }
 
 func newApp(stdout io.Writer, stdin io.Reader) *app {
-	return &app{stdout: bufio.NewWriterSize(stdout, 32*1024), rawOut: stdout, rawErr: os.Stderr, stdin: stdin, stores: map[bool]*store{}}
+	return &app{stdout: bufio.NewWriterSize(stdout, 32*1024), rawOut: stdout, rawErr: os.Stderr, stdin: stdin}
 }
 
 func (a *app) close() {
 	a.stdout.Flush()
-	for _, s := range a.stores {
-		s.db.Close()
+	if a.st != nil {
+		a.st.db.Close()
 	}
 }
 
 func (a *app) printf(f string, args ...any) { fmt.Fprintf(a.stdout, f, args...) }
 func (a *app) println(s string)             { a.stdout.WriteString(s); a.stdout.WriteByte('\n') }
 
-// openVault opens and syncs a vault. global selects the global vault
-// explicitly; otherwise --scope/--vault and directory discovery decide.
-func (a *app) openVault(global bool) (*store, error) {
-	scope := a.scope
-	if global {
-		scope = "global"
+func (a *app) home() string { return space.Home(a.homeFlag) }
+
+// workDir is the directory pg remembers the current project for: the git
+// work tree root, else the working directory.
+func (a *app) workDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
 	}
-	if scope == "all" {
-		scope = ""
+	return space.WorkDir(cwd)
+}
+
+// main opens and syncs the space for this invocation.
+func (a *app) main() (*store, error) {
+	if a.st != nil {
+		return a.st, nil
 	}
 	t0 := time.Now()
-	v, err := vault.Find(a.vaultFlag, scope)
+	v, err := space.Find(a.home(), a.spaceFlag, a.workDir())
 	if err != nil {
-		if errors.Is(err, vault.ErrNoVault) {
-			return nil, fail(ExitNoVault, "%v", err)
+		if errors.Is(err, space.ErrNoSpace) {
+			return nil, fail(ExitNoSpace, "%v", err)
 		}
 		return nil, fail(ExitInternal, "%v", err)
-	}
-	if s, ok := a.stores[v.Global]; ok {
-		return s, nil
 	}
 	t1 := time.Now()
 	db, err := index.Open(v)
@@ -121,46 +125,63 @@ func (a *app) openVault(global bool) (*store, error) {
 			t1.Sub(t0), t2.Sub(t1), t3.Sub(t2), st.Files, st.Changed, time.Since(t3))
 	}
 	s := &store{v: v, db: db, res: res}
-	a.stores[v.Global] = s
+	s.project = a.currentProject(s)
+	res.Prefer = s.project
+	a.st = s
 	return s, nil
 }
 
-// main returns the primary store for the current scope.
-func (a *app) main() (*store, error) { return a.openVault(false) }
-
-// stores for --scope all: project (if any) then global (if any).
-func (a *app) allStores() ([]*store, error) {
-	if a.scope != "all" {
-		s, err := a.main()
-		if err != nil {
-			return nil, err
-		}
-		return []*store{s}, nil
+// currentProject is $PARAGMA_PROJECT, else the project last started or
+// resumed in this work directory, if its folder still exists.
+func (a *app) currentProject(s *store) string {
+	if p := os.Getenv("PARAGMA_PROJECT"); p != "" && s.v.HasProject(p) {
+		return p
 	}
-	var out []*store
-	saved := a.scope
-	a.scope = "project"
-	if s, err := a.openVault(false); err == nil {
-		out = append(out, s)
+	reg := space.LoadRegistry(s.v.Home)
+	if p := reg.Dir(a.workDir()).Projects[s.v.Name]; s.v.HasProject(p) {
+		return p
 	}
-	a.scope = saved
-	if s, err := a.openVault(true); err == nil && (len(out) == 0 || s != out[0]) {
-		out = append(out, s)
-	}
-	if len(out) == 0 {
-		return nil, fail(ExitNoVault, "no vault found (run: pg init)")
-	}
-	return out, nil
+	return ""
 }
 
-// resolve parses and resolves an address, picking the global vault for
-// addresses that start with "~".
+// setProject makes p the current project of this work directory.
+func (a *app) setProject(s *store, p string) error {
+	s.project = p
+	s.res.Prefer = p
+	if a.dryRun {
+		return nil
+	}
+	reg := space.LoadRegistry(s.v.Home)
+	reg.Touch(a.workDir()).Projects[s.v.Name] = p
+	if err := reg.Save(); err != nil {
+		return fail(ExitInternal, "%v", err)
+	}
+	return nil
+}
+
+// writeProject is the project a write goes to: the current one, or the only
+// project of the space.
+func (a *app) writeProject(s *store) (string, error) {
+	if s.project != "" {
+		return s.project, nil
+	}
+	ps := s.v.Projects()
+	if len(ps) == 1 {
+		return ps[0], nil
+	}
+	if len(ps) == 0 {
+		return "", fail(ExitNotFound, "no project yet in space %s; start one: pg start <name> --goal \"...\"", s.v.Name)
+	}
+	return "", fail(ExitNotFound, "no current project here; pick one: pg resume <name> (projects: %s) or pg start <name>", strings.Join(ps, ", "))
+}
+
+// resolve parses and resolves an address.
 func (a *app) resolve(raw string) (*store, *addr.Target, error) {
 	p, err := addr.Parse(raw)
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := a.openVault(p.Global)
+	s, err := a.main()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -175,19 +196,6 @@ func (a *app) resolve(raw string) (*store, *addr.Target, error) {
 		return nil, nil, err
 	}
 	return s, t, nil
-}
-
-// prefix returns the address prefix for results from s ("~" for global
-// results when they are mixed with project results).
-func (a *app) prefix(s *store) string {
-	if s.v.Global && a.scope == "all" {
-		return "~"
-	}
-	if s.v.Global && a.scope != "global" {
-		// only reachable via fallback; still unambiguous without ~
-		return ""
-	}
-	return ""
 }
 
 func (a *app) budgetOr(def int) int {
@@ -256,3 +264,15 @@ func readStdin(r io.Reader) (string, error) {
 	b, err := io.ReadAll(r)
 	return string(b), err
 }
+
+// allStores is the space searched by search and find.
+func (a *app) allStores() ([]*store, error) {
+	s, err := a.main()
+	if err != nil {
+		return nil, err
+	}
+	return []*store{s}, nil
+}
+
+// prefix is the address prefix for results from s (none: one space).
+func (a *app) prefix(s *store) string { return "" }

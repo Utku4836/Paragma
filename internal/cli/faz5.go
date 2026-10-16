@@ -12,6 +12,7 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/errsig"
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
@@ -20,14 +21,14 @@ import (
 
 const missLog = "misses.log"
 
-// recordMiss appends a lookup that found nothing to .paragma/misses.log
+// recordMiss appends a lookup that found nothing to the space's .pg/misses.log
 // (local, git-ignored). pg misses turns it into evidence of what memory
 // lacks, or of where word search falls short.
 func recordMiss(s *store, kind, query string) {
 	if s == nil || strings.TrimSpace(query) == "" {
 		return
 	}
-	p := filepath.Join(s.v.Root, missLog)
+	p := s.v.Meta(missLog)
 	if st, err := os.Stat(p); err == nil && st.Size() > 256*1024 {
 		// keep the newer half
 		if b, err := os.ReadFile(p); err == nil {
@@ -88,7 +89,7 @@ note, or that the note uses other words: add it, or add --keywords to it.`,
 					return err
 				}
 			}
-			f, err := os.Open(filepath.Join(s.v.Root, missLog))
+			f, err := os.Open(s.v.Meta(missLog))
 			if err != nil {
 				a.println("no results")
 				return errNoResults
@@ -286,7 +287,7 @@ the better one with: pg supersede <older> <newer>.`,
 			}
 			byType := map[string][]*index.File{}
 			for _, f := range s.res.Files() {
-				if f.Inactive() || f.Type == "journal" || f.Type == "session" || f.Type == "branch" || (len(want) > 0 && !want[f.Type]) {
+				if f.Inactive() || f.Type == "journal" || f.Type == "session" || f.Type == "branch" || f.Type == "project" || (len(want) > 0 && !want[f.Type]) {
 					continue
 				}
 				byType[f.Type] = append(byType[f.Type], f)
@@ -363,7 +364,7 @@ func (a *app) gcCmd() *cobra.Command {
 	var apply bool
 	c := &cobra.Command{
 		Use:   "gc [--older 180d] [--apply]",
-		Short: "Fold old archived sessions into one journal line each and delete them",
+		Short: "Fold old archived project notes into one journal line each and delete them",
 		Long: `Archived sessions older than --older become one line in the journal of
 the day they ended (goal, progress, last handoff) and their files are
 deleted. Without --apply it only lists what it would do.`,
@@ -385,7 +386,7 @@ deleted. Without --apply it only lists what it would do.`,
 			}
 			var cs []cand
 			for _, f := range s.res.Files() {
-				if f.Type != "session" || !strings.HasPrefix(f.Path, "archive/") {
+				if !space.Archived(f.Path) || (f.Type != "session" && f.Type != "project") {
 					continue
 				}
 				d := f.Date()
@@ -407,7 +408,7 @@ deleted. Without --apply it only lists what it would do.`,
 				tc := index.CountTasks(ts, 1, 1<<30)
 				goal := strings.Join(a.sectionBody(s, f, "goal"), " ")
 				hand := strings.Join(a.sectionBody(s, f, "handoff"), " ")
-				line := fmt.Sprintf("session %q (gc): %s; %d/%d tasks done", f.Title, textutil.OneLine(goal, 160), tc.Done, tc.Total)
+				line := fmt.Sprintf("%s %q (gc): %s; %d/%d tasks done", f.Type, f.Title, textutil.OneLine(goal, 160), tc.Done, tc.Total)
 				if hand != "" {
 					line += "; last handoff: " + textutil.OneLine(hand, 200)
 				}
@@ -426,7 +427,7 @@ deleted. Without --apply it only lists what it would do.`,
 			}
 			return a.withLock(s, func() error {
 				for _, c := range cs {
-					if _, err := a.journalAppendAt(s, c.when, c.line); err != nil {
+					if _, err := a.journalAppendAt(s, space.ProjectOf(c.f.Path), c.when, c.line); err != nil {
 						return err
 					}
 					if err := os.Remove(filepath.Join(s.v.Root, filepath.FromSlash(c.f.Path))); err != nil {
@@ -436,12 +437,12 @@ deleted. Without --apply it only lists what it would do.`,
 						return err
 					}
 				}
-				a.ok(fmt.Sprintf("folded %d sessions into the journal", len(cs)))
+				a.ok(fmt.Sprintf("folded %d notes into the journal", len(cs)))
 				return nil
 			})
 		},
 	}
-	c.Flags().StringVar(&older, "older", "180d", "only sessions that ended before this: 90d, 6m, 2026-01-01")
+	c.Flags().StringVar(&older, "older", "180d", "only notes closed before this: 90d, 6m, 2026-01-01")
 	c.Flags().BoolVar(&apply, "apply", false, "really fold and delete")
 	return c
 }

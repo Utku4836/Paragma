@@ -10,6 +10,7 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/addr"
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 	"github.com/Utku-Private/Paragma/internal/ulid"
 	"github.com/spf13/cobra"
@@ -20,7 +21,7 @@ import (
 var sectionNames = map[string]map[string]string{
 	"goal":      {"en": "Goal", "tr": "Hedef"},
 	"plan":      {"en": "Plan", "tr": "Plan"},
-	"notes":     {"en": "Notes", "tr": "Notlar"},
+	"notes":     {"en": "Log", "tr": "Günlük"},
 	"handoff":   {"en": "Handoff", "tr": "Devir"},
 	"symptom":   {"en": "Symptom", "tr": "Belirti"},
 	"cause":     {"en": "Root cause", "tr": "Kök neden"},
@@ -40,7 +41,7 @@ var sectionNames = map[string]map[string]string{
 // extra spellings that count as the same section
 var sectionAliases = map[string][]string{
 	"goal":    {"Amaç", "Objective"},
-	"notes":   {"Log", "Notlar"},
+	"notes":   {"Notes", "Notlar", "Log"},
 	"handoff": {"Checkpoint"},
 	"plan":    {"Tasks", "Görevler"},
 	"tasks":   {"Plan"},
@@ -84,11 +85,12 @@ func foldName(s string) string { return strings.TrimSpace(textutil.Fold(s)) }
 
 // ---- new ----
 
+// typeDirs are the default folders inside a project, per note type.
 var typeDirs = map[string]string{
-	"note":     "knowledge",
-	"concept":  "knowledge/concepts",
-	"error":    "episodes/errors",
-	"decision": "episodes/decisions",
+	"note":     "",
+	"concept":  "concepts",
+	"error":    "errors",
+	"decision": "decisions",
 }
 
 func (a *app) newCmd() *cobra.Command {
@@ -96,25 +98,30 @@ func (a *app) newCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "new <type> <title> [text|-]",
 		Short: "Create a note from a template: note, concept, error, decision",
-		Long: `Create a note. Templates: error (symptom, root cause, fix, files),
-decision (numbered ADR: context, decision, alternatives, consequences),
-concept and note (title only). Optional text becomes the intro paragraph.
-Prints the new address. For sessions use pg session start.`,
-		Example: `pg new concept "Refresh token rotation"
-pg new decision "Use WAL mode" --tags sqlite
-pg new note "Deploy checklist" --dir knowledge/ops`,
+		Long: `Create a note in the current project. Templates: error (symptom, root
+cause, fix, files), decision (numbered ADR: context, decision, alternatives,
+consequences), concept and note (title only). Optional text becomes the
+intro paragraph. --dir is a folder inside the project (created as needed):
+organise the project as you like. Prints the new address. To start a
+project use pg start.`,
+		Example: `pg new note "Webhook signature findings" --dir webhook
+pg new concept "Refresh token rotation"
+pg new decision "Use WAL mode" --tags sqlite`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			typ := strings.ToLower(args[0])
 			d, ok := typeDirs[typ]
 			if !ok {
-				if typ == "session" {
-					return fail(ExitUsage, "use: pg session start <title>")
+				if typ == "project" || typ == "session" {
+					return fail(ExitUsage, "use: pg start <project> --goal \"...\"")
 				}
 				return fail(ExitUsage, "type must be note, concept, error or decision (got %q)", typ)
 			}
 			if dir != "" {
 				d = strings.Trim(filepath.ToSlash(dir), "/")
+				if strings.Contains("/"+d+"/", "/../") {
+					return fail(ExitUsage, "--dir must stay inside the project")
+				}
 			}
 			title := args[1]
 			text, err := a.inputText(args[2:], false)
@@ -125,9 +132,18 @@ pg new note "Deploy checklist" --dir knowledge/ops`,
 			if err != nil {
 				return err
 			}
+			p, err := a.writeProject(s)
+			if err != nil {
+				return err
+			}
+			// --dir may already name the project ("payments/webhook")
+			if d == p || strings.HasPrefix(d, p+"/") {
+				d = strings.TrimPrefix(strings.TrimPrefix(d, p), "/")
+			}
+			d = strings.Trim(p+"/"+d, "/")
 			name := slug(title)
 			if typ == "decision" {
-				name = fmt.Sprintf("%04d-%s", nextDecisionNumber(s), name)
+				name = fmt.Sprintf("%04d-%s", nextDecisionNumber(s, p), name)
 				title = fmt.Sprintf("%s: %s", name[:4], title)
 			}
 			var tagList []string
@@ -149,17 +165,18 @@ pg new note "Deploy checklist" --dir knowledge/ops`,
 			})
 		},
 	}
-	c.Flags().StringVar(&dir, "dir", "", "directory inside the vault (default by type)")
+	c.Flags().StringVar(&dir, "dir", "", "folder inside the project (default by type: errors/, decisions/, concepts/)")
 	c.Flags().StringVar(&tags, "tags", "", "comma separated tags")
 	c.Flags().StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language")
 	return c
 }
 
-func nextDecisionNumber(s *store) int {
+// nextDecisionNumber numbers decision records per project.
+func nextDecisionNumber(s *store, p string) int {
 	re := regexp.MustCompile(`^(\d{4})-`)
 	maxN := 0
 	for _, f := range s.res.Files() {
-		if !strings.Contains(f.Path, "decisions/") {
+		if !strings.Contains(f.Path, "decisions/") || space.ProjectOf(f.Path) != p {
 			continue
 		}
 		if m := re.FindStringSubmatch(filepath.Base(f.Path)); m != nil {
@@ -183,7 +200,7 @@ func (a *app) firstTemplateSection(s *store, typ string) string {
 
 // template builds a new note's lines.
 func (a *app) template(s *store, typ, title string, tags []string, text string) []string {
-	layer := map[string]string{"note": "semantic", "concept": "semantic", "error": "episodic", "decision": "episodic", "session": "working", "branch": "working"}[typ]
+	layer := map[string]string{"note": "semantic", "concept": "semantic", "error": "episodic", "decision": "episodic", "session": "working", "branch": "working", "project": "working"}[typ]
 	fm := []string{"---", "id: " + ulid.New(), "type: " + typ, "layer: " + layer, "title: " + yamlString(title)}
 	switch typ {
 	case "error":
@@ -263,7 +280,7 @@ pg append architecture#Middleware --file note.md`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(a.prefix(s) + t.Addr())
+				a.ok(t.Addr())
 				return nil
 			})
 		},
@@ -338,7 +355,7 @@ pg write architecture#Deploy - --if-hash 3f2a9c1e`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(a.prefix(s) + t.Addr())
+				a.ok(t.Addr())
 				return nil
 			})
 		},
@@ -399,7 +416,7 @@ pg insert stack:12 --before "## Runtime"`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(a.prefix(s) + t.Addr())
+				a.ok(t.Addr())
 				return nil
 			})
 		},
@@ -449,7 +466,7 @@ pg edit rules^r002 --find "mock" --replace "fake" --all`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(fmt.Sprintf("%s%s (%d replaced)", a.prefix(s), t.Addr(), map[bool]int{true: c, false: 1}[all]))
+				a.ok(fmt.Sprintf("%s (%d replaced)", t.Addr(), map[bool]int{true: c, false: 1}[all]))
 				return nil
 			})
 		},
@@ -510,7 +527,7 @@ pg section add architecture#Layers "Queue" "Workers read from Redis streams."`,
 				if parentPath != "" {
 					p = parentPath + "/" + heading
 				}
-				a.ok(a.prefix(s) + t.File.Addr() + "#" + p)
+				a.ok(t.File.Addr() + "#" + p)
 				return nil
 			})
 		},
@@ -571,7 +588,7 @@ pg link auth-refactor#Notes architecture#Middleware`,
 				if err := a.save(n); err != nil {
 					return err
 				}
-				a.ok(a.prefix(s) + t.Addr() + " -> " + target)
+				a.ok(t.Addr() + " -> " + target)
 				return nil
 			})
 		},
@@ -703,14 +720,14 @@ func (a *app) move(s *store, f *index.File, dest string, rewrite bool) error {
 	if len(updated) > 0 {
 		msg += fmt.Sprintf(" (links updated in %d notes)", len(updated))
 	}
-	a.ok(a.prefix(s) + msg)
+	a.ok(msg)
 	return nil
 }
 
 func (a *app) archiveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "archive <addr>",
-		Short:   "Move a note to archive/ (kept, searchable with --all, ranked low)",
+		Short:   "Move a note to its project's archive/ (kept, searchable with --all, ranked low)",
 		Example: "pg archive old-deploy",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -721,7 +738,7 @@ func (a *app) archiveCmd() *cobra.Command {
 			if t.Kind != addr.KindFile {
 				return fail(ExitUsage, "archive works on whole notes")
 			}
-			if strings.HasPrefix(t.File.Path, "archive/") {
+			if space.Archived(t.File.Path) {
 				return fail(ExitValidation, "%s is already archived", t.File.Addr())
 			}
 			return a.withLock(s, func() error { return a.archiveFile(s, t.File) })
@@ -729,8 +746,8 @@ func (a *app) archiveCmd() *cobra.Command {
 	}
 }
 
-// archiveFile marks a note archived and moves it under archive/, keeping its
-// path so links by name keep resolving.
+// archiveFile marks a note archived and moves it under its project's
+// archive/, keeping the rest of its path so links by name keep resolving.
 func (a *app) archiveFile(s *store, f *index.File) error {
 	n, err := a.load(s, f)
 	if err != nil {
@@ -740,7 +757,11 @@ func (a *app) archiveFile(s *store, f *index.File) error {
 	if err := a.save(n); err != nil {
 		return err
 	}
-	return a.move(s, f, "archive/"+f.Path, false)
+	dest := "archive/" + f.Path
+	if p := space.ProjectOf(f.Path); p != "" {
+		dest = p + "/archive/" + strings.TrimPrefix(f.Path, p+"/")
+	}
+	return a.move(s, f, dest, false)
 }
 
 func (a *app) rmCmd() *cobra.Command {

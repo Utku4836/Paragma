@@ -58,7 +58,7 @@ wiki, embed, md, or a typed key such as fixes:: / supersedes::.`,
 			for _, l := range ls {
 				o := &out{Kind: l.Kind}
 				if tt, err := resolveLink(s.res, t.File, l.Target); err == nil {
-					o.Addr = a.prefix(s) + tt.Addr()
+					o.Addr = tt.Addr()
 				} else {
 					o.Addr, o.Broken = l.Target, true
 				}
@@ -166,7 +166,7 @@ func (a *app) backlinks(s *store, t *addr.Target) ([]backlink, error) {
 				srcAddr += "#" + sec.Path
 			}
 		}
-		rows = append(rows, backlink{a.prefix(s) + srcAddr, l.Kind, l.Line, l.Context})
+		rows = append(rows, backlink{srcAddr, l.Kind, l.Line, l.Context})
 	}
 	return rows, nil
 }

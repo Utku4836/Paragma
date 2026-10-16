@@ -11,39 +11,35 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/index"
 	"github.com/Utku-Private/Paragma/internal/md"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
-	"github.com/Utku-Private/Paragma/internal/vault"
 	"github.com/spf13/cobra"
 )
 
 // skillBody teaches an agent the core loop. It is the single source for
 // pg skill, the SKILL.md written by pg install claude and the AGENTS.md /
 // GEMINI.md section; everything else is learnt from pg help when needed.
-const skillBody = `Project memory lives in ` + "`pg`" + ` (Paragma): rules, past errors and their fixes, decisions, session notes. Pull only what you need; do not open .paragma/ files directly.
+const skillBody = `Memory lives in ` + "`pg`" + ` (Paragma): project notes, rules, decisions, past errors and their fixes. Pull only what you need, through pg; do not open its files.
 
 START
-- New conversation: ` + "`pg prime`" + `; unfinished work: ` + "`pg session resume`" + `
+- New conversation: ` + "`pg prime`" + ` (what memory holds, its projects). Continue earlier work: ` + "`pg resume <project>`" + `.
+- New multi-step work: ` + "`pg start <project> --goal \"...\" --step \"...\" --step \"...\" --decision \"<what the user decided>\"`" + `, once; the project stays current.
 
 READ
-- Run tests and builds through ` + "`pg run -- <cmd>`" + `: on failure it prints the known fix if memory has one
-- Before changing a file: ` + "`pg related <path>`" + ` (its rules, decisions, past errors)
-- A topic or task: ` + "`pg context \"<topic>\"`" + ` (one call: matching rules, decisions, fixes)
-- An error seen elsewhere: ` + "`pg error find \"<error line>\"`" + `
-- A specific fact: ` + "`pg search \"<words>\"`" + `, then ` + "`pg read <addr>`" + `
+- Tests and builds through ` + "`pg run -- <cmd>`" + `: on failure it prints the known fix; on success, rules for the files you changed.
+- A topic or task: ` + "`pg context \"<topic>\"`" + `: every matching rule, decision and fix in one call, and a last line saying what else exists.
+- Before changing a file: ` + "`pg related <path>`" + `. An error seen elsewhere: ` + "`pg error find \"<error line>\"`" + `.
+- A specific fact: ` + "`pg search \"<words>\"`" + `, then ` + "`pg read <addr>`" + `.
 
-WRITE
-- Fixed a non-obvious error: ` + "`pg error record --from-last --cause \"...\" --fix \"...\" --keywords \"<other words for it>\"`" + `
-- A search missed a note that exists: ` + "`pg keywords <addr> \"<the words you searched>\"`" + `
-- A recorded fix worked again: ` + "`pg error seen <addr>`" + `
-- An architectural choice: ` + "`pg decision record \"<title>\" --context \"...\" --decision \"...\"`" + `
-- A project rule from the user: ` + "`pg rule add \"<rule>\"`" + `
-- Multi-step work: ` + "`pg session start \"<title>\" --goal \"...\"`" + `, ` + "`pg session plan \"step\" \"step\"`" + `, ` + "`pg task done <id>`" + `
-- Decisions the user gives you: ` + "`pg session log \"decision: ...\"`" + `; before stopping: ` + "`pg session checkpoint \"<state, next step>\"`" + `
+WRITE (goes to the current project)
+- Step finished: ` + "`pg done <id>`" + ` (prints the next step). Finding: ` + "`pg log \"...\"`" + `. Decision from the user: ` + "`pg decide \"...\"`" + `.
+- Your own notes: ` + "`pg new note \"<title>\" --dir <folder>`" + `; organise the project folder as you like.
+- Fixed a non-obvious error: ` + "`pg error record --from-last --cause \"...\" --fix \"...\"`" + `. A recorded fix worked again: ` + "`pg error seen <addr>`" + `.
+- Architectural choice: ` + "`pg decision record \"<title>\" --decision \"...\"`" + `. Rule from the user: ` + "`pg rule add \"<rule>\"`" + `.
 
 RULES
 - Exit code 1 means memory has nothing on it: solve it yourself, then record it. Do not record trivia.
-- Long text: pass ` + "`-`" + ` and stdin, or ` + "`--file PATH`" + `.
-- Anything else (projects, branches, marks, rules): ` + "`pg help`" + `, then ` + "`pg help <group>`" + `.
+- Long text: ` + "`-`" + ` and stdin, or ` + "`--file PATH`" + `. Anything else: ` + "`pg help`" + `.
 `
 
 const skillDescription = "Project memory (Paragma). Use at the start of a conversation, when an error may have been seen before, when you need a project rule or past decision, to resume long work, or to record a fix, decision, task or rule."
@@ -66,55 +62,63 @@ func (a *app) primeText(s *store) string {
 		active++
 		counts[f.Type]++
 	}
-	rules := s.db.Count(`SELECT COUNT(*) FROM marks m JOIN files f ON f.id = m.file_id WHERE m.kind = 'rule' AND f.path NOT LIKE 'archive/%' AND COALESCE(f.status,'') NOT IN ('superseded','archived')`)
-	branch, _ := s.v.Branch()
-	fmt.Fprintf(&b, "[paragma] project: %s  branch: %s  %d notes: %d errors, %d decisions, %d rules\n",
-		projectName(s), branch, active, counts["error"], counts["decision"], rules)
+	rules := s.db.Count(`SELECT COUNT(*) FROM marks m JOIN files f ON f.id = m.file_id WHERE m.kind = 'rule' AND f.path NOT LIKE '%archive/%' AND COALESCE(f.status,'') NOT IN ('superseded','archived')`)
+	fmt.Fprintf(&b, "[paragma] space: %s  %d notes: %d errors, %d decisions, %d rules\n",
+		s.v.Name, active, counts["error"], counts["decision"], rules)
+	ps := s.v.Projects()
+	if len(ps) > 0 {
+		perProject := map[string]int{}
+		for _, f := range files {
+			if !f.Inactive() {
+				perProject[space.ProjectOf(f.Path)]++
+			}
+		}
+		tcs, _ := s.db.TaskCountsByFile()
+		var parts []string
+		for _, p := range ps {
+			x := fmt.Sprintf("%s (%d notes", p, perProject[p])
+			if f := projectNote(s, p); f != nil {
+				if tc := tcs[f.ID]; tc.Total > 0 {
+					x += fmt.Sprintf(", tasks %d/%d", tc.Done, tc.Total)
+				}
+				if f.Status == "closed" {
+					x += ", closed"
+				}
+			}
+			x += ")"
+			if p == s.project {
+				x = "*" + x
+			}
+			parts = append(parts, x)
+		}
+		if len(parts) > 8 {
+			parts = append(parts[:8], fmt.Sprintf("… %d more: pg project list", len(parts)-8))
+		}
+		fmt.Fprintf(&b, "projects: %s\n", strings.Join(parts, ", "))
+	}
 	if topics := a.topTags(s, 10); len(topics) > 0 {
 		fmt.Fprintf(&b, "topics: %s\n", strings.Join(topics, ", "))
 	}
-	if f := a.currentSessionOrNewest(s); f != nil {
+	if f := projectNote(s, s.project); f != nil {
 		ts, _ := s.db.Tasks(f.ID)
 		tc := index.CountTasks(ts, 1, 1<<30)
-		line := fmt.Sprintf("session: %s \"%s\" %d/%d done", f.Addr(), f.Title, tc.Done, tc.Total)
+		line := fmt.Sprintf("current project here: %s  tasks %d/%d", s.project, tc.Done, tc.Total)
 		if h := a.sectionBody(s, f, "handoff"); len(h) > 0 && strings.HasPrefix(h[0], "Checkpoint ") {
 			line += ", " + strings.TrimSuffix(strings.ToLower(h[0][:1])+h[0][1:], ".")
 		}
 		b.WriteString(line + "\n")
-		var blocked, asks []string
-		for _, t := range ts {
-			switch t.State {
-			case "!":
-				blocked = append(blocked, t.ID)
-			case "?":
-				asks = append(asks, t.ID)
-			}
-		}
-		if len(blocked)+len(asks) > 0 {
-			fmt.Fprintf(&b, "blocked: %s  waiting on user: %s\n", strings.Join(blocked, ","), strings.Join(asks, ","))
-		}
-		b.WriteString("next: pg session resume | pg search <words> | pg run -- <test cmd> | pg help\n")
+		b.WriteString("next: pg resume " + s.project + " (to continue it) | pg context <topic> | pg run -- <test cmd> | pg start <new project>\n")
+	} else if len(ps) > 0 {
+		b.WriteString("next: pg resume <project> (to continue one) | pg context <topic> | pg run -- <test cmd> | pg start <new project>\n")
 	} else {
-		b.WriteString("no active session (multi-step work: pg session start)\n")
-		b.WriteString("next: pg search <words> | pg outline | pg run -- <test cmd> | pg help\n")
+		b.WriteString("memory is empty; next: pg start <project> --goal \"...\" | pg run -- <test cmd>\n")
 	}
 	return b.String()
 }
 
-func (a *app) currentSessionOrNewest(s *store) *index.File {
-	if f := a.currentSession(s); f != nil {
-		return f
-	}
-	branch, _ := s.v.Branch()
-	if ss := a.sessionsOn(s, branch, false); len(ss) > 0 {
-		return ss[0]
-	}
-	return nil
-}
-
 // topTags are the most used tags, mark tags left out.
 func (a *app) topTags(s *store, n int) []string {
-	rows, err := s.db.Query(`SELECT t.tag, COUNT(*) c FROM tags t JOIN files f ON f.id = t.file_id WHERE f.path NOT LIKE 'archive/%' GROUP BY t.tag ORDER BY c DESC, t.tag LIMIT ?`, n+len(md.MarkTags))
+	rows, err := s.db.Query(`SELECT t.tag, COUNT(*) c FROM tags t JOIN files f ON f.id = t.file_id WHERE f.path NOT LIKE '%archive/%' GROUP BY t.tag ORDER BY c DESC, t.tag LIMIT ?`, n+len(md.MarkTags))
 	if err != nil {
 		return nil
 	}
@@ -135,13 +139,14 @@ func (a *app) topTags(s *store, n int) []string {
 func (a *app) primeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "prime",
-		Short: "Start-of-conversation summary: what memory holds and the current session (≤150 tokens)",
+		Short: "Start-of-conversation summary: what memory holds, its projects, the current one (≤150 tokens)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
 			if err != nil {
 				return err
 			}
+			a.forgetShown(s) // a new conversation: rules may be printed again
 			a.stdout.WriteString(a.primeText(s))
 			return nil
 		},
@@ -153,7 +158,7 @@ func (a *app) primeCmd() *cobra.Command {
 func (a *app) indexCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "index",
-		Short: "Write .paragma/INDEX.md (topics, counts, recent notes, active sessions) and print it",
+		Short: "Write the space's .pg/INDEX.md (topics, counts, recent notes, projects) and print it",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
@@ -162,7 +167,7 @@ func (a *app) indexCmd() *cobra.Command {
 			}
 			text := a.indexText(s)
 			if !a.dryRun {
-				if err := vault.WriteFileAtomic(filepath.Join(s.v.Root, "INDEX.md"), []byte(text)); err != nil {
+				if err := space.WriteFileAtomic(s.v.Meta("INDEX.md"), []byte(text)); err != nil {
 					return fail(ExitInternal, "%v", err)
 				}
 			}
@@ -186,7 +191,7 @@ func (a *app) indexText(s *store) string {
 		recent = append(recent, f)
 	}
 	fmt.Fprintf(&b, "## Notes\n\nsemantic %d · episodic %d · working %d\n\n", layers["semantic"], layers["episodic"], layers["working"])
-	rows, err := s.db.Query(`SELECT t.tag, COUNT(*) c FROM tags t JOIN files f ON f.id = t.file_id WHERE f.path NOT LIKE 'archive/%' GROUP BY t.tag ORDER BY c DESC, t.tag LIMIT 25`)
+	rows, err := s.db.Query(`SELECT t.tag, COUNT(*) c FROM tags t JOIN files f ON f.id = t.file_id WHERE f.path NOT LIKE '%archive/%' GROUP BY t.tag ORDER BY c DESC, t.tag LIMIT 25`)
 	if err == nil {
 		var ts []string
 		for rows.Next() {
@@ -207,15 +212,17 @@ func (a *app) indexText(s *store) string {
 	for _, f := range recent[:min(len(recent), 8)] {
 		fmt.Fprintf(&b, "- %s: %s\n", f.Addr(), f.Title)
 	}
-	branch, _ := s.v.Branch()
-	if ss := a.sessionsOn(s, "", false); len(ss) > 0 {
-		b.WriteString("\n## Active sessions\n\n")
-		for _, f := range ss[:min(len(ss), 8)] {
-			bb := f.Branch
-			if bb == "" {
-				bb = branch
+	if ps := s.v.Projects(); len(ps) > 0 {
+		b.WriteString("\n## Projects\n\n")
+		for _, p := range ps {
+			title := p
+			if f := projectNote(s, p); f != nil {
+				title = f.Title
+				if f.Status == "closed" {
+					title += " (closed)"
+				}
 			}
-			fmt.Fprintf(&b, "- %s (%s): %s\n", f.Addr(), bb, f.Title)
+			fmt.Fprintf(&b, "- %s: %s\n", p, title)
 		}
 	}
 	return b.String()
@@ -259,7 +266,7 @@ func installSection(path string) (bool, error) {
 				return false, nil
 			}
 			text = text[:i] + section + text[end:]
-			return true, vault.WriteFileAtomic(path, []byte(text))
+			return true, space.WriteFileAtomic(path, []byte(text))
 		}
 	}
 	if text != "" && !strings.HasSuffix(text, "\n") {
@@ -268,7 +275,7 @@ func installSection(path string) (bool, error) {
 	if text != "" {
 		text += "\n"
 	}
-	return true, vault.WriteFileAtomic(path, []byte(text+section))
+	return true, space.WriteFileAtomic(path, []byte(text+section))
 }
 
 // installTargets are the agent CLIs pg knows how to set up.
@@ -302,7 +309,8 @@ Every pg feature works without hooks.`,
 			if err != nil {
 				return err
 			}
-			base := s.v.Base
+			base := a.workDir()
+			_ = s
 			switch args[0] {
 			case "agents-md", "gemini":
 				name := map[string]string{"agents-md": "AGENTS.md", "gemini": "GEMINI.md"}[args[0]]
@@ -330,7 +338,7 @@ Every pg feature works without hooks.`,
 					a.printf("would write %s\n", filepath.ToSlash(p))
 					return nil
 				}
-				if err := vault.WriteFileAtomic(p, []byte(skillFile())); err != nil {
+				if err := space.WriteFileAtomic(p, []byte(skillFile())); err != nil {
 					return fail(ExitInternal, "%v", err)
 				}
 				a.ok(filepath.ToSlash(p))
@@ -386,7 +394,7 @@ func mergeClaudeHooks(path string) error {
 	if err != nil {
 		return err
 	}
-	return vault.WriteFileAtomic(path, append(b, '\n'))
+	return space.WriteFileAtomic(path, append(b, '\n'))
 }
 
 // ---- hook ----
@@ -401,14 +409,15 @@ func (a *app) hookCmd() *cobra.Command {
 			io.Copy(io.Discard, io.LimitReader(a.stdin, 1<<20)) // the event JSON; nothing in it is needed yet
 			s, err := a.main()
 			if err != nil {
-				return nil // no vault here: stay silent
+				return nil // no space: stay silent
 			}
 			switch args[0] {
 			case "session-start":
 				// plain stdout becomes context for the model
+				a.forgetShown(s)
 				a.stdout.WriteString(a.primeText(s))
 			case "pre-compact":
-				f := a.currentSessionOrNewest(s)
+				f := projectNote(s, s.project)
 				if f == nil {
 					return nil
 				}
@@ -418,7 +427,7 @@ func (a *app) hookCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					a.appendToSection(n, f, "notes")([]string{"- " + clock() + " " + textutil.OneLine(text, 600)})
+					a.appendToSection(n, f, "notes")([]string{"- " + today() + " " + clock() + " " + textutil.OneLine(text, 600)})
 					return a.save(n)
 				})
 			default:

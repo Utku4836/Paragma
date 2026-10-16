@@ -1,8 +1,9 @@
-// Command gen writes a synthetic vault for performance checks:
+// Command gen writes a synthetic space for performance checks:
 //
 //	go run ./tools/gen -n 500 -out /tmp/bench
 //
-// It creates <out>/.paragma with notes spread over all layers, each with
+// It creates <out>/Spaces/main/bench/ (a Paragma home with one project) with
+// notes spread over all layers, each with
 // several headings, tasks, callouts and links to other notes.
 package main
 
@@ -32,23 +33,22 @@ func sentence(r *rand.Rand, n int) string {
 
 func main() {
 	n := flag.Int("n", 500, "number of notes")
-	out := flag.String("out", "bench", "output directory (the project dir)")
+	out := flag.String("out", "bench", "output directory (a Paragma home)")
 	flag.Parse()
 	r := rand.New(rand.NewSource(42))
-	root := filepath.Join(*out, ".paragma")
+	root := filepath.Join(*out, "Spaces", "main", "bench")
 	dirs := []struct{ dir, layer, typ string }{
-		{"knowledge", "semantic", "note"},
-		{"knowledge/concepts", "semantic", "concept"},
-		{"episodes/errors", "episodic", "error"},
-		{"episodes/decisions", "episodic", "decision"},
-		{"work/sessions", "working", "session"},
+		{"", "semantic", "note"},
+		{"concepts", "semantic", "concept"},
+		{"errors", "episodic", "error"},
+		{"decisions", "episodic", "decision"},
+		{"sessions", "working", "session"},
 	}
 	names := make([]string, *n)
 	for i := range names {
 		names[i] = fmt.Sprintf("note-%04d", i)
 	}
 	os.MkdirAll(root, 0o755)
-	os.WriteFile(filepath.Join(root, "config.toml"), []byte("version = 1\n"), 0o644)
 	for i, name := range names {
 		d := dirs[i%len(dirs)]
 		var b strings.Builder

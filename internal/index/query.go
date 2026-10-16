@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/Utku-Private/Paragma/internal/space"
 )
 
 // File is one indexed Markdown file.
@@ -28,8 +30,7 @@ type File struct {
 	Tokens   int
 	Size     int64
 	NLines   int
-	BodyLine int    // first line after the frontmatter
-	Branch   string // front matter "branch" (sessions, branch notes)
+	BodyLine int // first line after the frontmatter
 	Mtime    int64
 }
 
@@ -51,7 +52,7 @@ func (f *File) Date() string {
 
 // Inactive reports whether the file is superseded or archived.
 func (f *File) Inactive() bool {
-	return f.Status == "superseded" || f.Status == "archived" || strings.HasPrefix(f.Path, "archive/")
+	return f.Status == "superseded" || f.Status == "archived" || space.Archived(f.Path)
 }
 
 // Stale reports whether a semantic note has not been verified within days.
@@ -73,11 +74,11 @@ func (f *File) Stale(days int) bool {
 	return time.Since(t) > time.Duration(days)*24*time.Hour
 }
 
-const fileCols = `id, path, COALESCE(ulid,''), type, layer, status, title, created, updated, verified, hash, tags, fm_error, seen, tokens, size, lines, body_line, COALESCE(branch, ''), mtime`
+const fileCols = `id, path, COALESCE(ulid,''), type, layer, status, title, created, updated, verified, hash, tags, fm_error, seen, tokens, size, lines, body_line, mtime`
 
 func scanFile(sc interface{ Scan(...any) error }) (*File, error) {
 	f := &File{}
-	err := sc.Scan(&f.ID, &f.Path, &f.ULID, &f.Type, &f.Layer, &f.Status, &f.Title, &f.Created, &f.Updated, &f.Verified, &f.Hash, &f.Tags, &f.FMError, &f.Seen, &f.Tokens, &f.Size, &f.NLines, &f.BodyLine, &f.Branch, &f.Mtime)
+	err := sc.Scan(&f.ID, &f.Path, &f.ULID, &f.Type, &f.Layer, &f.Status, &f.Title, &f.Created, &f.Updated, &f.Verified, &f.Hash, &f.Tags, &f.FMError, &f.Seen, &f.Tokens, &f.Size, &f.NLines, &f.BodyLine, &f.Mtime)
 	return f, err
 }
 
@@ -646,7 +647,7 @@ type SigRow struct {
 	Hash   string
 }
 
-// ErrorSigs returns every error signature in the vault.
+// ErrorSigs returns every error signature in the space.
 func (d *DB) ErrorSigs() ([]SigRow, error) {
 	rows, err := d.Query(`SELECT file_id, sig_norm, sig_hash FROM error_sigs`)
 	if err != nil {
@@ -672,7 +673,7 @@ type CodeRefRow struct {
 	Ref       string
 }
 
-// CodeRefs returns every code reference in the vault.
+// CodeRefs returns every code reference in the space.
 func (d *DB) CodeRefs() ([]CodeRefRow, error) {
 	rows, err := d.Query(`SELECT file_id, COALESCE(section_id, 0), line, ref FROM code_refs`)
 	if err != nil {

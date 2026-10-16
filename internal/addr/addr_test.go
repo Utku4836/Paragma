@@ -18,7 +18,6 @@ func TestParse(t *testing.T) {
 		{"stack:10-", Addr{File: "stack", From: 10}},
 		{"@01JA3Z8K2M", Addr{ULID: "01JA3Z8K2M"}},
 		{"@01ja3z8k2m#Plan", Addr{ULID: "01JA3Z8K2M", Heading: "Plan"}},
-		{"~rules#Go", Addr{Global: true, File: "rules", Heading: "Go"}},
 		{"[[rules#Go|x]]", Addr{File: "rules", Heading: "Go"}},
 		{"notes#Time: 10:30", Addr{File: "notes", Heading: "Time: 10:30"}},
 		{"episodes/errors/x.md", Addr{File: "episodes/errors/x.md"}},

@@ -1,4 +1,4 @@
-// Package index maintains the SQLite index of a vault. Markdown files are
+// Package index maintains the SQLite index of a space. Markdown files are
 // the source of truth; the index is disposable and rebuilt on demand.
 package index
 
@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Utku-Private/Paragma/internal/vault"
+	"github.com/Utku-Private/Paragma/internal/space"
 	_ "modernc.org/sqlite"
 )
 
 // schemaVersion is bumped whenever the schema or the parser output changes;
 // a mismatch triggers a full rebuild.
-const schemaVersion = 8
+const schemaVersion = 9
 
 const schema = `
 CREATE TABLE files (
@@ -23,7 +23,7 @@ CREATE TABLE files (
   type TEXT, layer TEXT, status TEXT, title TEXT,
   mtime INTEGER, size INTEGER, hash TEXT,
   created TEXT, updated TEXT, verified TEXT,
-  seen INTEGER, tags TEXT, tokens INTEGER, lines INTEGER, body_line INTEGER, branch TEXT, fm_json TEXT, fm_error TEXT
+  seen INTEGER, tags TEXT, tokens INTEGER, lines INTEGER, body_line INTEGER, fm_json TEXT, fm_error TEXT
 );
 CREATE INDEX files_ulid ON files(ulid);
 
@@ -92,10 +92,10 @@ CREATE INDEX code_refs_ref ON code_refs(ref);
 CREATE INDEX code_refs_file ON code_refs(file_id);
 `
 
-// DB is an open index for one vault.
+// DB is an open index for one space.
 type DB struct {
 	*sql.DB
-	V *vault.Vault
+	V *space.Space
 
 	files []*File // cache, see Files
 	byID  map[int64]*File
@@ -107,7 +107,7 @@ func dsn(path string) string {
 
 // Open opens (creating or rebuilding as needed) the index of v. It does not
 // sync; call Sync.
-func Open(v *vault.Vault) (*DB, error) {
+func Open(v *space.Space) (*DB, error) {
 	db, err := sql.Open("sqlite", dsn(v.DBPath()))
 	if err != nil {
 		return nil, err
@@ -134,7 +134,7 @@ func Open(v *vault.Vault) (*DB, error) {
 }
 
 // Reset deletes the database file and recreates an empty schema.
-func Reset(v *vault.Vault) (*DB, error) {
+func Reset(v *space.Space) (*DB, error) {
 	for _, suf := range []string{"", "-wal", "-shm"} {
 		if err := os.Remove(v.DBPath() + suf); err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("remove index: %w", err)

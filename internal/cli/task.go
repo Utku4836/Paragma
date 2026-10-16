@@ -3,14 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/Utku-Private/Paragma/internal/addr"
 	"github.com/Utku-Private/Paragma/internal/index"
 	"github.com/Utku-Private/Paragma/internal/md"
-	"github.com/Utku-Private/Paragma/internal/textutil"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/spf13/cobra"
 )
 
@@ -100,29 +99,13 @@ func stripMarker(s string) (string, byte) {
 	return s, ' '
 }
 
-// taskHome is where new tasks go by default: the current session's Plan,
-// else the current branch note's Tasks, else work/inbox.md.
+// taskHome is where new tasks go by default: the current project's Plan.
 func (a *app) taskHome(s *store) (*index.File, string, error) {
-	if f := a.currentSession(s); f != nil {
-		return f, "plan", nil
-	}
-	branch, _ := s.v.Branch()
-	if f := a.branchFile(s, branch); f != nil {
-		return f, "tasks", nil
-	}
-	if f, err := s.res.ResolveFile("work/inbox"); err == nil {
-		return f, "", nil
-	}
-	if a.dryRun {
-		return nil, "", fail(ExitUsage, "no session and no work/inbox.md yet; run without --dry-run once")
-	}
-	rel := "work/inbox.md"
-	n := newNote(s, rel, []string{"---", "type: note", "layer: working", "---", "# Inbox"})
-	if err := a.save(n); err != nil {
+	f, err := a.noteForWrite(s)
+	if err != nil {
 		return nil, "", err
 	}
-	f, err := s.res.ResolveFile("work/inbox")
-	return f, "", err
+	return f, "plan", nil
 }
 
 // addTasks writes tasks into f (at the end of section key, or of the file
@@ -251,11 +234,19 @@ func (a *app) changeTasks(ids []string, fn func(s *store, n *note, t *addr.Targe
 		}
 		last = t.File
 	}
-	// after finishing, blocking or parking a task, say what to do next
+	// after finishing, blocking or parking a task, say what to do next, in
+	// full: the task line with its subtasks and notes
 	if last != nil && !a.dryRun && strings.ContainsRune("xX-!?", rune(lastState)) {
 		if f, err := s.res.ResolveFile(last.Addr()); err == nil {
 			if nt, _ := a.nextTask(s, f); nt != nil {
-				a.printf("next: %s^%s [%s] %s\n", f.Addr(), nt.ID, nt.State, textutil.OneLine(nt.Text, 100))
+				a.printf("next: %s^%s [%s] %s\n", f.Addr(), nt.ID, nt.State, nt.Text)
+				if lines, err := fileLines(s, f); err == nil && nt.End > nt.Line {
+					for _, l := range sliceLines(lines, nt.Line+1, min(nt.End, nt.Line+8)) {
+						if !isBlank(l) {
+							a.println("  " + strings.TrimSpace(l))
+						}
+					}
+				}
 			} else if ts, _ := s.db.Tasks(f.ID); len(ts) > 0 {
 				tc := index.CountTasks(ts, 1, 1<<30)
 				if tc.Open == 0 {
@@ -309,13 +300,10 @@ func (a *app) taskStateCmd(use, short, state string, extra func(c *cobra.Command
 	return c
 }
 
-func (a *app) taskCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "task",
-		Short: "Checkbox tasks with ids: add list show start done block cancel ask note move edit next claim",
-	}
+// taskDoneCmd builds "done" (both pg task done and pg done).
+func (a *app) taskDoneCmd() *cobra.Command {
 	var force bool
-	done := a.taskStateCmd("done", "Mark tasks done [x] with today's date; prints the next task", "x", func(c *cobra.Command) func(*md.TaskLine, *note, *addr.Target) error {
+	done := a.taskStateCmd("done", "Mark tasks done [x] with today's date; prints the next task in full", "x", func(c *cobra.Command) func(*md.TaskLine, *note, *addr.Target) error {
 		c.Flags().BoolVar(&force, "force", false, "close even with open subtasks")
 		return func(tl *md.TaskLine, n *note, t *addr.Target) error {
 			if open := openChildren(n, t); len(open) > 0 && !force {
@@ -326,7 +314,16 @@ func (a *app) taskCmd() *cobra.Command {
 			return nil
 		}
 	})
-	done.Example = "pg task done t3f4\npg task done t3f4 t3f5"
+	done.Example = "pg done t3f4\npg done t3f4 t3f5"
+	return done
+}
+
+func (a *app) taskCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "task",
+		Short: "Checkbox tasks with ids: add list show start done block cancel ask note move edit next claim",
+	}
+	done := a.taskDoneCmd()
 	start := a.taskStateCmd("start", "Mark tasks in progress [/]", "/", func(c *cobra.Command) func(*md.TaskLine, *note, *addr.Target) error {
 		return func(tl *md.TaskLine, n *note, t *addr.Target) error { tl.Set("blocked", ""); return nil }
 	})
@@ -375,9 +372,8 @@ func (a *app) taskAddCmd() *cobra.Command {
 	var fl taskFlags
 	c := &cobra.Command{
 		Use:   "add <text> | -",
-		Short: "Add a task (default: current session's Plan); prints its id",
-		Long: `Add a task. It goes to the current session's Plan, else the current
-branch note's Tasks, else work/inbox.md; --to picks a note or heading and
+		Short: "Add a task (default: the current project's Plan); prints its id",
+		Long: `Add a task. It goes to the current project's Plan; --to picks a note or heading and
 --under nests it below another task. With "-" or --file every line is a
 task and indented lines become subtasks.`,
 		Example: `pg task add "Write refresh endpoint" -p p1 --due 2026-10-20
@@ -510,7 +506,7 @@ func (a *app) taskListCmd() *cobra.Command {
 	var all bool
 	c := &cobra.Command{
 		Use:   "list",
-		Short: "Tasks across the vault (default: not done, not cancelled)",
+		Short: "Tasks across the space, the current project first (default: not done, not cancelled)",
 		Example: `pg task list
 pg task list --state blocked,question
 pg task list --in auth-refactor --state all`,
@@ -543,9 +539,12 @@ pg task list --in auth-refactor --state all`,
 					from, to = t.From, t.To
 				}
 			} else {
-				for _, f := range s.res.Files() {
-					if all || !f.Inactive() {
-						files = append(files, f)
+				// the current project's tasks first, then the rest of the space
+				for _, mine := range []bool{true, false} {
+					for _, f := range s.res.Files() {
+						if (all || !f.Inactive()) && (s.project != "" && space.ProjectOf(f.Path) == s.project) == mine {
+							files = append(files, f)
+						}
 					}
 				}
 			}
@@ -640,10 +639,7 @@ func (a *app) nextTask(s *store, f *index.File) (*index.TaskRow, *index.File) {
 	if err != nil {
 		return nil, nil
 	}
-	me := ""
-	if cur := a.currentSession(s); cur != nil {
-		me = filepath.Base(cur.Addr())
-	}
+	me := os.Getenv("PARAGMA_AGENT")
 	claimed := a.claims(s, f)
 	hasOpenChild := map[string]bool{}
 	for _, t := range ts {
@@ -725,7 +721,7 @@ func (a *app) taskNextCmd() *cobra.Command {
 	var in string
 	c := &cobra.Command{
 		Use:   "next",
-		Short: "The task to do next: current session first, then branch, then inbox",
+		Short: "The task to do next: the current project's note first, then its other notes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
@@ -740,16 +736,15 @@ func (a *app) taskNextCmd() *cobra.Command {
 				}
 				scope = append(scope, t.File)
 			} else {
-				if f := a.currentSession(s); f != nil {
+				if f := projectNote(s, s.project); f != nil {
 					scope = append(scope, f)
 				}
-				branch, _ := s.v.Branch()
-				if f := a.branchFile(s, branch); f != nil {
-					scope = append(scope, f)
-				}
-				scope = append(scope, a.sessionsOn(s, branch, false)...)
-				if f, err := s.res.ResolveFile("work/inbox"); err == nil {
-					scope = append(scope, f)
+				// then every other note of the current project with open tasks
+				tcs, _ := s.db.TaskCountsByFile()
+				for _, f := range s.res.Files() {
+					if s.project != "" && space.ProjectOf(f.Path) == s.project && !f.Inactive() && tcs[f.ID].Open > 0 && (len(scope) == 0 || f.ID != scope[0].ID) {
+						scope = append(scope, f)
+					}
 				}
 			}
 			for _, f := range scope {
@@ -825,7 +820,7 @@ func (a *app) taskMoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "move <id> <addr>",
 		Short:   "Move a task (with its subtasks) to another note or heading",
-		Example: "pg task move t3f9 work/inbox\npg task move t3f9 auth-refactor#Plan",
+		Example: "pg task move t3f9 payments#Plan",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
@@ -937,18 +932,18 @@ func (a *app) taskEditCmd() *cobra.Command {
 func (a *app) taskClaimCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "claim <id>...",
-		Short: "Claim tasks for the current session so parallel sessions skip them in task next",
+		Short: "Claim tasks for this agent ($PARAGMA_AGENT or --as) so parallel agents skip them in task next",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
 			if err != nil {
 				return err
 			}
-			cur := a.currentSession(s)
-			if cur == nil {
-				return fail(ExitValidation, "no current session to claim for (pg session start or PARAGMA_SESSION)")
+			_ = s
+			me := os.Getenv("PARAGMA_AGENT")
+			if me == "" {
+				return fail(ExitValidation, "set PARAGMA_AGENT=<a name for this agent> to claim tasks")
 			}
-			me := filepath.Base(cur.Addr())
 			return a.changeTasks(args, func(s *store, n *note, t *addr.Target, tl *md.TaskLine) error {
 				if by := tl.Get("by"); by != "" && by != me {
 					return fail(ExitConflict, "%s is claimed by %s", t.Addr(), by)

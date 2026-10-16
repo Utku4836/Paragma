@@ -15,10 +15,10 @@ func TestKeywordsAndMisses(t *testing.T) {
 		t.Fatalf("empty search should hint:\n%s", out)
 	}
 	mustRun(t, v, "keywords", "sqlite-database-locked", "kilidi çakışma, sqlite busy")
-	if out := mustRun(t, v, "search", "kilidi", "çakışma"); !strings.Contains(out, "episodes/errors/sqlite-database-locked") {
+	if out := mustRun(t, v, "search", "kilidi", "çakışma"); !strings.Contains(out, "demo/errors/sqlite-database-locked") {
 		t.Fatalf("keyword not searchable:\n%s", out)
 	}
-	if s := readNote(t, v, "episodes/errors/sqlite-database-locked.md"); !strings.Contains(s, "keywords: [kilidi çakışma, sqlite busy]") {
+	if s := readNote(t, v, "demo/errors/sqlite-database-locked.md"); !strings.Contains(s, "keywords: [kilidi çakışma, sqlite busy]") {
 		t.Fatalf("front matter:\n%s", s)
 	}
 	run(t, v, "search", "kubernetes", "ingress")
@@ -28,7 +28,7 @@ func TestKeywordsAndMisses(t *testing.T) {
 	if !strings.Contains(out, `2x  search  "kubernetes ingress"`) || !strings.Contains(out, "error find") {
 		t.Fatalf("misses:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(v, "misses.log")); err != nil {
+	if _, err := os.Stat(filepath.Join(v, "Spaces", "main", ".pg", "misses.log")); err != nil {
 		t.Fatal(err)
 	}
 	// keywords given at record time
@@ -43,13 +43,13 @@ func TestAutoPromote(t *testing.T) {
 	// sqlite-database-locked has seen: 3 already; jwt-exp-timezone has 1
 	mustRun(t, v, "error", "seen", "jwt-exp-timezone")
 	out := mustRun(t, v, "error", "seen", "jwt-exp-timezone")
-	if !strings.Contains(out, "seen 3 times: promoted to rule knowledge/rules^r007") {
+	if !strings.Contains(out, "seen 3 times: promoted to rule demo/rules^r007") {
 		t.Fatalf("auto promote:\n%s", out)
 	}
-	if s := readNote(t, v, "knowledge/rules.md"); !strings.Contains(s, "time.Now().UTC()") || !strings.Contains(s, "from [[jwt-exp-timezone#Çözüm]]") {
+	if s := readNote(t, v, "demo/rules.md"); !strings.Contains(s, "time.Now().UTC()") || !strings.Contains(s, "from [[jwt-exp-timezone#Çözüm]]") {
 		t.Fatalf("rule:\n%s", s)
 	}
-	if s := readNote(t, v, "episodes/errors/jwt-exp-timezone.md"); !strings.Contains(s, "promoted:: [[rules^r007]]") {
+	if s := readNote(t, v, "demo/errors/jwt-exp-timezone.md"); !strings.Contains(s, "promoted:: [[demo/rules^r007]]") {
 		t.Fatalf("source link:\n%s", s)
 	}
 	// a further seen does not promote again
@@ -60,9 +60,9 @@ func TestAutoPromote(t *testing.T) {
 
 func TestDupes(t *testing.T) {
 	v := copyVault(t)
-	os.WriteFile(filepath.Join(v, "episodes", "errors", "db-locked-again.md"), []byte("---\ntype: error\nlayer: episodic\nsig: \"database is locked (7)\"\n---\n# Database locked again\n\n## Belirti\nParalel testlerde database is locked hatası.\n\n## Çözüm\nWAL modu ve busy_timeout.\n"), 0o644)
+	os.WriteFile(filepath.Join(v, "Spaces", "main", "demo", "errors", "db-locked-again.md"), []byte("---\ntype: error\nlayer: episodic\nsig: \"database is locked (7)\"\n---\n# Database locked again\n\n## Belirti\nParalel testlerde database is locked hatası.\n\n## Çözüm\nWAL modu ve busy_timeout.\n"), 0o644)
 	out := mustRun(t, v, "dupes", "--type", "error")
-	if !strings.Contains(out, "episodes/errors/sqlite-database-locked ~ episodes/errors/db-locked-again") && !strings.Contains(out, "episodes/errors/db-locked-again ~ episodes/errors/sqlite-database-locked") {
+	if !strings.Contains(out, "demo/errors/sqlite-database-locked ~ demo/errors/db-locked-again") && !strings.Contains(out, "demo/errors/db-locked-again ~ demo/errors/sqlite-database-locked") {
 		t.Fatalf("dupes:\n%s", out)
 	}
 	if !strings.Contains(out, "same error signature") {
@@ -72,9 +72,10 @@ func TestDupes(t *testing.T) {
 
 func TestGC(t *testing.T) {
 	v := copyVault(t)
-	// close the sample session and pretend it ended long ago
-	mustRun(t, v, "session", "close", "auth-refactor", "--summary", "paused")
-	p := filepath.Join(v, "archive", "work", "sessions", "auth-refactor.md")
+	// close and archive the sample project and pretend it ended long ago
+	mustRun(t, v, "project", "close", "auth-refactor", "--summary", "paused")
+	mustRun(t, v, "archive", "auth-refactor/auth-refactor")
+	p := filepath.Join(v, "Spaces", "main", "auth-refactor", "archive", "auth-refactor.md")
 	b, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +85,7 @@ func TestGC(t *testing.T) {
 	s = s[:i] + "closed: 2025-01-10 10:00" + s[strings.Index(s[i:], "\n")+i:]
 	os.WriteFile(p, []byte(s), 0o644)
 	out := mustRun(t, v, "gc")
-	if !strings.Contains(out, "archive/work/sessions/auth-refactor  ended 2025-01-10") || !strings.Contains(out, "--apply") {
+	if !strings.Contains(out, "auth-refactor/archive/auth-refactor  ended 2025-01-10") || !strings.Contains(out, "--apply") {
 		t.Fatalf("gc dry run:\n%s", out)
 	}
 	if _, err := os.Stat(p); err != nil {
@@ -94,8 +95,8 @@ func TestGC(t *testing.T) {
 	if _, err := os.Stat(p); err == nil {
 		t.Fatal("not deleted")
 	}
-	j := readNote(t, v, "episodes/journal/2025-01.md")
-	if !strings.Contains(j, "## 2025-01-10") || !strings.Contains(j, `session "Auth refactor" (gc)`) {
+	j := readNote(t, v, "auth-refactor/journal/2025-01.md")
+	if !strings.Contains(j, "## 2025-01-10") || !strings.Contains(j, `project "Auth refactor" (gc)`) {
 		t.Fatalf("journal:\n%s", j)
 	}
 }

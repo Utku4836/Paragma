@@ -23,7 +23,7 @@ func TestErrorMemory(t *testing.T) {
 	v := copyVault(t)
 	out := mustRun(t, v, "error", "record", "--sig", "pool.go:88: redis: connection pool exhausted after 250ms (size 20)",
 		"--cause", "pool too small for load tests", "--fix", "raise pool size to 50", "--files", "cache/redis.go", "--tags", "redis")
-	if !strings.Contains(out, "ok episodes/errors/redis-connection-pool-exhausted-after-250ms-size-20") {
+	if !strings.Contains(out, "ok demo/errors/redis-connection-pool-exhausted-after-250ms-size-20") {
 		t.Fatalf("record/title: %s", out)
 	}
 	// the same error with other numbers and paths is an exact match
@@ -33,7 +33,7 @@ func TestErrorMemory(t *testing.T) {
 	}
 	// recording it again changes nothing
 	out = mustRun(t, v, "error", "record", "--sig", "redis: connection pool exhausted after 1s (size 8)", "--cause", "x", "--fix", "y")
-	if !strings.Contains(out, "exists: episodes/errors/redis-connection-pool") {
+	if !strings.Contains(out, "exists: demo/errors/redis-connection-pool") {
 		t.Fatalf("duplicate record: %s", out)
 	}
 	if out := mustRun(t, v, "error", "seen", "redis-connection-pool-exhausted-after-250ms-size-20"); !strings.Contains(out, "seen:2") {
@@ -47,7 +47,7 @@ func TestErrorMemory(t *testing.T) {
 		t.Fatal("unrelated error matched")
 	}
 	mustRun(t, v, "error", "reopen", "jwt-exp-timezone", "--note", "fails again in CI")
-	if s := readNote(t, v, "episodes/errors/jwt-exp-timezone.md"); !strings.Contains(s, "status: active") || !strings.Contains(s, "reopened") {
+	if s := readNote(t, v, "demo/errors/jwt-exp-timezone.md"); !strings.Contains(s, "status: active") || !strings.Contains(s, "reopened") {
 		t.Fatal(s)
 	}
 }
@@ -69,12 +69,12 @@ func TestRunShowsKnownFix(t *testing.T) {
 		t.Fatalf("unknown failure: %d\n%s", code, out)
 	}
 	var lr lastRun
-	b, err := os.ReadFile(filepath.Join(v, "last-run.json"))
+	b, err := os.ReadFile(filepath.Join(v, "Spaces", "main", ".pg", "last-run.json"))
 	if err != nil || json.Unmarshal(b, &lr) != nil || len(lr.Lines) == 0 {
 		t.Fatalf("last-run.json: %v %s", err, b)
 	}
 	out = mustRun(t, v, "error", "record", "--from-last", "--cause", "stage 2 needs the cache", "--fix", "warm the cache first")
-	if !strings.Contains(out, "ok episodes/errors/fatal-widget-frobnication-failed-at-stage-2") {
+	if !strings.Contains(out, "ok demo/errors/fatal-widget-frobnication-failed-at-stage-2") {
 		t.Fatal(out)
 	}
 	// success: output passes through, nothing added, exit 0
@@ -88,46 +88,46 @@ func TestRunShowsKnownFix(t *testing.T) {
 func TestRulesDecisionsPromote(t *testing.T) {
 	v := copyVault(t)
 	out := mustRun(t, v, "rule", "add", "Every handler validates input before calling a service", "--section", "Kod stili")
-	if !strings.Contains(out, "ok knowledge/rules^r007") {
+	if !strings.Contains(out, "ok demo/rules^r007") {
 		t.Fatalf("next rule id: %s", out)
 	}
 	out = mustRun(t, v, "rule", "list", "--section", "Kod stili")
-	if !strings.Contains(out, "knowledge/rules^r007  [Kod stili]  Every handler validates input") {
+	if !strings.Contains(out, "demo/rules^r007  [Kod stili]  Every handler validates input") {
 		t.Fatal(out)
 	}
 	out = mustRun(t, v, "promote", "jwt-exp-timezone#Çözüm", "--section", "Güvenlik", "--text", "Compare JWT times with time.Now().UTC()")
-	if !strings.Contains(out, "ok knowledge/rules^r008") {
+	if !strings.Contains(out, "ok demo/rules^r008") {
 		t.Fatal(out)
 	}
-	if s := readNote(t, v, "episodes/errors/jwt-exp-timezone.md"); !strings.Contains(s, "promoted:: [[rules^r008]]") {
+	if s := readNote(t, v, "demo/errors/jwt-exp-timezone.md"); !strings.Contains(s, "promoted:: [[demo/rules^r008]]") {
 		t.Fatal(s)
 	}
 	if out := mustRun(t, v, "backlinks", "rules^r008"); !strings.Contains(out, "jwt-exp-timezone") {
 		t.Fatal(out)
 	}
 	out = mustRun(t, v, "decision", "record", "Sessions in Postgres", "--context", "Redis is one more service", "--decision", "store sessions in Postgres", "--supersedes", "0007-wal-modu")
-	if !strings.Contains(out, "ok episodes/decisions/0008-sessions-in-postgres") {
+	if !strings.Contains(out, "ok demo/decisions/0008-sessions-in-postgres") {
 		t.Fatal(out)
 	}
-	if s := readNote(t, v, "episodes/decisions/0007-wal-modu.md"); !strings.Contains(s, "status: superseded") {
+	if s := readNote(t, v, "demo/decisions/0007-wal-modu.md"); !strings.Contains(s, "status: superseded") {
 		t.Fatal(s)
 	}
 	mustRun(t, v, "journal", "released v0.3")
 	mustRun(t, v, "verify", "stack")
-	if s := readNote(t, v, "knowledge/stack.md"); strings.Contains(s, "verified: 2026-05-01") {
+	if s := readNote(t, v, "demo/stack.md"); strings.Contains(s, "verified: 2026-05-01") {
 		t.Fatal("verify did not update the date")
 	}
 }
 
 func TestAgentIntegration(t *testing.T) {
 	v := copyVault(t)
-	base := filepath.Dir(v)
+	base := t.TempDir()
 	t.Chdir(base)
 	out := mustRun(t, v, "prime")
 	if n := textutil.Tokens(out); n > 150 {
 		t.Errorf("prime is %d tokens:\n%s", n, out)
 	}
-	if !strings.Contains(out, "session: work/sessions/auth-refactor") {
+	if !strings.Contains(out, "projects: auth-refactor (1 notes, tasks 2/7), *demo") {
 		t.Errorf("prime lacks the session:\n%s", out)
 	}
 	if n := textutil.Tokens(skillBody); n > 450 {
@@ -156,33 +156,34 @@ func TestAgentIntegration(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(base, ".claude", "skills", "paragma", "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("PARAGMA_PROJECT", "auth-refactor")
 	out, _, code := runIn(t, v, `{"hook_event_name":"PreCompact"}`, "hook", "pre-compact")
 	if code != 0 || out != "" {
 		t.Fatalf("pre-compact must be silent: %d %q", code, out)
 	}
-	if s := readNote(t, v, "work/sessions/auth-refactor.md"); !strings.Contains(s, "Automatic checkpoint before context compaction") {
+	if s := readNote(t, v, "auth-refactor/auth-refactor.md"); !strings.Contains(s, "Automatic checkpoint before context compaction") {
 		t.Fatal(s)
 	}
 }
 
 func TestDoctorGrepRecent(t *testing.T) {
 	v := copyVault(t)
-	if out := mustRun(t, v, "grep", "busy_timeout"); !strings.Contains(out, "episodes/errors/sqlite-database-locked:") {
+	if out := mustRun(t, v, "grep", "busy_timeout"); !strings.Contains(out, "demo/errors/sqlite-database-locked:") {
 		t.Fatal(out)
 	}
 	if out := mustRun(t, v, "recent", "--limit", "3"); strings.Count(out, "\n") != 3 {
 		t.Fatal(out)
 	}
-	os.WriteFile(filepath.Join(v, "knowledge", "broken.md"), []byte("# Broken\n\nsee [[nowhere]]\n"), 0o644)
+	os.WriteFile(filepath.Join(v, "Spaces", "main", "demo", "broken.md"), []byte("# Broken\n\nsee [[nowhere]]\n"), 0o644)
 	out, _, code := run(t, v, "doctor")
-	if code != ExitValidation || !strings.Contains(out, "broken link [[nowhere]]") || !strings.Contains(out, "knowledge/broken  no id") {
+	if code != ExitValidation || !strings.Contains(out, "broken link [[nowhere]]") || !strings.Contains(out, "demo/broken  no id") {
 		t.Fatalf("doctor: %d\n%s", code, out)
 	}
 	// --fix adds the missing id; the broken link is still reported (exit 6)
 	if out, _, code := run(t, v, "doctor", "--fix"); code != ExitValidation || !strings.Contains(out, "ok added ids") || strings.Contains(out, "no id") {
 		t.Fatalf("doctor --fix: %d\n%s", code, out)
 	}
-	if s := readNote(t, v, "knowledge/broken.md"); !strings.HasPrefix(s, "---\nid: ") {
+	if s := readNote(t, v, "demo/broken.md"); !strings.HasPrefix(s, "---\nid: ") {
 		t.Fatal(s)
 	}
 }

@@ -20,7 +20,7 @@ func mustRun(t *testing.T, v string, args ...string) string {
 
 func readNote(t *testing.T, v, rel string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(v, filepath.FromSlash(rel)))
+	b, err := os.ReadFile(filepath.Join(v, "Spaces", "main", filepath.FromSlash(rel)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,77 +37,119 @@ func ids(out string) []string {
 	return r
 }
 
-func TestSessionFlow(t *testing.T) {
+func TestProjectFlow(t *testing.T) {
 	v := copyVault(t)
-	t.Chdir(filepath.Dir(v))
-	out := mustRun(t, v, "session", "start", "Payment flow", "--goal", "Card payments via Stripe")
-	if !strings.Contains(out, "ok work/sessions/") {
+	t.Setenv("PARAGMA_PROJECT", "")
+	out := mustRun(t, v, "start", "Payment flow", "--goal", "Card payments via Stripe",
+		"--step", "Webhook endpoint", "--step", "Signature check", "--step", "Tests", "--decision", "Discount before VAT (user)")
+	if !strings.Contains(out, "ok payment-flow/payment-flow  (current project here)") {
 		t.Fatal(out)
 	}
-	sess := strings.TrimPrefix(strings.Fields(out)[1], "work/sessions/")
-	plan := ids(mustRun(t, v, "session", "plan", "Webhook endpoint", "Signature check", "Tests"))
+	plan := ids(out)
 	if len(plan) != 3 {
-		t.Fatalf("plan ids: %v", plan)
+		t.Fatalf("plan ids: %v\n%s", plan, out)
+	}
+	// starting it again does not overwrite it
+	if _, errs, code := run(t, v, "start", "payment-flow"); code != ExitConflict || !strings.Contains(errs, "pg resume payment-flow") {
+		t.Fatalf("second start: exit %d %s", code, errs)
 	}
 	sub := ids(mustRun(t, v, "task", "add", "Retry logic", "--under", plan[0]))[0]
+	mustRun(t, v, "task", "note", sub, "use exponential backoff")
 
-	// done refuses while a subtask is open, then the next task is printed
-	if _, _, code := run(t, v, "task", "done", plan[0]); code != ExitValidation {
+	// done refuses while a subtask is open; done prints the next task in full
+	if _, _, code := run(t, v, "done", plan[0]); code != ExitValidation {
 		t.Fatalf("done with open subtask: exit %d", code)
 	}
 	mustRun(t, v, "task", "start", plan[0])
-	out = mustRun(t, v, "task", "done", sub)
-	if !strings.Contains(out, "next: work/sessions/"+sess+"^"+plan[0]) {
-		t.Fatalf("next after done should be the in-progress parent:\n%s", out)
+	mustRun(t, v, "done", sub)
+	out = mustRun(t, v, "done", plan[0])
+	if !strings.Contains(out, "next: payment-flow/payment-flow^"+plan[1]+" [ ] Signature check") {
+		t.Fatalf("next after done:\n%s", out)
 	}
-	mustRun(t, v, "task", "done", plan[0])
 	mustRun(t, v, "task", "block", plan[1], "--by", "no test keys")
-	mustRun(t, v, "session", "log", "- webhook needs the raw body")
-	mustRun(t, v, "session", "checkpoint", "Webhook done. Next: tests.")
+	mustRun(t, v, "log", "- webhook needs the raw body")
+	mustRun(t, v, "decide", "Retries stop after 5 attempts")
+	mustRun(t, v, "checkpoint", "Webhook done. Next: tests.")
+	mustRun(t, v, "new", "note", "Webhook findings", "--dir", "webhook")
 
-	out = mustRun(t, v, "session", "resume")
-	for _, want := range []string{"goal: Card payments via Stripe", "progress: 2/4 done", "blocked: " + plan[1], "handoff: Checkpoint", "Next: tests.", "webhook needs the raw body", "next: pg task start " + plan[2]} {
+	out = mustRun(t, v, "resume")
+	for _, want := range []string{"project: payment-flow", "goal: Card payments via Stripe", "tasks 2/4",
+		"Discount before VAT (user)", "Retries stop after 5 attempts", "^" + plan[1] + " [!] Signature check",
+		"handoff: Checkpoint", "Next: tests.", "webhook needs the raw body", "webhook/webhook-findings", "next: ^" + plan[2]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("resume lacks %q:\n%s", want, out)
 		}
 	}
-	body := readNote(t, v, "work/sessions/"+sess+".md")
-	for _, want := range []string{"- [x] Webhook endpoint ^" + plan[0], "    - [x] Retry logic ^" + sub, "@blocked(no test keys)", "## Notes\n\n- "} {
+	body := readNote(t, v, "payment-flow/payment-flow.md")
+	for _, want := range []string{"type: project", "- [x] Webhook endpoint ^" + plan[0], "    - [x] Retry logic ^" + sub, "@blocked(no test keys)", "## Log\n\n- ", "## Decisions\n- "} {
 		if !strings.Contains(body, want) {
-			t.Errorf("session note lacks %q:\n%s", want, body)
+			t.Errorf("project note lacks %q:\n%s", want, body)
 		}
 	}
 
-	// a new conversation finds it by name without the date prefix
-	out = mustRun(t, v, "session", "status", "payment-flow")
-	if !strings.Contains(out, "progress: 2/4") {
+	// another project, then back
+	out = mustRun(t, v, "resume", "auth-refactor")
+	if !strings.Contains(out, "project: auth-refactor") {
 		t.Fatal(out)
 	}
-	out = mustRun(t, v, "session", "close", "--summary", "webhook shipped")
-	if !strings.Contains(out, "ok archive/work/sessions/"+sess) || !strings.Contains(out, "episodes/journal/") {
+	if out := mustRun(t, v, "log", "back on auth"); !strings.Contains(out, "auth-refactor/auth-refactor#") {
+		t.Fatalf("log should go to the current project: %s", out)
+	}
+	mustRun(t, v, "resume", "payment-flow")
+	out = mustRun(t, v, "project", "list")
+	if !strings.Contains(out, "* payment-flow") || !strings.Contains(out, "auth-refactor") {
 		t.Fatal(out)
 	}
-	if j := mustRun(t, v, "search", "webhook", "shipped"); !strings.Contains(j, "episodes/journal") {
+	out = mustRun(t, v, "project", "close", "--summary", "webhook shipped")
+	if !strings.Contains(out, "[closed]  2 decision records") || !strings.Contains(out, "payment-flow/journal/") {
+		t.Fatal(out)
+	}
+	if j := mustRun(t, v, "search", "webhook", "shipped"); !strings.Contains(j, "payment-flow/journal") {
 		t.Fatalf("journal entry not searchable:\n%s", j)
+	}
+	if d := mustRun(t, v, "find", "--type", "decision", "--title", "discount"); !strings.Contains(d, "payment-flow/decisions/0001-discount-before-vat") {
+		t.Fatalf("decision record from the project: %s", d)
 	}
 }
 
+func TestSpaces(t *testing.T) {
+	v := copyVault(t)
+	out := mustRun(t, v, "space", "list")
+	if !strings.Contains(out, "* main  2 projects: auth-refactor, demo") {
+		t.Fatal(out)
+	}
+	mustRun(t, v, "space", "new", "work")
+	if _, _, code := run(t, v, "space", "new", "work"); code != ExitConflict {
+		t.Fatal("space new twice")
+	}
+	mustRun(t, v, "space", "use", "work")
+	// this directory now uses the empty space: nothing from main is visible
+	if _, _, code := run(t, v, "search", "database"); code != ExitNoResults {
+		t.Fatal("search crossed spaces")
+	}
+	if out := mustRun(t, v, "--space", "main", "search", "database"); !strings.Contains(out, "demo/errors/sqlite-database-locked") {
+		t.Fatal(out)
+	}
+	if _, errs, code := run(t, v, "--space", "nope", "status"); code != ExitNoSpace || !strings.Contains(errs, "pg space new nope") {
+		t.Fatalf("unknown space: %d %s", code, errs)
+	}
+}
 func TestWriteCommands(t *testing.T) {
 	v := copyVault(t)
-	t.Chdir(filepath.Dir(v))
+	t.Chdir(v)
 	mustRun(t, v, "append", "rules#Veritabanı", "> [!rule] Migrations run only via cmd/migrate. ^r007")
 	if out := mustRun(t, v, "read", "rules^r007"); !strings.Contains(out, "cmd/migrate") {
 		t.Fatal(out)
 	}
 	// write a heading body keeps the heading and the sub-headings
 	mustRun(t, v, "write", "architecture#Katmanlar", "Two layers now.")
-	arch := readNote(t, v, "knowledge/architecture.md")
+	arch := readNote(t, v, "demo/architecture.md")
 	if !strings.Contains(arch, "## Katmanlar\n\nTwo layers now.\n\n### API") {
 		t.Fatalf("write section:\n%s", arch)
 	}
 	// write a block keeps its id
 	mustRun(t, v, "write", "auth-refactor^t004", "    - [ ] Tests incl. timezone")
-	if s := readNote(t, v, "work/sessions/auth-refactor.md"); !strings.Contains(s, "    - [ ] Tests incl. timezone ^t004") {
+	if s := readNote(t, v, "auth-refactor/auth-refactor.md"); !strings.Contains(s, "    - [ ] Tests incl. timezone ^t004") {
 		t.Fatalf("block id lost:\n%s", s)
 	}
 	// stale hash is refused
@@ -116,7 +158,7 @@ func TestWriteCommands(t *testing.T) {
 	}
 	// dash-led markdown text is text, not a flag
 	mustRun(t, v, "append", "stack#CI", "- lint runs on every push")
-	if s := readNote(t, v, "knowledge/stack.md"); !strings.Contains(s, "golangci-lint run`.\n\n- lint runs on every push") {
+	if s := readNote(t, v, "demo/stack.md"); !strings.Contains(s, "golangci-lint run`.\n\n- lint runs on every push") {
 		t.Fatalf("dash text:\n%s", s)
 	}
 	// edit: ambiguous without --all
@@ -126,19 +168,19 @@ func TestWriteCommands(t *testing.T) {
 	mustRun(t, v, "edit", "stack", "--find", "Go 1.24", "--replace", "Go 1.25")
 	// stdin text
 	_, _, code := runIn(t, v, "line one\nline two\n", "insert", "rules^r002", "--after", "-")
-	if code != 0 || !strings.Contains(readNote(t, v, "knowledge/rules.md"), "^r002\n\nline one\nline two") {
-		t.Fatalf("insert from stdin:\n%s", readNote(t, v, "knowledge/rules.md"))
+	if code != 0 || !strings.Contains(readNote(t, v, "demo/rules.md"), "^r002\n\nline one\nline two") {
+		t.Fatalf("insert from stdin:\n%s", readNote(t, v, "demo/rules.md"))
 	}
 	// UTF-16 file input (PowerShell >)
 	f := filepath.Join(t.TempDir(), "u16.txt")
 	os.WriteFile(f, []byte{0xFF, 0xFE, 'Ç', 0, 'o', 0, 'k', 0}, 0o644)
 	mustRun(t, v, "append", "stack#Frontend", "--file", f)
-	if !strings.Contains(readNote(t, v, "knowledge/stack.md"), "Çok") {
+	if !strings.Contains(readNote(t, v, "demo/stack.md"), "Çok") {
 		t.Fatal("utf-16 --file not decoded")
 	}
 	// new + section add + link
 	out := mustRun(t, v, "new", "decision", "Use Redis streams")
-	if !strings.Contains(out, "ok episodes/decisions/0008-use-redis-streams") {
+	if !strings.Contains(out, "ok demo/decisions/0008-use-redis-streams") {
 		t.Fatalf("decision numbering: %s", out)
 	}
 	mustRun(t, v, "section", "add", "0008-use-redis-streams", "Risks", "Queue may fill.")
@@ -151,7 +193,7 @@ func TestWriteCommands(t *testing.T) {
 func runIn(t *testing.T, vault, stdin string, args ...string) (string, string, int) {
 	t.Helper()
 	var out, errb strings.Builder
-	code := Execute(append([]string{"--vault", vault}, args...), &out, &errb, strings.NewReader(stdin))
+	code := Execute(append([]string{"--home", vault}, args...), &out, &errb, strings.NewReader(stdin))
 	return out.String(), errb.String(), code
 }
 
@@ -161,14 +203,14 @@ func TestMoveRewritesLinks(t *testing.T) {
 	if !strings.Contains(out, "links updated in 2 notes") {
 		t.Fatal(out)
 	}
-	if s := readNote(t, v, "knowledge/rules.md"); !strings.Contains(s, "fixes:: [[jwt-utc]]") {
+	if s := readNote(t, v, "demo/rules.md"); !strings.Contains(s, "fixes:: [[jwt-utc]]") {
 		t.Fatalf("rules not rewritten:\n%s", s)
 	}
 	if out := mustRun(t, v, "status"); !strings.Contains(out, "0 broken") {
 		t.Fatalf("broken links after mv:\n%s", out)
 	}
 	mustRun(t, v, "archive", "jwt-utc")
-	if out := mustRun(t, v, "read", "jwt-utc"); !strings.Contains(out, "archive/episodes/errors/jwt-utc") {
+	if out := mustRun(t, v, "read", "jwt-utc"); !strings.Contains(out, "demo/archive/errors/jwt-utc") {
 		t.Fatal(out)
 	}
 	if _, _, code := run(t, v, "rm", "old-deploy"); code != ExitUsage {
@@ -177,26 +219,13 @@ func TestMoveRewritesLinks(t *testing.T) {
 	mustRun(t, v, "rm", "old-deploy", "--hard")
 }
 
-func TestBranchMergeAndMarks(t *testing.T) {
+func TestMarks(t *testing.T) {
 	v := copyVault(t)
-	mustRun(t, v, "branch", "new", "queue", "--goal", "Move webhooks to a queue")
-	mustRun(t, v, "session", "start", "Queue spike")
-	tid := ids(mustRun(t, v, "session", "plan", "Consumer"))[0]
-	mustRun(t, v, "append", "queue#Decisions", "- Use Redis Streams")
-	out := mustRun(t, v, "branch", "merge", "queue", "--into", "main")
-	for _, want := range []string{"1 tasks -> work/branches/main", "decision episodes/decisions/0008-queue", "notes archived"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("merge lacks %q: %s", want, out)
-		}
-	}
-	if out := mustRun(t, v, "read", tid); !strings.Contains(out, "work/branches/main^"+tid) {
-		t.Fatalf("task not moved to main: %s", out)
-	}
-
+	var out string
 	mustRun(t, v, "mark", "architecture#Dağıtım", "--as", "stale", "--note", "moved to fly")
 	mustRun(t, v, "mark", "rules^r004", "--as", "pin")
 	out = mustRun(t, v, "marks", "--as", "stale,pin")
-	if !strings.Contains(out, "[stale]  (moved to fly)  ## Dağıtım") || !strings.Contains(out, "knowledge/rules^r004  [pin]") {
+	if !strings.Contains(out, "[stale]  (moved to fly)  ## Dağıtım") || !strings.Contains(out, "demo/rules^r004  [pin]") {
 		t.Fatal(out)
 	}
 	// the heading keeps its address with the mark on it
@@ -208,25 +237,26 @@ func TestBranchMergeAndMarks(t *testing.T) {
 		t.Fatal("unmark left the mark")
 	}
 	mustRun(t, v, "callout", "stack:12", "--kind", "warning")
-	if !strings.Contains(readNote(t, v, "knowledge/stack.md"), "> [!warning] Go 1.24") {
-		t.Fatal(readNote(t, v, "knowledge/stack.md"))
+	if !strings.Contains(readNote(t, v, "demo/stack.md"), "> [!warning] Go 1.24") {
+		t.Fatal(readNote(t, v, "demo/stack.md"))
 	}
 }
 
 func TestTaskNextAndClaim(t *testing.T) {
 	v := copyVault(t)
-	mustRun(t, v, "session", "switch", "auth-refactor")
+	t.Setenv("PARAGMA_PROJECT", "auth-refactor")
 	out := mustRun(t, v, "task", "next")
 	// t002 is in progress, its open child t004 is what to do now
 	if !strings.Contains(out, "^t004") {
 		t.Fatalf("task next: %s", out)
 	}
+	t.Setenv("PARAGMA_AGENT", "agent-a")
 	mustRun(t, v, "task", "claim", "t006")
-	if !strings.Contains(readNote(t, v, "work/sessions/auth-refactor.md"), "@by(auth-refactor)") {
+	if !strings.Contains(readNote(t, v, "auth-refactor/auth-refactor.md"), "@by(agent-a)") {
 		t.Fatal("claim not written")
 	}
-	mustRun(t, v, "task", "move", "t006", "work/inbox")
-	if s := readNote(t, v, "work/inbox.md"); !strings.Contains(s, "Eski cookie desteğini kaldır ^t006") {
+	mustRun(t, v, "task", "move", "t006", "demo/inbox")
+	if s := readNote(t, v, "demo/inbox.md"); !strings.Contains(s, "Eski cookie desteğini kaldır ^t006") {
 		t.Fatalf("move: %s", s)
 	}
 	if out := mustRun(t, v, "task", "list", "--state", "question"); !strings.Contains(out, "^t007  [?]") {
@@ -236,12 +266,12 @@ func TestTaskNextAndClaim(t *testing.T) {
 
 func TestDryRunWritesNothing(t *testing.T) {
 	v := copyVault(t)
-	before := readNote(t, v, "knowledge/stack.md")
+	before := readNote(t, v, "demo/stack.md")
 	out := mustRun(t, v, "append", "stack", "new line", "--dry-run")
-	if !strings.Contains(out, "would change knowledge/stack") || !strings.Contains(out, "+ new line") || strings.Contains(out, "ok ") {
+	if !strings.Contains(out, "would change demo/stack") || !strings.Contains(out, "+ new line") || strings.Contains(out, "ok ") {
 		t.Fatal(out)
 	}
-	if readNote(t, v, "knowledge/stack.md") != before {
+	if readNote(t, v, "demo/stack.md") != before {
 		t.Fatal("dry-run wrote the file")
 	}
 }

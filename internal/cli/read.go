@@ -59,7 +59,7 @@ func (a *app) outlineCmd() *cobra.Command {
 	var depth int
 	c := &cobra.Command{
 		Use:   "outline [addr]",
-		Short: "Map of the vault, or the heading skeleton of one note",
+		Short: "Map of the space (notes by project), or the heading skeleton of one note",
 		Long: `Without an address: a map of every note by layer with its token cost.
 With an address: the heading skeleton of a note (or of one heading's
 subtree) with the cost of reading each heading. Use it before pg read on
@@ -68,7 +68,7 @@ anything large.`,
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return a.vaultMap()
+				return a.spaceMap()
 			}
 			s, t, err := a.resolve(strings.Join(args, " ")) // an unquoted "note#Two words" arrives split
 			if err != nil {
@@ -127,7 +127,7 @@ func (a *app) outline(s *store, t *addr.Target, depth int) error {
 		total = t.Section.SubTokens
 	}
 	if a.jsonOut {
-		return a.emitJSON(map[string]any{"addr": a.prefix(s) + t.Addr(), "title": f.Title, "layer": f.Layer, "type": f.Type,
+		return a.emitJSON(map[string]any{"addr": t.Addr(), "title": f.Title, "layer": f.Layer, "type": f.Type,
 			"status": f.Status, "date": f.Date(), "tokens": total, "headings": rows})
 	}
 	date := ""
@@ -136,13 +136,13 @@ func (a *app) outline(s *store, t *addr.Target, depth int) error {
 	} else if d := f.Date(); d != "" {
 		date = d
 	}
-	a.println(join(a.prefix(s)+t.Addr(), a.fileMeta(s, f), date, textutil.FmtTokens(total)))
+	a.println(join(t.Addr(), a.fileMeta(s, f), date, textutil.FmtTokens(total)))
 	bw := a.newBudget(a.budgetOr(0))
 	for i, r := range rows {
 		sec := shown[i]
 		var label string
 		if sec.Level == 0 {
-			label = fmt.Sprintf("(intro) %s:%s", a.prefix(s)+f.Addr(), r.Lines)
+			label = fmt.Sprintf("(intro) %s:%s", f.Addr(), r.Lines)
 		} else {
 			label = strings.Repeat("#", sec.Level) + " " + sec.Path
 		}
@@ -224,13 +224,13 @@ func (a *app) read(s *store, t *addr.Target, full, withMeta, numbers bool) error
 	body := sliceLines(lines, from, to)
 	text := strings.Join(body, "\n")
 	tokens := textutil.Tokens(text)
-	address := a.prefix(s) + t.Addr()
+	address := t.Addr()
 
 	if a.jsonOut {
 		return a.emitJSON(map[string]any{"addr": address, "from": from, "to": to, "tokens": tokens, "hash": t.File.Hash, "text": text})
 	}
 	limit := a.budgetOr(s.v.Cfg.ReadLimit)
-	header := join(address, fmt.Sprintf("%s:%d-%d", notePath(s, t.File), from, to), textutil.FmtTokens(tokens), "hash:"+t.File.Hash)
+	header := join(address, fmt.Sprintf("L%d-%d", from, to), textutil.FmtTokens(tokens), "hash:"+t.File.Hash)
 
 	if full || tokens <= limit {
 		a.println(header)
@@ -260,7 +260,7 @@ func (a *app) read(s *store, t *addr.Target, full, withMeta, numbers bool) error
 			a.printf("too large (%s > %s): outline below; read one heading, or add --full\n", textutil.FmtTokens(tokens), textutil.FmtTokens(limit))
 			bw := a.newBudget(400)
 			for i, k := range kids {
-				if !bw.line(join(strings.Repeat("#", k.Level)+" "+a.prefix(s)+t.File.Addr()+"#"+k.Path, textutil.FmtTokens(k.SubTokens), kindsLabel(k.Kinds))) {
+				if !bw.line(join(strings.Repeat("#", k.Level)+" "+t.File.Addr()+"#"+k.Path, textutil.FmtTokens(k.SubTokens), kindsLabel(k.Kinds))) {
 					a.printf("… %d more; pg outline %s\n", len(kids)-i, address)
 					break
 				}
@@ -333,11 +333,11 @@ func (a *app) peekCmd() *cobra.Command {
 				}
 			}
 			rest := textutil.Tokens(strings.Join(sliceLines(lines, last+1, t.To), "\n"))
-			address := a.prefix(s) + t.Addr()
+			address := t.Addr()
 			if a.jsonOut {
 				return a.emitJSON(map[string]any{"addr": address, "lines": shown, "rest_tokens": rest})
 			}
-			a.println(join(address, fmt.Sprintf("%s:%d-%d", notePath(s, t.File), t.From, t.To), textutil.FmtTokens(textutil.Tokens(strings.Join(body, "\n")))))
+			a.println(join(address, fmt.Sprintf("L%d-%d", t.From, t.To), textutil.FmtTokens(textutil.Tokens(strings.Join(body, "\n")))))
 			for _, l := range shown {
 				a.println(l)
 			}

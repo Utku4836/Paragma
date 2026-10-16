@@ -5,7 +5,7 @@
 //	note#Up/Down     nested heading path (any unique suffix of the path works)
 //	note#Heading[2]  the 2nd heading with that path
 //	note^blk         one block (paragraph, list item, task, callout)
-//	^blk             a block anywhere in the vault, if the id is unique
+//	^blk             a block anywhere in the space, if the id is unique
 //	note:10-24       a line range (also :10 and :10-)
 //	@ULID            a file by id (unique prefix of 6+ chars is enough)
 package addr
@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 )
 
@@ -32,7 +33,6 @@ const (
 // Addr is a parsed, unresolved address.
 type Addr struct {
 	Raw     string
-	Global  bool // leading "~": the global vault
 	File    string
 	ULID    string
 	Heading string
@@ -65,10 +65,6 @@ func Parse(s string) (Addr, error) {
 	if strings.HasPrefix(s, "[[") && strings.HasSuffix(s, "]]") {
 		s = strings.TrimSuffix(strings.TrimPrefix(s, "[["), "]]")
 		s = strings.SplitN(s, "|", 2)[0]
-	}
-	if strings.HasPrefix(s, "~") {
-		a.Global = true
-		s = strings.TrimPrefix(strings.TrimPrefix(s, "~"), "/")
 	}
 	if s == "" {
 		return a, usage("empty address")
@@ -193,8 +189,11 @@ func (t *Target) Addr() string {
 type Resolver struct {
 	DB    *index.DB
 	files []*index.File
-	keys  map[string][]*index.File   // every path suffix -> files ending in it
-	secs  map[int64][]*index.Section // per-file section cache
+	// Prefer is the current project: when a name or block id matches notes
+	// in several projects, the one in this project wins.
+	Prefer string
+	keys   map[string][]*index.File   // every path suffix -> files ending in it
+	secs   map[int64][]*index.Section // per-file section cache
 }
 
 func NewResolver(db *index.DB) (*Resolver, error) {
@@ -303,6 +302,17 @@ func (r *Resolver) globalBlock(a Addr) (*Target, error) {
 		}
 		return &Target{Kind: KindBlock, File: f, Block: bs[0].ID, From: bs[0].Line, To: bs[0].End}, nil
 	}
+	if r.Prefer != "" {
+		var mine []*Target
+		for _, b := range bs {
+			if f, err := r.DB.FileByID(b.FileID); err == nil && space.ProjectOf(f.Path) == r.Prefer {
+				mine = append(mine, &Target{Kind: KindBlock, File: f, Block: b.ID, From: b.Line, To: b.End})
+			}
+		}
+		if len(mine) == 1 {
+			return mine[0], nil
+		}
+	}
 	var c []string
 	for _, b := range bs {
 		if f, err := r.DB.FileByID(b.FileID); err == nil {
@@ -353,6 +363,16 @@ func (r *Resolver) ResolveFile(name string) (*index.File, error) {
 		return exact[0], nil
 	}
 	cands := append(exact, suffix...)
+	if len(cands) == 0 && strings.Contains(key, "/") {
+		// "project/name" for a note deeper in that project's folder
+		// ("payments/refund-window" for payments/concepts/refund-window)
+		proj, rest, _ := strings.Cut(key, "/")
+		for _, f := range r.keys[rest] {
+			if index.FileKey(space.ProjectOf(f.Path)) == proj {
+				cands = append(cands, f)
+			}
+		}
+	}
 	if len(cands) == 0 && !strings.Contains(key, "/") {
 		// names written without their date or number prefix:
 		// "auth-refactor" for 2026-10-12-auth-refactor, "wal-mode" for 0007-wal-mode
@@ -370,14 +390,20 @@ func (r *Resolver) ResolveFile(name string) (*index.File, error) {
 		return cands[0], nil
 	}
 	if len(cands) > 1 {
-		var active []*index.File
+		var active, mine []*index.File
 		for _, f := range cands {
-			if !strings.HasPrefix(f.Path, "archive/") {
+			if !space.Archived(f.Path) {
 				active = append(active, f)
+				if r.Prefer != "" && space.ProjectOf(f.Path) == r.Prefer {
+					mine = append(mine, f)
+				}
 			}
 		}
 		if len(active) == 1 {
 			return active[0], nil
+		}
+		if len(mine) == 1 {
+			return mine[0], nil
 		}
 		var names []string
 		for _, f := range cands {

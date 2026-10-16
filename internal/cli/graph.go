@@ -28,13 +28,13 @@ type relHit struct {
 }
 
 // typeRank orders note types by how binding they are for code changes.
-var typeRank = map[string]int{"rule": 0, "decision": 1, "error": 2, "concept": 3, "note": 3, "branch": 4, "session": 5, "journal": 6}
+var typeRank = map[string]int{"rule": 0, "decision": 1, "error": 2, "concept": 3, "note": 3, "branch": 4, "session": 5, "project": 5, "journal": 6}
 
 // codePath turns a path given on the command line into the form notes use:
-// relative to the project directory, lower case, forward slashes.
-func codePath(s *store, p string) string {
+// relative to the work tree root, lower case, forward slashes.
+func (a *app) codePath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
-		if rel, err := filepath.Rel(s.v.Base, abs); err == nil && !strings.HasPrefix(rel, "..") {
+		if rel, err := filepath.Rel(a.workDir(), abs); err == nil && !strings.HasPrefix(rel, "..") {
 			p = rel
 		}
 	}
@@ -137,7 +137,7 @@ about files in the same directory.`,
 			}
 			var paths []string
 			for _, p := range args {
-				paths = append(paths, codePath(s, p))
+				paths = append(paths, a.codePath(p))
 			}
 			min := 1.5
 			if loose {
@@ -208,7 +208,7 @@ type ctxItem struct {
 // keyRange is the part of a note that carries its point: an error's fix, a
 // decision's decision, a session's goal, else the note's opening text.
 func (a *app) keyRange(s *store, f *index.File) (string, int, int) {
-	key := map[string]string{"error": "fix", "decision": "decision", "session": "goal", "branch": "bgoal"}[f.Type]
+	key := map[string]string{"error": "fix", "decision": "decision", "session": "goal", "project": "goal", "branch": "bgoal"}[f.Type]
 	if key != "" {
 		if sec := findSection(s, f, key); sec != nil {
 			return f.Addr() + "#" + sec.Path, sec.Line, sec.BodyEnd
@@ -249,7 +249,7 @@ pg context sqlite-database-locked`,
 				return err
 			}
 			if budget <= 0 {
-				budget = a.budgetOr(600)
+				budget = a.budgetOr(1000)
 			}
 			items := a.gatherContext(s, q)
 			if len(items) == 0 {
@@ -261,7 +261,7 @@ pg context sqlite-database-locked`,
 			return a.printContext(s, q, items, budget)
 		},
 	}
-	c.Flags().IntVar(&budget, "budget", 0, "token budget for the whole pack (default 600)")
+	c.Flags().IntVar(&budget, "budget", 0, "token budget for the topic part of the pack (default 1000)")
 	return c
 }
 
@@ -294,7 +294,7 @@ func (a *app) gatherContext(s *store, q string) []ctxItem {
 	}
 	// 2. a code path: notes about that file
 	if len(md.CodeRefs(" "+q+" ")) > 0 && !strings.Contains(strings.TrimSpace(q), " ") {
-		for _, h := range a.relatedNotes(s, []string{codePath(s, q)}, 1.5, false) {
+		for _, h := range a.relatedNotes(s, []string{a.codePath(q)}, 1.5, false) {
 			from, to := h.line, h.line
 			if t, err := s.res.Resolve(mustParse(h.addr)); err == nil {
 				from, to = t.From, t.To
@@ -447,70 +447,6 @@ func mustParse(s string) addr.Addr {
 	return p
 }
 
-func (a *app) printContext(s *store, q string, items []ctxItem, budget int) error {
-	if a.jsonOut {
-		var out []map[string]any
-		for _, it := range items {
-			lines, _ := fileLines(s, it.f)
-			out = append(out, map[string]any{"addr": it.addr, "type": it.f.Type, "score": it.score, "why": it.why, "text": strings.Join(sliceLines(lines, it.from, it.to), "\n")})
-		}
-		return a.emitJSON(out)
-	}
-	a.printf("context: %q (budget %s)\n", q, textutil.FmtTokens(budget))
-	used := textutil.Tokens(q) + 8
-	var skipped []string
-	perItem := max(budget/3, 120)
-	for _, it := range items {
-		lines, err := fileLines(s, it.f)
-		if err != nil {
-			continue
-		}
-		body := sliceLines(lines, it.from, it.to)
-		// drop the heading line itself; the address names it
-		if len(body) > 0 && isHeadingLine(body[0]) {
-			body = body[1:]
-		}
-		var keep []string
-		for _, l := range body {
-			if isBlank(l) {
-				continue
-			}
-			// callout markers and block ids are noise here: the header
-			// carries the address
-			l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), ">"))
-			l = reTrailingID.ReplaceAllString(l, "")
-			keep = append(keep, l)
-		}
-		text := strings.Join(keep, "\n")
-		cost := textutil.Tokens(text) + 10
-		if cost > perItem {
-			text = textutil.OneLine(text, perItem*3) + fmt.Sprintf(" (pg read %s)", it.addr)
-			cost = textutil.Tokens(text) + 10
-		}
-		if used+cost > budget || text == "" {
-			if text != "" {
-				skipped = append(skipped, fmt.Sprintf("%s %s", it.addr, textutil.FmtTokens(textutil.Tokens(strings.Join(keep, "\n")))))
-			}
-			continue
-		}
-		used += cost
-		typ := it.f.Type
-		if typ == "note" {
-			typ = ""
-		}
-		seen := ""
-		if it.f.Seen > 0 {
-			seen = fmt.Sprintf("seen:%d", it.f.Seen)
-		}
-		a.println("## " + join(it.addr, meta(typ, statusWord(it.f), seen)))
-		a.println(text)
-	}
-	if len(skipped) > 0 {
-		a.println("more: " + strings.Join(skipped[:min(len(skipped), 6)], " | "))
-	}
-	return nil
-}
-
 // ---- link graph ----
 
 // edge is one link between notes, seen from a note.
@@ -648,7 +584,7 @@ func (a *app) orphansCmd() *cobra.Command {
 			}
 			var out []string
 			for _, f := range s.res.Files() {
-				if f.Inactive() || f.Type == "journal" || f.Type == "session" || f.Type == "branch" {
+				if f.Inactive() || f.Type == "journal" || f.Type == "session" || f.Type == "branch" || f.Type == "project" {
 					continue
 				}
 				if len(a.edges(s, f)) == 0 {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
@@ -72,7 +73,7 @@ pg search timeout --type error --tag sqlite`,
 	}
 	f := c.Flags()
 	f.StringSliceVar(&sf.layers, "layer", nil, "working|episodic|semantic (comma list)")
-	f.StringSliceVar(&sf.types, "type", nil, "note|rule|decision|error|session|concept|journal")
+	f.StringSliceVar(&sf.types, "type", nil, "note|rule|decision|error|project|concept|journal")
 	f.StringSliceVar(&sf.statuses, "status", nil, "active|resolved|superseded|archived")
 	f.StringSliceVar(&sf.tags, "tag", nil, "only notes with this tag")
 	f.StringSliceVar(&sf.kinds, "kind", nil, "only sections holding this callout (rule, warning, decision...)")
@@ -113,6 +114,9 @@ func (a *app) search(q string, sf searchFlags) error {
 			return fail(ExitInternal, "%v", err)
 		}
 		for _, h := range hs {
+			if s.project != "" && space.ProjectOf(h.File.Path) == s.project {
+				h.Score *= 1.15 // the current project's notes first among equals
+			}
 			hits = append(hits, hitOut{Hit: h, s: s, prefix: a.prefix(s), stale: h.File.Stale(s.v.Cfg.StaleDays)})
 		}
 	}
@@ -262,7 +266,7 @@ pg find --since 7d --sort updated`,
 		RunE: func(cmd *cobra.Command, args []string) error { return a.find(ff) },
 	}
 	f := c.Flags()
-	f.StringSliceVar(&ff.types, "type", nil, "note|rule|decision|error|session|concept|journal")
+	f.StringSliceVar(&ff.types, "type", nil, "note|rule|decision|error|project|concept|journal")
 	f.StringSliceVar(&ff.layers, "layer", nil, "working|episodic|semantic")
 	f.StringSliceVar(&ff.statuses, "status", nil, "active|resolved|superseded|archived")
 	f.StringSliceVar(&ff.tags, "tag", nil, "has this tag (comma list = any)")

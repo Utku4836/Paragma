@@ -34,13 +34,31 @@ func Execute(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 		if e.Msg != "" {
 			fmt.Fprintln(stderr, "error: "+e.Msg)
 		}
+		if e.Code == ExitUsage && e.Msg != "" { // not the exit code of a command pg run ran
+			if cmd, _, ferr := root.Find(args); ferr == nil && cmd != root && cmd.Example != "" {
+				fmt.Fprintf(stderr, "example: %s\n", strings.TrimSpace(strings.SplitN(cmd.Example, "\n", 2)[0]))
+			}
+		}
 		return e.Code
 	}
 	// cobra parse errors: unknown flag, wrong arg count, unknown command
 	msg := err.Error()
 	fmt.Fprintln(stderr, "error: "+msg)
 	if cmd, _, ferr := root.Find(args); ferr == nil && cmd != root {
-		fmt.Fprintf(stderr, "usage: %s (pg help %s)\n", cmd.UseLine(), cmd.Name())
+		// the correct form right away, so the agent does not need pg help
+		fmt.Fprintf(stderr, "usage: %s\n", cmd.UseLine())
+		if cmd.Example != "" {
+			fmt.Fprintf(stderr, "example: %s\n", strings.TrimSpace(strings.SplitN(cmd.Example, "\n", 2)[0]))
+		}
+		if cmd.HasAvailableSubCommands() {
+			var names []string
+			for _, sc := range cmd.Commands() {
+				if sc.IsAvailableCommand() && sc.Name() != "help" {
+					names = append(names, sc.Name())
+				}
+			}
+			fmt.Fprintf(stderr, "subcommands: %s\n", strings.Join(names, " "))
+		}
 	} else {
 		fmt.Fprintln(stderr, "see: pg help")
 	}
@@ -59,30 +77,23 @@ func (a *app) rootCmd() *cobra.Command {
 	pf := root.PersistentFlags()
 	pf.BoolVar(&a.jsonOut, "json", false, "structured output")
 	pf.IntVar(&a.budget, "budget", 0, "cap output at N tokens")
-	pf.StringVar(&a.vaultFlag, "vault", "", "vault path (default: nearest .paragma, else ~/.paragma)")
-	pf.StringVar(&a.scope, "scope", "", "project|global|all")
+	pf.StringVar(&a.spaceFlag, "space", "", "space to use (default: the one mapped to this directory, else main)")
+	pf.StringVar(&a.homeFlag, "home", "", "Paragma home (default: $PARAGMA_HOME, else ~/.paragma)")
+	pf.MarkHidden("home")
 	pf.BoolVar(&a.quiet, "quiet", false, "print addresses / exit code only")
 	pf.StringVar(&a.ifHash, "if-hash", "", "write only if the note still has this hash (from pg read)")
 	pf.BoolVar(&a.dryRun, "dry-run", false, "show what a write would change, write nothing")
 	pf.StringVar(&a.textFile, "file", "", "read the text to write from this file (UTF-8 or UTF-16)")
 
-	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		switch a.scope {
-		case "", "project", "global", "all":
-		default:
-			return fail(ExitUsage, "--scope must be project, global or all")
-		}
-		return nil
-	}
-
 	root.AddCommand(
-		a.initCmd(), a.statusCmd(), a.reindexCmd(),
+		a.statusCmd(), a.reindexCmd(), a.spaceCmd(),
+		a.startCmd(), a.resumeCmd(), a.planCmd(), a.logCmd(), a.decideCmd(), a.checkpointCmd(), a.taskDoneCmd(),
 		a.searchCmd(), a.findCmd(),
 		a.outlineCmd(), a.readCmd(), a.peekCmd(),
 		a.linksCmd(), a.backlinksCmd(),
 		a.newCmd(), a.appendCmd(), a.writeCmd(), a.insertCmd(), a.editCmd(), a.sectionCmd(), a.linkCmd(),
 		a.mvCmd(), a.archiveCmd(), a.rmCmd(),
-		a.taskCmd(), a.sessionCmd(), a.projectCmd(), a.branchCmd(),
+		a.taskCmd(), a.projectCmd(),
 		a.markCmd(), a.highlightCmd(), a.calloutCmd(), a.unmarkCmd(), a.marksCmd(),
 		a.errorCmd(), a.runCmd(), a.decisionCmd(), a.journalCmd(), a.ruleCmd(), a.promoteCmd(), a.supersedeCmd(),
 		a.verifyCmd(), a.staleCmd(), a.primeCmd(), a.indexCmd(), a.skillCmd(), a.installCmd(), a.hookCmd(),
@@ -100,15 +111,14 @@ func (a *app) rootCmd() *cobra.Command {
 var groups = []struct{ name, cmds string }{
 	{"read", "outline search read peek links backlinks find grep recent index"},
 	{"write", "new append write insert edit section link keywords mv archive rm"},
+	{"project", "start resume plan done log decide checkpoint project list|status|close"},
 	{"task", "task add|list|show|start|done|block|cancel|ask|reopen|note|move|edit|next|claim"},
-	{"session", "session start|plan|status|log|checkpoint|resume|fork|list|switch|close"},
-	{"project", "project new|list|switch|info|archive  branch new|list|switch|status|merge|close"},
 	{"error", "run  error record|find|seen|reopen  decision record  journal"},
 	{"rule", "rule add|list  promote supersede verify stale"},
 	{"graph", "related context neighbors graph orphans broken"},
 	{"mark", "mark highlight callout unmark marks"},
 	{"agent", "prime skill install hook"},
-	{"admin", "init status reindex doctor dupes gc misses"},
+	{"admin", "space list|new|use  status reindex doctor dupes gc misses"},
 }
 
 func (a *app) helpCmd(root *cobra.Command) *cobra.Command {
@@ -139,18 +149,18 @@ func (a *app) helpCmd(root *cobra.Command) *cobra.Command {
 
 func (a *app) printHelp(c *cobra.Command) {
 	if c.Parent() == nil {
-		a.println("pg - agent memory (Paragma). Notes are Markdown under .paragma/; pg returns only the part you need.")
-		a.println("start: pg outline (map of notes) -> pg search <words> -> pg read <addr> [<addr>...] (copy addresses from output)")
-		a.println("addresses: note | note#Heading | note#Up/Down | note^block | note:10-24 | @id | ~note (global)")
+		a.println("pg - agent memory (Paragma). Notes are Markdown in project folders of a space (~/.paragma/Spaces/<space>/<project>/); pg returns only the part you need.")
+		a.println("find: pg context <topic> (everything on a topic, one call) | pg search <words> -> pg read <addr> [<addr>...] (copy addresses from output)")
+		a.println("addresses: project/note | note | note#Heading | note#Up/Down | note^block | note:10-24 | @id")
 		a.println("commands (pg help <command>):")
 		for _, g := range groups {
 			a.printf("  %-6s %s\n", g.name, g.cmds)
 		}
-		a.println("long work: pg session resume (new conversation) | session start + session plan | task done <id> prints the next task | session checkpoint before context runs out")
-		a.println("rule: read memory through pg, not by opening .paragma files; pg read prints file:lines for citing")
+		a.println(`projects: pg start <name> --goal "..." --step "..." --decision "..." (once) | pg resume <name> (new conversation, or switch) | pg done <id> prints the next task | pg log / pg decide`)
+		a.println("rule: read memory through pg, not by opening the files; cite a note by its address (pg read prints its lines as L10-24)")
 		a.println("text: as arguments, or - for stdin, or --file F (PowerShell 5.1 pipes drop non-ASCII); writes print ok <addr>")
-		a.println("flags: --json --budget N --vault PATH --scope project|global|all")
-		a.println("exit: 0 ok, 1 no results, 2 usage, 3 not found, 4 conflict (--if-hash, lock), 5 no vault, 6 refused (e.g. open subtasks), 7 internal")
+		a.println("flags: --json --budget N --space NAME")
+		a.println("exit: 0 ok, 1 no results, 2 usage, 3 not found, 4 conflict (exists, --if-hash, lock), 5 no such space, 6 refused (e.g. open subtasks), 7 internal")
 		return
 	}
 	if c.HasAvailableSubCommands() {

@@ -146,7 +146,7 @@ func (a *app) doctorCmd() *cobra.Command {
 	var fix bool
 	c := &cobra.Command{
 		Use:   "doctor [--fix]",
-		Short: "Check the vault: front matter errors, duplicate ids, broken links, missing ids",
+		Short: "Check the space: front matter errors, duplicate ids, broken links, missing ids",
 		Long: `List problems in the vault, one per line with its address. --fix adds
 missing ids. Exit 6 when problems remain.`,
 		Args: cobra.NoArgs,

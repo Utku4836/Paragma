@@ -1,6 +1,6 @@
 ---
 id: 01JA4AUTHREFACTOR00000000AA
-type: session
+type: project
 layer: working
 status: active
 title: Auth refactor

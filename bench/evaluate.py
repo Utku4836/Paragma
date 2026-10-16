@@ -81,7 +81,7 @@ def conv_metrics(path, ws=""):
                 m["outside"] += 1
             if re.search(r"(^|[\s;&|(])pg(\.exe)?\s", cmd + " "):
                 m["pg"] += 1
-            elif "memory" in params.replace("\\\\", "/") or ".paragma" in params:
+            elif "memory" in params.replace("\\\\", "/") or ".paragma" in params or "pghome" in params:
                 m["mem_reads"] += 1
     return m
 

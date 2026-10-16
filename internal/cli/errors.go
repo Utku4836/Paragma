@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/Utku-Private/Paragma/internal/errsig"
 	"github.com/Utku-Private/Paragma/internal/index"
+	"github.com/Utku-Private/Paragma/internal/space"
 	"github.com/Utku-Private/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
@@ -104,6 +104,10 @@ func (a *app) matchErrors(s *store, output string, allowRelated bool) []errMatch
 		if out[i].f.Inactive() != out[j].f.Inactive() {
 			return !out[i].f.Inactive()
 		}
+		// the current project's record wins over another project's
+		if mi, mj := space.ProjectOf(out[i].f.Path) == s.project, space.ProjectOf(out[j].f.Path) == s.project; mi != mj {
+			return mi
+		}
 		return out[i].f.Seen > out[j].f.Seen
 	})
 	return out
@@ -129,7 +133,7 @@ type lastRun struct {
 	Output string   `json:"output_tail"`
 }
 
-func lastRunPath(s *store) string { return filepath.Join(s.v.Root, "last-run.json") }
+func lastRunPath(s *store) string { return s.v.Meta("last-run.json") }
 
 func loadLastRun(s *store) (*lastRun, error) {
 	b, err := os.ReadFile(lastRunPath(s))
@@ -156,7 +160,7 @@ func (a *app) errorCmd() *cobra.Command {
 
 func (a *app) errorRecordCmd() *cobra.Command {
 	var sig, title, symptom, cause, fix, files, tags, keywords string
-	var fromLast, force, global bool
+	var fromLast, force bool
 	c := &cobra.Command{
 		Use:   "record --sig TEXT|--from-last --cause TEXT --fix TEXT",
 		Short: "Record a fixed error so it is recognised next time",
@@ -174,10 +178,9 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 				return err
 			}
 			proj := s // where pg run saved the last failure
-			if global {
-				if s, err = a.openVault(true); err != nil {
-					return fail(ExitNoVault, "no global vault yet (pg init --global)")
-				}
+			p, err := a.writeProject(s)
+			if err != nil {
+				return err
 			}
 			var lr *lastRun
 			if fromLast {
@@ -229,7 +232,7 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 				}
 				lines = fillSection(lines, "## "+a.sec(s, "files"), fl)
 			}
-			rel := freePath(s, "episodes/errors/"+slug(title)+".md")
+			rel := freePath(s, p+"/errors/"+slug(title)+".md")
 			return a.withLock(s, func() error {
 				n := newNote(s, rel, lines)
 				if err := a.save(n); err != nil {
@@ -238,7 +241,7 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 				if fromLast && !a.dryRun {
 					os.Remove(lastRunPath(proj))
 				}
-				a.ok(globalPrefix(global) + n.addr())
+				a.ok(n.addr())
 				a.suggestLinks(s, n.addr(), title+" "+cause)
 				return nil
 			})
@@ -255,7 +258,6 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 	f.StringVar(&tags, "tags", "", "comma separated tags")
 	f.StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language, how others will search for it")
 	f.BoolVar(&force, "new", false, "record even if a matching error exists")
-	f.BoolVar(&global, "global", false, "record in the global vault: errors that are not about this project (toolchain, OS, CI)")
 	return c
 }
 
@@ -377,7 +379,13 @@ func (a *app) errorSeenCmd() *cobra.Command {
 								return err
 							}
 							src := shortRef(s, g) + strings.TrimPrefix(fixAddr, g.Addr())
-							ruleAddr, err := a.addRule(s, fix, "", src)
+							p := space.ProjectOf(g.Path)
+							if p == "" {
+								if p, err = a.writeProject(s); err != nil {
+									return err
+								}
+							}
+							ruleAddr, err := a.addRule(s, p, fix, "", src)
 							if err != nil {
 								return err
 							}
@@ -385,7 +393,7 @@ func (a *app) errorSeenCmd() *cobra.Command {
 							if err != nil {
 								return err
 							}
-							en.lines, _ = place(en.lines, lastLine(en.lines, 1, len(en.lines)), []string{"promoted:: [[" + strings.TrimPrefix(ruleAddr, "knowledge/") + "]]"})
+							en.lines, _ = place(en.lines, lastLine(en.lines, 1, len(en.lines)), []string{"promoted:: [[" + ruleAddr + "]]"})
 							if err := a.save(en); err != nil {
 								return err
 							}
@@ -455,11 +463,4 @@ func errorTitle(sig string) string {
 		t = u
 	}
 	return textutil.OneLine(t, 70)
-}
-
-func globalPrefix(global bool) string {
-	if global {
-		return "~"
-	}
-	return ""
 }

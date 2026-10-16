@@ -11,11 +11,14 @@ import (
 	"time"
 )
 
-// copyVault copies testdata/sample/.paragma (without the index) to a temp dir.
+// copyVault copies the sample space (testdata/sample/Spaces/main: projects
+// demo and auth-refactor) into a fresh Paragma home and returns the home.
+// Writes go to the demo project; the working directory is a temp dir.
 func copyVault(t *testing.T) string {
 	t.Helper()
-	src := filepath.Join("..", "..", "testdata", "sample", ".paragma")
-	dst := filepath.Join(t.TempDir(), ".paragma")
+	src := filepath.Join("..", "..", "testdata", "sample", "Spaces")
+	home := t.TempDir()
+	dst := filepath.Join(home, "Spaces")
 	err := filepath.WalkDir(src, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -36,46 +39,52 @@ func copyVault(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PARAGMA_HOME", filepath.Join(t.TempDir(), "nohome"))
-	return dst
+	t.Setenv("PARAGMA_HOME", home)
+	t.Setenv("PARAGMA_SPACE", "")
+	t.Setenv("PARAGMA_PROJECT", "demo")
+	t.Chdir(t.TempDir())
+	return home
 }
 
-func run(t *testing.T, vault string, args ...string) (string, string, int) {
+// projectDir is a project folder of the sample space.
+func projectDir(home, p string) string { return filepath.Join(home, "Spaces", "main", p) }
+
+func run(t *testing.T, home string, args ...string) (string, string, int) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := Execute(append([]string{"--vault", vault}, args...), &out, &errb, strings.NewReader(""))
+	code := Execute(append([]string{"--home", home}, args...), &out, &errb, strings.NewReader(""))
 	return out.String(), errb.String(), code
 }
 
 func TestCommands(t *testing.T) {
 	v := copyVault(t)
-	t.Chdir(filepath.Dir(v)) // read headers print paths relative to the working directory
+	t.Chdir(v) // read headers print paths relative to the working directory
 	cases := []struct {
 		args []string
 		code int
 		has  []string
 		not  []string
 	}{
-		{[]string{"search", "database", "locked"}, 0, []string{"episodes/errors/sqlite-database-locked  [error resolved seen:3]", "#Belirti"}, nil},
+		{[]string{"search", "database", "locked"}, 0, []string{"demo/errors/sqlite-database-locked  [error resolved seen:3]", "#Belirti"}, nil},
 		{[]string{"search", "cozum", "wal"}, 0, []string{"sqlite-database-locked#Çözüm"}, nil},
-		{[]string{"search", "busy_timeout"}, 0, []string{"#Çözüm", "knowledge/rules#Veritabanı  [rule !rule]"}, nil},
+		{[]string{"search", "busy_timeout"}, 0, []string{"#Çözüm", "demo/rules#Veritabanı  [rule !rule]"}, nil},
 		{[]string{"search", "journal", "DELETE"}, 0, []string{"0003-journal-mode"}, nil},
 		{[]string{"search", "zzzqqq"}, 1, []string{"no results"}, nil},
-		{[]string{"search", "wal", "--layer", "semantic"}, 0, []string{"knowledge/"}, []string{"episodes/"}},
+		{[]string{"search", "wal", "--layer", "semantic"}, 0, []string{"demo/"}, []string{"episodes/"}},
 		{[]string{"search", "wal", "--layer", "nope"}, 2, nil, nil},
 		{[]string{"outline", "architecture"}, 0, []string{"### Katmanlar/Depolama", "[!rule]", "tasks 1/2"}, nil},
-		{[]string{"read", "architecture#depolama"}, 0, []string{"knowledge/architecture#Katmanlar/Depolama  .paragma/knowledge/architecture.md:20-27", "busy_timeout=5000"}, []string{"## Middleware"}},
+		{[]string{"read", "architecture#depolama"}, 0, []string{"demo/architecture#Katmanlar/Depolama  L20-27", "busy_timeout=5000"}, []string{"## Middleware"}},
 		{[]string{"read", "auth-refactor^t002"}, 0, []string{"Refresh endpoint", "Testler ^t004"}, []string{"Prod migration"}},
-		{[]string{"read", "^t005"}, 0, []string{"work/sessions/auth-refactor^t005", "Prod migration"}, nil},
-		{[]string{"read", "stack:12-13"}, 0, []string{"knowledge/stack:12-13", "Go 1.24"}, nil},
-		{[]string{"read", "@01JA3Z8K2MSTACK"}, 0, []string{"knowledge/stack  .paragma/knowledge/stack.md:9-", "## CI"}, []string{"verified:"}},
+		{[]string{"read", "^t005"}, 0, []string{"auth-refactor/auth-refactor^t005", "Prod migration"}, nil},
+		{[]string{"read", "stack:12-13"}, 0, []string{"demo/stack:12-13", "Go 1.24"}, nil},
+		{[]string{"read", "@01JA3Z8K2MSTACK"}, 0, []string{"demo/stack  L9-", "## CI"}, []string{"verified:"}},
 		{[]string{"read", "stack", "--meta"}, 0, []string{"verified: 2026-05-01"}, nil},
 		{[]string{"read", "architecture#Middlewre"}, 3, nil, nil},
 		{[]string{"read", "archtecture"}, 3, nil, nil},
-		{[]string{"peek", "auth-refactor", "--lines", "2"}, 0, []string{"# Auth refactor", "more: pg read work/sessions/auth-refactor"}, nil},
-		{[]string{"links", "auth-refactor"}, 0, []string{"episodes/errors/jwt-exp-timezone  [wiki]  L26,30", "knowledge/architecture#Middleware  [wiki]"}, nil},
+		{[]string{"peek", "auth-refactor", "--lines", "2"}, 0, []string{"# Auth refactor", "more: pg read auth-refactor/auth-refactor"}, nil},
+		{[]string{"links", "auth-refactor"}, 0, []string{"demo/errors/jwt-exp-timezone  [wiki]  L26,30", "demo/architecture#Middleware  [wiki]"}, nil},
 		{[]string{"links", "0007-wal-modu"}, 0, []string{"0003-journal-mode  [supersedes]"}, nil},
-		{[]string{"backlinks", "jwt-exp-timezone"}, 0, []string{"knowledge/rules#Güvenlik  [fixes]", "work/sessions/auth-refactor#Devir"}, nil},
+		{[]string{"backlinks", "jwt-exp-timezone"}, 0, []string{"demo/rules#Güvenlik  [fixes]", "auth-refactor/auth-refactor#Devir"}, nil},
 		{[]string{"backlinks", "architecture#Middleware"}, 0, []string{"auth-refactor#Notlar"}, nil},
 		{[]string{"backlinks", "architecture#Dağıtım"}, 1, nil, nil},
 		{[]string{"find", "--type", "error"}, 0, []string{"jwt-exp-timezone", "sqlite-database-locked", "2 notes"}, nil},
@@ -123,10 +132,10 @@ func TestIncrementalSync(t *testing.T) {
 	if _, _, code := run(t, v, "search", "kangal"); code != 1 {
 		t.Fatal("unexpected hit before write")
 	}
-	p := filepath.Join(v, "knowledge", "dogs.md")
+	p := filepath.Join(v, "Spaces", "main", "demo", "dogs.md")
 	os.WriteFile(p, []byte("# Dogs\n\n## Kangal\nBüyük çoban köpeği.\n"), 0o644)
 	out, _, code := run(t, v, "search", "kangal")
-	if code != 0 || !strings.Contains(out, "knowledge/dogs#Kangal") {
+	if code != 0 || !strings.Contains(out, "demo/dogs#Kangal") {
 		t.Fatalf("new file not indexed: %d %s", code, out)
 	}
 	// edit with a different size so the stat check sees it
@@ -134,7 +143,7 @@ func TestIncrementalSync(t *testing.T) {
 	future := time.Now().Add(2 * time.Second)
 	os.Chtimes(p, future, future)
 	out, _, _ = run(t, v, "search", "akbas")
-	if !strings.Contains(out, "knowledge/dogs#Akbaş") {
+	if !strings.Contains(out, "demo/dogs#Akbaş") {
 		t.Fatalf("edit not indexed: %s", out)
 	}
 	os.Remove(p)
@@ -146,11 +155,11 @@ func TestIncrementalSync(t *testing.T) {
 func TestReadLimitShowsOutline(t *testing.T) {
 	v := copyVault(t)
 	out, _, code := run(t, v, "read", "architecture", "--budget", "60")
-	if code != 0 || !strings.Contains(out, "too large") || !strings.Contains(out, "knowledge/architecture#Middleware") {
+	if code != 0 || !strings.Contains(out, "too large") || !strings.Contains(out, "demo/architecture#Middleware") {
 		t.Fatalf("expected outline fallback:\n%s", out)
 	}
 	out, _, _ = run(t, v, "read", "architecture#Middleware", "--budget", "20")
-	if !strings.Contains(out, "cut at L") || !strings.Contains(out, "next: pg read knowledge/architecture:") {
+	if !strings.Contains(out, "cut at L") || !strings.Contains(out, "next: pg read demo/architecture:") {
 		t.Fatalf("expected cut with continuation:\n%s", out)
 	}
 	out, _, _ = run(t, v, "read", "architecture", "--budget", "60", "--full")
@@ -159,40 +168,40 @@ func TestReadLimitShowsOutline(t *testing.T) {
 	}
 }
 
-func TestNoVault(t *testing.T) {
+func TestNoSuchSpace(t *testing.T) {
 	t.Setenv("PARAGMA_HOME", filepath.Join(t.TempDir(), "nohome"))
 	t.Setenv("PARAGMA_VAULT", "")
 	wd, _ := os.Getwd()
 	defer os.Chdir(wd)
 	os.Chdir(t.TempDir())
 	var out, errb bytes.Buffer
-	if code := Execute([]string{"search", "x"}, &out, &errb, strings.NewReader("")); code != ExitNoVault {
+	if code := Execute([]string{"--space", "nope", "search", "x"}, &out, &errb, strings.NewReader("")); code != ExitNoSpace {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 }
 
 func TestVaultMapAndHints(t *testing.T) {
 	v := copyVault(t)
-	t.Chdir(filepath.Dir(v))
+	t.Chdir(v)
 	out, _, code := run(t, v, "outline")
-	if code != 0 || !strings.Contains(out, "semantic\n  knowledge/architecture") || !strings.Contains(out, "inactive\n") {
+	if code != 0 || !strings.Contains(out, "demo/  (current)\n  demo/architecture") || !strings.Contains(out, "[inactive]") || !strings.Contains(out, "auth-refactor/\n") {
 		t.Fatalf("vault map:\n%s", out)
 	}
 	out, _, _ = run(t, v, "outline", "--budget", "40")
-	if !strings.Contains(out, "episodes/errors/  2 notes") {
+	if !strings.Contains(out, "auth-refactor/  1 notes") || !strings.Contains(out, "demo/  4 notes") {
 		t.Fatalf("directory summary expected:\n%s", out)
 	}
 	out, _, _ = run(t, v, "read", "sqlite-database-locked")
-	if !strings.Contains(out, "next: pg backlinks episodes/errors/sqlite-database-locked (3 links in)") {
+	if !strings.Contains(out, "next: pg backlinks demo/errors/sqlite-database-locked (3 links in)") {
 		t.Fatalf("backlink hint missing:\n%s", out)
 	}
 }
 
 func TestReadMany(t *testing.T) {
 	v := copyVault(t)
-	t.Chdir(filepath.Dir(v))
+	t.Chdir(v)
 	out, _, code := run(t, v, "read", "rules^r003", "jwt-exp-timezone#Çözüm")
-	if code != 0 || !strings.Contains(out, "knowledge/rules^r003  .paragma/knowledge/rules.md:19-20") || !strings.Contains(out, "clock.Fixed") {
+	if code != 0 || !strings.Contains(out, "demo/rules^r003  L19-20") || !strings.Contains(out, "clock.Fixed") {
 		t.Fatalf("multi read:\n%s", out)
 	}
 	out, _, code = run(t, v, "read", "rules^r003", "nope#x", "stack#CI")
