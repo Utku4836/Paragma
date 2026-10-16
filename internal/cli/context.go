@@ -155,7 +155,7 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	}
 	// decisions and rules bind more than notes that merely mention the topic
 	rank := func(g *ctxGroup) float64 {
-		w := map[string]float64{"rule": 1.3, "decision": 1.25, "error": 1.15, "concept": 1.1, "journal": 0.6}[g.f.Type]
+		w := contextTypeWeight[g.f.Type]
 		if w == 0 {
 			w = 1
 		}
@@ -179,11 +179,30 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	}
 	a.println(head)
 
+	// notes that repeat another one's fix (the same error in several
+	// packages) are folded into the first: one note and a list
+	sameAs := map[int64][]string{} // first note -> addresses with the same fix
+	dup := map[int64]bool{}
+	firstByFix := map[string]int64{}
+	for _, g := range groups {
+		if k := a.fixKey(s, g.f); k != "" {
+			if first, ok := firstByFix[k]; ok {
+				dup[g.f.ID] = true
+				sameAs[first] = append(sameAs[first], g.f.Addr())
+			} else {
+				firstByFix[k] = g.f.ID
+			}
+		}
+	}
+
 	used := 0
 	shownRules := map[string]bool{} // rule addresses already printed
 	var notShown []string
 	counts := map[string]int{}
 	for _, g := range groups {
+		if dup[g.f.ID] {
+			continue
+		}
 		lines, err := fileLines(s, g.f)
 		if err != nil {
 			continue
@@ -249,6 +268,9 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 		for _, l := range text {
 			a.println(l)
 		}
+		if same := sameAs[g.f.ID]; len(same) > 0 {
+			a.printf("(the same fix is recorded in %d more notes: %s)\n", len(same), strings.Join(same[:min(len(same), 5)], ", ")+map[bool]string{true: ", ...", false: ""}[len(same) > 5])
+		}
 	}
 
 	// the project's rules, which apply to every change
@@ -263,15 +285,26 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	// what else mentions the topic: each with its point, so that listing a
 	// note does not send the agent to read it
 	var other []string
-	more := 0
-	if hits, err := s.db.Search(index.SearchOpts{Query: q, Max: 60}); err == nil {
+	more, folded := 0, 0
+	capped := false
+	if hits, err := s.db.Search(index.SearchOpts{Query: q, Max: 400}); err == nil {
+		capped = len(hits) >= 400
 		var pick []index.Hit
 		seenF := map[int64]bool{}
 		for _, h := range hits {
-			if printed[h.File.ID] || seenF[h.File.ID] || h.File.Type == "journal" {
+			if printed[h.File.ID] || seenF[h.File.ID] || h.File.Type == "journal" || dup[h.File.ID] {
 				continue
 			}
 			seenF[h.File.ID] = true
+			if k := a.fixKey(s, h.File); k != "" {
+				if first, ok := firstByFix[k]; ok {
+					if printed[first] {
+						folded++ // the same fix as a note shown above
+					}
+					continue
+				}
+				firstByFix[k] = h.File.ID
+			}
 			if len(pick) < 6 {
 				pick = append(pick, h)
 			} else {
@@ -318,9 +351,15 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	if more > 0 {
 		line += fmt.Sprintf("; %d more notes mention it in passing (pg search %s)", more, shellQuote(q))
 	}
-	if len(notShown) == 0 && more == 0 {
+	if folded > 0 {
+		line += fmt.Sprintf("; %d more notes repeat a fix shown above", folded)
+	}
+	switch {
+	case capped:
+		line += fmt.Sprintf(". Over 400 notes match %q: a narrower topic gives a sharper pack.", q)
+	case len(notShown) == 0 && more == 0:
 		line += ". This is everything memory has on it."
-	} else {
+	default:
 		line += ". Nothing else matches."
 	}
 	a.println(line)
@@ -412,4 +451,23 @@ func (a *app) printProjectRules(s *store, p string, already map[string]bool) int
 	sh.mark(key)
 	a.saveShown(s, sh)
 	return f.ID
+}
+
+// contextTypeWeight scales search scores in a context pack by note type.
+var contextTypeWeight = map[string]float64{
+	"rule": 2.0, "decision": 1.7, "concept": 1.4, "note": 1.2, "project": 1.1,
+	"error": 1.0, "session": 0.6, "journal": 0.5,
+}
+
+// fixKey identifies an error note by its fix (words only), so notes that
+// record the same fix in different places can be folded together.
+func (a *app) fixKey(s *store, f *index.File) string {
+	if f.Type != "error" {
+		return ""
+	}
+	fix := strings.Join(a.sectionBody(s, f, "fix"), " ")
+	if len(fix) < 20 {
+		return ""
+	}
+	return strings.Join(strings.Fields(textutil.Fold(fix)), " ")
 }

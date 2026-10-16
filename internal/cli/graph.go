@@ -304,9 +304,34 @@ func (a *app) gatherContext(s *store, q string) []ctxItem {
 		}
 	}
 	// 3. full-text hits
-	hits, _ := s.db.Search(index.SearchOpts{Query: q, Max: 40})
+	hits, _ := s.db.Search(index.SearchOpts{Query: q, Max: 400})
 	if len(hits) > 0 {
-		hits = hits[:min(len(hits), 8)]
+		// one note per fix: the same error recorded in many packages must
+		// not crowd out everything else
+		seenFix := map[string]bool{}
+		kept := hits[:0]
+		for _, h := range hits {
+			if k := a.fixKey(s, h.File); k != "" {
+				if seenFix[k] {
+					continue
+				}
+				seenFix[k] = true
+			}
+			kept = append(kept, h)
+		}
+		hits = kept
+		// what binds a change ranks above what merely mentions the topic: in
+		// a big memory dozens of error notes say "refund" in passing, the
+		// one rule that governs refunds must not drown among them
+		for i := range hits {
+			w := contextTypeWeight[hits[i].File.Type]
+			if w == 0 {
+				w = 1
+			}
+			hits[i].Score *= w
+		}
+		sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+		hits = hits[:min(len(hits), 10)]
 		s.db.Hydrate(hits)
 		top := hits[0].Score
 		for _, h := range hits {

@@ -2,3 +2,4 @@
 *.prof
 *.test.exe
 /bench/runs*/
+/bench/memory-big/

@@ -12,7 +12,9 @@
 # the login settings copied): prompt2 is a NEW conversation that cannot read
 # the first one's transcript, so only the project's files carry knowledge.
 #
-# Environment: MODEL (default gemini-3.8-flash-high), AGENT_TIMEOUT (s).
+# Environment: MODEL (default gemini-3.8-flash-high), AGENT_TIMEOUT (s),
+# MEMORY (memory directory, default bench/memory; bench/memory-big for the
+# large-memory run, made by genmem_big.py).
 set -u
 B=$(cd "$(dirname "$0")" && pwd)
 SC=$1
@@ -22,6 +24,7 @@ OUT=${4:-$B/runs}
 MODEL=${MODEL:-gemini-3.8-flash-high}
 TO=${AGENT_TIMEOUT:-900}
 SD=$B/scenarios/$SC
+MEM=${MEMORY:-$B/memory}
 W=$OUT/$SC/$COND-$REP
 TMPROOT=$(cygpath -u "$LOCALAPPDATA")/Temp
 WS=$(mktemp -d "$TMPROOT/ws-XXXXXXXX")
@@ -35,13 +38,13 @@ if [ -f "$SD/setup.sh" ]; then (cd "$R" && bash "$SD/setup.sh"); fi
 case $COND in
 none) ;;
 files)
-	cp -r "$B/memory" "$R/memory"
+	cp -r "$MEM" "$R/memory"
 	rm -f "$R/memory/config.toml" "$R/memory/.gitignore"
 	cp "$B/agents/files.AGENTS.md" "$R/AGENTS.md"
 	;;
 paragma)
 	# memory lives outside the repo, in the Paragma home (a space with one project)
-	bash "$B/to_space.sh" "$B/memory" "$WS/pghome"
+	bash "$B/to_space.sh" "$MEM" "$WS/pghome"
 	cp "$B/agents/paragma.AGENTS.md" "$R/AGENTS.md"
 	;;
 *)
