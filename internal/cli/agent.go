@@ -32,7 +32,7 @@ READ
 - A specific fact: ` + "`pg search \"<words>\"`" + `, then ` + "`pg read <addr>`" + `.
 
 WRITE (goes to the current project)
-- Step finished: ` + "`pg done <id>`" + ` (prints the next step). Finding: ` + "`pg log \"...\"`" + `. Decision from the user: ` + "`pg decide \"...\"`" + `.
+- Step finished: ` + "`pg done <id>`" + ` (prints the next step). More steps: ` + "`pg plan \"step\" \"step\"`" + `. Finding: ` + "`pg log \"...\"`" + `. Decision from the user: ` + "`pg decide \"...\"`" + `.
 - Your own notes: ` + "`pg new note \"<title>\" --dir <folder>`" + `; organise the project folder as you like.
 - Fixed a non-obvious error: ` + "`pg error record --from-last --cause \"...\" --fix \"...\"`" + `. A recorded fix worked again: ` + "`pg error seen <addr>`" + `.
 - Architectural choice: ` + "`pg decision record \"<title>\" --decision \"...\"`" + `. Rule from the user: ` + "`pg rule add \"<rule>\"`" + `.

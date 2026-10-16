@@ -56,7 +56,8 @@ type searchFlags struct {
 func (a *app) searchCmd() *cobra.Command {
 	var sf searchFlags
 	c := &cobra.Command{
-		Use:   "search <query>",
+		Use:     "search <query>",
+		Aliases: []string{"query", "lookup"},
 		Short: "Section-level full-text search: address, snippet, token cost",
 		Long: `Search notes at heading level. Each hit is an address you can pass to
 pg read, a one-line snippet and the cost of reading it. Words are matched

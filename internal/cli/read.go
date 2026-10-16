@@ -58,7 +58,8 @@ func (a *app) fileMeta(s *store, f *index.File) string {
 func (a *app) outlineCmd() *cobra.Command {
 	var depth int
 	c := &cobra.Command{
-		Use:   "outline [addr]",
+		Use:     "outline [addr]",
+		Aliases: []string{"ls", "map", "tree", "toc"},
 		Short: "Map of the space (notes by project), or the heading skeleton of one note",
 		Long: `Without an address: a map of every note by layer with its token cost.
 With an address: the heading skeleton of a note (or of one heading's
@@ -162,7 +163,8 @@ func (a *app) outline(s *store, t *addr.Target, depth int) error {
 func (a *app) readCmd() *cobra.Command {
 	var full, withMeta, numbers bool
 	c := &cobra.Command{
-		Use:   "read <addr>...",
+		Use:     "read <addr>...",
+		Aliases: []string{"show", "cat", "view", "get", "open"},
 		Short: "Print only the addressed notes, headings, blocks or lines",
 		Long: `Print the addressed part of a note. A heading includes its sub-headings.
 Several addresses can be read in one call; each gets its own header line

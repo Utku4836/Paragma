@@ -101,6 +101,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.relatedCmd(), a.contextCmd(), a.neighborsCmd("neighbors"), a.graphCmd(), a.orphansCmd(), a.brokenCmd(),
 		a.keywordsCmd(), a.missesCmd(), a.dupesCmd(), a.gcCmd(),
 	)
+	root.AddCommand(a.guessedCmds()...)
 	root.SetHelpCommand(a.helpCmd(root))
 	root.SetHelpFunc(func(c *cobra.Command, _ []string) { a.printHelp(c) })
 	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error { return err })
