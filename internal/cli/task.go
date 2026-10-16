@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// taskItem is one task to add; level 0 is top level, 1 a subtask, …
+// taskItem is one task to add; level 0 is top level, 1 a subtask, ...
 type taskItem struct {
 	text  string
 	state byte
@@ -447,7 +447,7 @@ pg task add - < tasks.txt`,
 	}
 	c.Flags().StringVar(&under, "under", "", "parent task id: add as subtask")
 	c.Flags().StringVar(&to, "to", "", "note or heading to add the task to")
-	c.Flags().StringVarP(&fl.priority, "priority", "p", "", "p0 (highest) … p3")
+	c.Flags().StringVarP(&fl.priority, "priority", "p", "", "p0 (highest) ... p3")
 	c.Flags().StringVar(&fl.due, "due", "", "due date YYYY-MM-DD")
 	c.Flags().StringSliceVar(&fl.tags, "tag", nil, "tag(s)")
 	return c
@@ -578,7 +578,7 @@ pg task list --in auth-refactor --state all`,
 			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
 			for i, r := range rows {
 				if !bw.line(taskLineOut(r.f, r.t)) {
-					a.printf("… %d more; narrow with --in <note> or --state\n", len(rows)-i)
+					a.printf("... %d more; narrow with --in <note> or --state\n", len(rows)-i)
 					break
 				}
 			}
@@ -922,7 +922,7 @@ func (a *app) taskEditCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&text, "text", "", "new task text")
-	c.Flags().StringVarP(&fl.priority, "priority", "p", "", "p0 … p3")
+	c.Flags().StringVarP(&fl.priority, "priority", "p", "", "p0 ... p3")
 	c.Flags().StringVar(&fl.due, "due", "", "due date YYYY-MM-DD")
 	c.Flags().StringSliceVar(&fl.tags, "tag", nil, "add tag(s)")
 	c.Flags().StringSliceVar(&untag, "untag", nil, "remove tag(s)")

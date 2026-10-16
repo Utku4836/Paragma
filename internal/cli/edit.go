@@ -551,7 +551,7 @@ func (a *app) linkCmd() *cobra.Command {
 	var kind string
 	c := &cobra.Command{
 		Use:   "link <from-addr> <to-addr>",
-		Short: "Add a [[link]] (optionally typed: fixes, supersedes, …) at the end of the source",
+		Short: "Add a [[link]] (optionally typed: fixes, supersedes, ...) at the end of the source",
 		Example: `pg link 0007-wal-mode sqlite-database-locked --kind fixes
 pg link auth-refactor#Notes architecture#Middleware`,
 		Args: cobra.ExactArgs(2),
@@ -593,7 +593,7 @@ pg link auth-refactor#Notes architecture#Middleware`,
 			})
 		},
 	}
-	c.Flags().StringVar(&kind, "kind", "", "link type written as kind:: [[target]] (fixes, supersedes, …)")
+	c.Flags().StringVar(&kind, "kind", "", "link type written as kind:: [[target]] (fixes, supersedes, ...)")
 	return c
 }
 

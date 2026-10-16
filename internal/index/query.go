@@ -539,7 +539,7 @@ func (d *DB) Hydrate(hits []Hit) error {
 			ids = append(ids, hits[i].SecID)
 		}
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(idx)), ",")
-		q := fmt.Sprintf(`SELECT `+prefixCols("s.", secCols)+`, snippet(%s, %d, '', '', '…', 14)
+		q := fmt.Sprintf(`SELECT `+prefixCols("s.", secCols)+`, snippet(%s, %d, '', '', '...', 14)
 			FROM %s JOIN sections s ON s.id = %s.rowid WHERE %s MATCH ? AND %s.rowid IN (%s)`,
 			k.table, col, k.table, k.table, k.table, k.table, ph)
 		rows, err := d.Query(q, ids...)

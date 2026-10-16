@@ -357,7 +357,7 @@ func slug(title string) string {
 	return s
 }
 
-// freePath returns rel, or rel with -2, -3… before .md if it exists.
+// freePath returns rel, or rel with -2, -3... before .md if it exists.
 func freePath(s *store, rel string) string {
 	base := strings.TrimSuffix(rel, ".md")
 	cand := rel

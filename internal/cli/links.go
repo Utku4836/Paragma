@@ -88,7 +88,7 @@ wiki, embed, md, or a typed key such as fixes:: / supersedes::.`,
 					k += " broken"
 				}
 				if !bw.line(join(o.Addr, "["+k+"]", lineList(o.Lines))) {
-					a.printf("… %d more links\n", len(rows)-i)
+					a.printf("... %d more links\n", len(rows)-i)
 					break
 				}
 			}
@@ -199,7 +199,7 @@ func (a *app) backlinksCmd() *cobra.Command {
 			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
 			for i, r := range rows {
 				if !bw.line(join(r.Addr, "["+r.Kind+"]", fmt.Sprintf("L%d", r.Line))) || !bw.line("  "+textutil.OneLine(r.Context, 140)) {
-					a.printf("… %d more backlinks\n", len(rows)-i)
+					a.printf("... %d more backlinks\n", len(rows)-i)
 					break
 				}
 			}

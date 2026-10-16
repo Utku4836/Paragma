@@ -458,7 +458,7 @@ func (d *DB) IndexFile(rels ...string) error {
 	return nil
 }
 
-// HashBytes is the content hash pg prints as hash:… and checks for --if-hash.
+// HashBytes is the content hash pg prints as hash:... and checks for --if-hash.
 func HashBytes(b []byte) string { return hashBytes(b) }
 
 // BlockExists reports whether a block id is used anywhere in the space.

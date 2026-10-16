@@ -75,7 +75,7 @@ pg grep -i "ECONN\w+" --layer episodic`,
 				return errNoResults
 			}
 			if bw.cut {
-				a.printf("… %d matches in all; narrow the pattern or --layer\n", hits)
+				a.printf("... %d matches in all; narrow the pattern or --layer\n", hits)
 			}
 			return nil
 		},
@@ -213,7 +213,7 @@ missing ids. Exit 6 when problems remain.`,
 			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
 			for i, p := range problems {
 				if !bw.line(p) {
-					a.printf("… %d more\n", len(problems)-i)
+					a.printf("... %d more\n", len(problems)-i)
 					break
 				}
 			}

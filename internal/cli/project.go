@@ -58,7 +58,7 @@ func (a *app) findProject(s *store, name string) (string, error) {
 	}
 	msg := fmt.Sprintf("no project %q in space %s", name, s.v.Name)
 	if c := textutil.Closest(name, ps, 3); len(c) > 0 {
-		msg += " — did you mean: " + strings.Join(c, ", ")
+		msg += " - did you mean: " + strings.Join(c, ", ")
 	} else if len(ps) > 0 {
 		msg += " (projects: " + strings.Join(ps, ", ") + ")"
 	}
@@ -519,7 +519,7 @@ func (a *app) printProject(s *store, p string, full bool) error {
 			a.println(l)
 		}
 		if len(open) > maxOpen {
-			a.printf("  … %d more: pg task list --in %s\n", len(open)-maxOpen, f.Addr())
+			a.printf("  ... %d more: pg task list --in %s\n", len(open)-maxOpen, f.Addr())
 		}
 	}
 	if len(handoff) > 0 {
@@ -544,7 +544,7 @@ func (a *app) printProject(s *store, p string, full bool) error {
 		if nt, _ := a.nextTask(s, f); nt != nil {
 			a.printf("next: ^%s %s  (pg done %s when finished)\n", nt.ID, textutil.OneLine(nt.Text, 100), nt.ID)
 		} else if tc.Total == 0 {
-			a.println(`next: pg plan "step 1" "step 2" …`)
+			a.println(`next: pg plan "step 1" "step 2" ...`)
 		}
 	}
 	return nil
@@ -640,7 +640,7 @@ func (a *app) printProjectList(s *store, limit int) {
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].date > rows[j].date })
 	for i, r := range rows {
 		if i == limit {
-			a.printf("  … %d more: pg project list\n", len(rows)-limit)
+			a.printf("  ... %d more: pg project list\n", len(rows)-limit)
 			break
 		}
 		a.println(r.line)
@@ -881,7 +881,7 @@ func projectsHint(ps []string) string {
 		return ""
 	}
 	if len(ps) > 6 {
-		return ": " + strings.Join(ps[:6], ", ") + ", …"
+		return ": " + strings.Join(ps[:6], ", ") + ", ..."
 	}
 	return ": " + strings.Join(ps, ", ")
 }

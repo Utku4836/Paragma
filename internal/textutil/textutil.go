@@ -125,7 +125,7 @@ func OneLine(s string, max int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if max > 0 && utf8.RuneCountInString(s) > max {
 		r := []rune(s)
-		s = strings.TrimSpace(string(r[:max-1])) + "…"
+		s = strings.TrimSpace(string(r[:max-1])) + "..."
 	}
 	return s
 }

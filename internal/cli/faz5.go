@@ -420,7 +420,7 @@ deleted. Without --apply it only lists what it would do.`,
 			}
 			if !apply || a.dryRun {
 				for _, c := range cs {
-					a.println(join(c.f.Addr(), "ended "+c.when.Format("2006-01-02"), "→ journal, file deleted"))
+					a.println(join(c.f.Addr(), "ended "+c.when.Format("2006-01-02"), "-> journal, file deleted"))
 				}
 				a.printf("%d sessions; run with --apply to do it\n", len(cs))
 				return nil

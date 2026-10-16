@@ -175,7 +175,7 @@ about files in the same directory.`,
 					typ = ""
 				}
 				if !bw.line(join(h.addr, meta(typ, statusWord(h.f)), h.why)) || (text != "" && !bw.line("  "+textutil.OneLine(text, 150))) {
-					a.printf("… %d more; pg related %s --json for all\n", len(hits)-i, strings.Join(args, " "))
+					a.printf("... %d more; pg related %s --json for all\n", len(hits)-i, strings.Join(args, " "))
 					break
 				}
 			}
@@ -493,9 +493,9 @@ func (a *app) neighborsCmd(use string) *cobra.Command {
 	var depth int
 	c := &cobra.Command{
 		Use:   use + " <addr>",
-		Short: "The link graph around a note as text: what it points to (→) and what points to it (←)",
+		Short: "The link graph around a note as text: what it points to (->) and what points to it (<-)",
 		Long: `Walk the link graph from a note up to --depth hops and print it as an
-indented tree. Each line: direction (→ links to, ← linked from), the
+indented tree. Each line: direction (-> links to, <- linked from), the
 address, its type, the link kind (wiki, fixes, supersedes, promoted ...)
 and the cost of reading it.`,
 		Example: "pg neighbors sqlite-database-locked\npg neighbors auth-refactor --depth 2",
@@ -528,9 +528,9 @@ and the cost of reading it.`,
 						continue
 					}
 					seenHere[e.dir+e.addr] = true
-					arrow := "→"
+					arrow := "->"
 					if e.dir == "from" {
-						arrow = "←"
+						arrow = "<-"
 					}
 					typ := e.f.Type
 					if typ == "note" {
@@ -555,7 +555,7 @@ and the cost of reading it.`,
 				a.println("  (no links; pg related, pg search or pg link can connect it)")
 			}
 			if bw.cut {
-				a.println("… cut by the budget; lower --depth or raise --budget")
+				a.println("... cut by the budget; lower --depth or raise --budget")
 			}
 			return nil
 		},
@@ -598,7 +598,7 @@ func (a *app) orphansCmd() *cobra.Command {
 			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
 			for i, l := range out {
 				if !bw.line(l) {
-					a.printf("… %d more\n", len(out)-i)
+					a.printf("... %d more\n", len(out)-i)
 					break
 				}
 			}

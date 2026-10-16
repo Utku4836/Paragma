@@ -333,7 +333,7 @@ func (a *app) ruleCmd() *cobra.Command {
 					at = f.Addr() + "^" + x.block
 				}
 				if !bw.line(join(at, "["+sec+"]", textutil.OneLine(text, 220))) {
-					a.printf("… %d more; filter with --section\n", len(rs)-i)
+					a.printf("... %d more; filter with --section\n", len(rs)-i)
 					break
 				}
 				shown++

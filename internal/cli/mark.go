@@ -137,7 +137,7 @@ func (a *app) calloutCmd() *cobra.Command {
 	var kind string
 	c := &cobra.Command{
 		Use:   "callout <addr> --kind KIND",
-		Short: "Turn a block or line range into a > [!kind] callout (rule, warning, decision, pin, …)",
+		Short: "Turn a block or line range into a > [!kind] callout (rule, warning, decision, pin, ...)",
 		Example: `pg callout stack^b3 --kind warning
 pg callout architecture:30-31 --kind rule`,
 		Args: cobra.MinimumNArgs(1),
@@ -283,7 +283,7 @@ func (a *app) marksCmd() *cobra.Command {
 					note = "(" + m.note + ")"
 				}
 				if !bw.line(join(at, "["+m.kind+"]", note, text)) {
-					a.printf("… %d more; filter with --as\n", len(ms)-i)
+					a.printf("... %d more; filter with --as\n", len(ms)-i)
 					break
 				}
 			}

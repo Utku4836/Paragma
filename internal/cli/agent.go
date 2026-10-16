@@ -92,7 +92,7 @@ func (a *app) primeText(s *store) string {
 			parts = append(parts, x)
 		}
 		if len(parts) > 8 {
-			parts = append(parts[:8], fmt.Sprintf("… %d more: pg project list", len(parts)-8))
+			parts = append(parts[:8], fmt.Sprintf("... %d more: pg project list", len(parts)-8))
 		}
 		fmt.Fprintf(&b, "projects: %s\n", strings.Join(parts, ", "))
 	}
@@ -139,7 +139,7 @@ func (a *app) topTags(s *store, n int) []string {
 func (a *app) primeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "prime",
-		Short: "Start-of-conversation summary: what memory holds, its projects, the current one (≤150 tokens)",
+		Short: "Start-of-conversation summary: what memory holds, its projects, the current one (<=150 tokens)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
@@ -190,7 +190,7 @@ func (a *app) indexText(s *store) string {
 		layers[f.Layer]++
 		recent = append(recent, f)
 	}
-	fmt.Fprintf(&b, "## Notes\n\nsemantic %d · episodic %d · working %d\n\n", layers["semantic"], layers["episodic"], layers["working"])
+	fmt.Fprintf(&b, "## Notes\n\nsemantic %d | episodic %d | working %d\n\n", layers["semantic"], layers["episodic"], layers["working"])
 	rows, err := s.db.Query(`SELECT t.tag, COUNT(*) c FROM tags t JOIN files f ON f.id = t.file_id WHERE f.path NOT LIKE '%archive/%' GROUP BY t.tag ORDER BY c DESC, t.tag LIMIT 25`)
 	if err == nil {
 		var ts []string

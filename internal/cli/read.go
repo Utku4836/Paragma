@@ -147,7 +147,7 @@ func (a *app) outline(s *store, t *addr.Target, depth int) error {
 			label = strings.Repeat("#", sec.Level) + " " + sec.Path
 		}
 		if !bw.line(join(label, textutil.FmtTokens(r.Tokens), r.Kinds, r.Tasks)) {
-			a.printf("… %d more headings; narrow with: pg outline %s#<Heading> or --depth 2\n", len(rows)-i, f.Addr())
+			a.printf("... %d more headings; narrow with: pg outline %s#<Heading> or --depth 2\n", len(rows)-i, f.Addr())
 			break
 		}
 	}
@@ -261,7 +261,7 @@ func (a *app) read(s *store, t *addr.Target, full, withMeta, numbers bool) error
 			bw := a.newBudget(400)
 			for i, k := range kids {
 				if !bw.line(join(strings.Repeat("#", k.Level)+" "+t.File.Addr()+"#"+k.Path, textutil.FmtTokens(k.SubTokens), kindsLabel(k.Kinds))) {
-					a.printf("… %d more; pg outline %s\n", len(kids)-i, address)
+					a.printf("... %d more; pg outline %s\n", len(kids)-i, address)
 					break
 				}
 			}
@@ -281,7 +281,7 @@ func (a *app) read(s *store, t *addr.Target, full, withMeta, numbers bool) error
 	a.println(header)
 	a.printLines(sliceLines(lines, from, end), from, numbers)
 	rest := textutil.Tokens(strings.Join(sliceLines(lines, end+1, to), "\n"))
-	a.printf("… cut at L%d (%s more); next: pg read %s%s:%d-%d\n", end, textutil.FmtTokens(rest), a.prefix(s), t.File.Addr(), end+1, to)
+	a.printf("... cut at L%d (%s more); next: pg read %s%s:%d-%d\n", end, textutil.FmtTokens(rest), a.prefix(s), t.File.Addr(), end+1, to)
 	return nil
 }
 
@@ -342,7 +342,7 @@ func (a *app) peekCmd() *cobra.Command {
 				a.println(l)
 			}
 			if last < t.To {
-				a.printf("… %s more: pg read %s\n", textutil.FmtTokens(rest), address)
+				a.printf("... %s more: pg read %s\n", textutil.FmtTokens(rest), address)
 			}
 			return nil
 		},

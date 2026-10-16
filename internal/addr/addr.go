@@ -269,7 +269,7 @@ func (r *Resolver) Resolve(a Addr) (*Target, error) {
 		if len(bs) == 0 {
 			msg := fmt.Sprintf("not found: %s^%s", f.Addr(), a.Block)
 			if c := textutil.Closest(a.Block, r.DB.BlockIDs(f.ID), 3); len(c) > 0 {
-				msg += " — did you mean: " + prefixAll(f.Addr()+"^", c)
+				msg += " - did you mean: " + prefixAll(f.Addr()+"^", c)
 			}
 			return nil, notFound("%s", msg)
 		}
@@ -420,7 +420,7 @@ func (r *Resolver) ResolveFile(name string) (*index.File, error) {
 	}
 	msg := fmt.Sprintf("not found: %s", name)
 	if c := textutil.Closest(name, all, 3); len(c) > 0 {
-		msg += " — did you mean: " + strings.Join(c, ", ")
+		msg += " - did you mean: " + strings.Join(c, ", ")
 	} else {
 		msg += " (pg find lists files, pg search finds content)"
 	}
@@ -479,7 +479,7 @@ func (r *Resolver) section(f *index.File, a Addr) (*index.Section, error) {
 	}
 	msg := fmt.Sprintf("not found: %s#%s", f.Addr(), a.Heading)
 	if c := textutil.Closest(a.Heading, paths, 3); len(c) > 0 {
-		msg += " — did you mean: " + prefixAll(f.Addr()+"#", c)
+		msg += " - did you mean: " + prefixAll(f.Addr()+"#", c)
 	} else {
 		msg += fmt.Sprintf(" (pg outline %s lists headings)", f.Addr())
 	}

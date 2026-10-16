@@ -125,14 +125,25 @@ func (a *app) afterFailure(command string, code int, output string) {
 	}
 	if len(ms) > 0 {
 		m := ms[0]
-		addr, fix := a.fixText(s, m.f, 700)
+		// the whole fix and its cause: a cut fix sends the agent to read the note
+		addr, fix := a.fixText(s, m.f, 2000)
 		from := ""
 		if p := space.ProjectOf(m.f.Path); s.project != "" && p != s.project {
 			from = " (from project " + p + ")"
 		}
 		a.printf("--- paragma: known error (%s match, seen %dx) %s%s\n", m.level, maxInt(m.f.Seen, 1), addr, from)
+		if cause := a.sectionBody(s, m.f, "cause"); len(cause) > 0 {
+			a.println("Cause: " + textutil.OneLine(strings.Join(cause, " "), 600))
+		}
 		if fix != "" {
-			a.println(fix)
+			a.println("Fix: " + fix)
+		}
+		if files := a.sectionBody(s, m.f, "files"); len(files) > 0 {
+			var fs []string
+			for _, l := range files {
+				fs = append(fs, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "-")))
+			}
+			a.println("Files: " + strings.Join(fs, ", "))
 		}
 		if len(ms) > 1 {
 			var more []string

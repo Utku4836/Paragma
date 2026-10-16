@@ -88,13 +88,13 @@ func TestRelatedAndContext(t *testing.T) {
 func TestNeighborsOrphansBroken(t *testing.T) {
 	v := copyVault(t)
 	out := mustRun(t, v, "neighbors", "jwt-exp-timezone")
-	for _, want := range []string{"← demo/rules", "fixes", "← auth-refactor/auth-refactor"} {
+	for _, want := range []string{"<- demo/rules", "fixes", "<- auth-refactor/auth-refactor"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("neighbors lacks %q:\n%s", want, out)
 		}
 	}
 	out = mustRun(t, v, "neighbors", "0007-wal-modu", "--depth", "2")
-	if !strings.Contains(out, "→ demo/decisions/0003-journal-mode") || !strings.Contains(out, "supersedes") {
+	if !strings.Contains(out, "-> demo/decisions/0003-journal-mode") || !strings.Contains(out, "supersedes") {
 		t.Fatalf("depth 2:\n%s", out)
 	}
 	if out := mustRun(t, v, "orphans"); !strings.Contains(out, "demo/stack") {

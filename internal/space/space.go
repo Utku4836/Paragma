@@ -6,7 +6,7 @@
 //	  spaces.json        which space and project each work directory uses
 //	  Spaces/<space>/    one space: its notes, grouped in project folders
 //	    .pg/             the space's index and working files (disposable)
-//	    <project>/       a project: <project>.md, rules.md, errors/, decisions/ …
+//	    <project>/       a project: <project>.md, rules.md, errors/, decisions/ ...
 //
 // A space is what Obsidian calls a vault: search, links and the graph never
 // cross from one space to another.

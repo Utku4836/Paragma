@@ -154,7 +154,7 @@ func (a *app) printHelp(c *cobra.Command) {
 		a.println("addresses: project/note | note | note#Heading | note#Up/Down | note^block | note:10-24 | @id")
 		a.println("commands (pg help <command>):")
 		for _, g := range groups {
-			a.printf("  %-6s %s\n", g.name, g.cmds)
+			a.printf("  %-7s %s\n", g.name, g.cmds)
 		}
 		a.println(`projects: pg start <name> --goal "..." --step "..." --decision "..." (once) | pg resume <name> (new conversation, or switch) | pg done <id> prints the next task | pg log / pg decide`)
 		a.println("rule: read memory through pg, not by opening the files; cite a note by its address (pg read prints its lines as L10-24)")
