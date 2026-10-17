@@ -14,7 +14,7 @@ Does an agent do better work with Paragma than without it, and is Paragma better
 | --- | --- |
 | `none` | The repository only. No memory, no instruction file. |
 | `files` | The same memory as Markdown files in `memory/`, plus an `AGENTS.md` that says where things are and when to read and write them. The agent uses its own tools (grep, view_file) to read. |
-| `paragma` | The same memory in `.paragma/`, plus an `AGENTS.md` with the same guidance phrased as `pg` commands. |
+| `paragma` | The same memory as a Paragma space (`to_space.sh`: `~/.paragma/Spaces/main/shopkit/`, outside the repository), plus an `AGENTS.md` with the same guidance phrased as `pg` commands. |
 
 `files` and `paragma` contain identical knowledge and equivalent instructions (`agents/*.AGENTS.md`). The only difference is the access method. Antigravity reads `AGENTS.md` by itself; this was checked before the runs.
 
@@ -35,6 +35,17 @@ Hidden tests live in `scenarios/*/hidden/` and are copied into a copy of the age
 - **Tokens processed:** input + cached input + output + thinking, summed over all model calls; this is what the agent had to read and write.
 - **Uncached tokens:** the same without cache reads.
 - **pg calls / memory file reads:** how the agent reached the memory.
+
+## Quick tests
+
+The scenarios take 10 to 20 minutes each, mostly spent writing code. Two quick tests measure the memory part alone:
+
+| Test | What it does | Time |
+| --- | --- | --- |
+| `python bench/quick.py` | No agent. For 10 questions with known facts: does Paragma's first call (`pg context`, `pg error find`) contain all facts, at what size; and what does `grep` plus reading the matching Markdown files cost to find the same facts. Small and large memory. | about 1 minute |
+| `python bench/quick_agent.py` | Real agent, the questions in `questions/`, answered from memory without changing code, plain notes vs Paragma, run in parallel (`ask.sh`). Checks the answer's facts; counts tool calls and tokens. | about 10 minutes |
+
+`genmem_big.py` writes the large memory (`memory-big/`, about 1,500 notes, 186k tokens): the same notes plus background that mentions the scenario words in other contexts.
 
 ## Running
 

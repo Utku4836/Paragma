@@ -3,3 +3,4 @@
 *.test.exe
 /bench/runs*/
 /bench/memory-big/
+/bench/quick-runs*/

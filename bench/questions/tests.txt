@@ -1,0 +1,1 @@
+What are this project's conventions for writing tests? Answer from the project's memory, as a short list. Do not change any files.

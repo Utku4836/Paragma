@@ -1,0 +1,1 @@
+I am about to add refund support to the payments package. Which project rules and decisions about refunds must the code follow? Answer from the project's memory, as a short list. Do not change any files.

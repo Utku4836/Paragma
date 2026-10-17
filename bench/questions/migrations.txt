@@ -1,0 +1,1 @@
+I need to add a database migration. What are the project's rules for migrations, and is there a past problem with them I should know about? Answer from the project's memory, briefly. Do not change any files.

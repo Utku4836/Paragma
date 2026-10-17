@@ -1,0 +1,2 @@
+`go test ./...` fails on my Windows machine with: catalog_test.go:8: catalog checksum mismatch: got 8c77cb095cbd want 4ff52f25fc9d
+What is the cause and what is the correct fix according to the project's memory? Answer briefly. Do not change any files.
