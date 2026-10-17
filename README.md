@@ -26,7 +26,7 @@ Tasarım: [docs/TASARIM.md](docs/TASARIM.md)
   - proje hafızası git'e girmez (`init` `.gitignore`'a ekler) ve boş başlar
   - global hafıza (Faz 6'da kaldırıldı: space içindeki tüm projeler aranıyor)
 - **Faz 5 tamam (modelsiz):** `keywords`, sonuç yokken arama ipucu, `misses`, `dupes`, otomatik terfi, `gc`
-- **Karşılaştırma testi:** [bench/RESULTS.md](bench/RESULTS.md). Hafıza doğruluğu belirliyor: hafızasız ajan iki görevi yanlış yaptı, düz notlarla ve Paragma ile hepsi doğru. Düz notlara göre Paragma tekrar eden hatada belirgin şekilde verimli, diğer görevlerde fark küçük ya da yok. Düzenek: [bench/](bench/README.md)
+- **Karşılaştırma testi:** [bench/RESULTS.md](bench/RESULTS.md). Hafıza doğruluğu belirliyor: hafızasız ajan iki görevi yanlış yaptı, düz notlarla ve Paragma ile hepsi doğru. Hızlı testlerde (Faz 6) Paragma'lı ajan aynı soruları 2–5 kat daha az çağrı ve 3–7 kat daha az tokenla cevapladı; 1.539 notluk hafızada düz notların maliyeti ikiye katlanırken Paragma'nınki aynı kaldı. Düzenek: [bench/](bench/README.md)
 - **Faz 6 (space yapısı ve verimlilik):**
   - hafıza `~/.paragma/Spaces/<space>/<proje>/` altında; repo içinde `.paragma/` yok, global hafıza ve dal katmanı kaldırıldı
   - `start`, `resume`, `plan`, `done`, `log`, `decide`, `checkpoint`; `project list|status|close`; `space list|new|use`
