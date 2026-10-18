@@ -1,91 +1,100 @@
-# Paragma
+<p align="center">
+  <img src=".github/assets/banner.png" width="100%" alt="Paragma">
+</p>
 
-Ajanlar için yerel hafıza CLI'ı. Tek binary `pg`, Markdown dosyaları tek gerçek kaynak, SQLite FTS5 yalnızca indeks. Ajan hafızayı her mesajda taşımaz; gerektiğinde bölüm bölüm çeker. Hafıza `~/.paragma/Spaces/` altında durur: her space (Obsidian'daki vault gibi) kendi proje klasörlerini, aramasını ve grafını taşır.
+<p align="center">
+  <a href="#install">Install</a> &nbsp;·&nbsp;
+  <a href="#connect-your-agent">Connect your agent</a> &nbsp;·&nbsp;
+  <a href="#results">Results</a> &nbsp;·&nbsp;
+  <a href="#how-it-works">How it works</a>
+</p>
 
-Tasarım: [docs/TASARIM.md](docs/TASARIM.md)
+Paragma is a local memory for AI coding agents. It keeps a project's rules, decisions, past errors and work notes as Markdown on your computer, and hands the agent what it needs in one command instead of a dozen searches. One binary, `pg`. No server, no network, no model.
 
-## Durum
+## Why
 
-- **Faz 1 (okuma) tamam:** `init`, `reindex`, artımlı senkron, adres çözücü, `search`, `outline`, `read`, `peek`, `links`, `backlinks`, `find`, `status`.
-- **Faz 2 (yazma ve görev) tamam:**
-  - yazma: `new`, `append`, `write`, `insert`, `edit`, `section add`, `link`, `mv`, `archive`, `rm`
-  - `task`: `add`, `list`, `next`, `done`, …
-  - `session`: `start`, `plan`, `log`, `checkpoint`, `resume`, `fork`, `close`, … (Faz 6'da proje komutları oldu)
-  - `project`, `branch` (Faz 6'da dal katmanı kaldırıldı)
-  - işaretleme: `mark`, `highlight`, `callout`, `unmark`, `marks`
-- **Faz 3 (episodik + ajan) tamam, MVP:**
-  - hata hafızası: `error record`, `find`, `seen`, `reopen`
-  - `pg run -- <komut>`: başarısız olursa bilinen çözümü ekler
-  - `decision record`, `journal`, `rule add`, `rule list`, `promote`, `supersede`, `verify`, `stale`
-  - `prime`, `index`, `skill`, `install claude|agents-md|gemini`, isteğe bağlı hook'lar
-  - `grep`, `recent`, `doctor`
-- **Faz 4 (ajan için graf) tamam:**
-  - `related <dosya>`: o dosyanın kuralları, kararları, geçmiş hataları
-  - `context <konu>`: tek çağrılık bağlam paketi
-  - `neighbors` / `graph --text`, `orphans`, `broken`
-  - proje hafızası git'e girmez (`init` `.gitignore`'a ekler) ve boş başlar
-  - global hafıza (Faz 6'da kaldırıldı: space içindeki tüm projeler aranıyor)
-- **Faz 5 tamam (modelsiz):** `keywords`, sonuç yokken arama ipucu, `misses`, `dupes`, otomatik terfi, `gc`
-- **Karşılaştırma testi:** [bench/RESULTS.md](bench/RESULTS.md). Hafıza doğruluğu belirliyor: hafızasız ajan iki görevi yanlış yaptı, düz notlarla ve Paragma ile hepsi doğru. Hızlı testlerde (Faz 6) Paragma'lı ajan aynı soruları 2–5 kat daha az çağrı ve 3–7 kat daha az tokenla cevapladı; 1.539 notluk hafızada düz notların maliyeti ikiye katlanırken Paragma'nınki aynı kaldı. Düzenek: [bench/](bench/README.md)
-- **Faz 6 (space yapısı ve verimlilik):**
-  - hafıza `~/.paragma/Spaces/<space>/<proje>/` altında; repo içinde `.paragma/` yok, global hafıza ve dal katmanı kaldırıldı
-  - `start`, `resume`, `plan`, `done`, `log`, `decide`, `checkpoint`; `project list|status|close`; `space list|new|use`
-  - `context`: notları bir arada ve küçükleri tam verir, proje kurallarını ekler, sonda kapsam satırı basar
+An agent starts every conversation from zero. It rediscovers the same project rules, repeats a fix that was already found, and loses the decisions you gave it yesterday. Notes help, but an agent reading files has to search, open and re-open until it trusts it has seen everything, and every extra step re-reads the whole conversation.
 
-Bir ajana öğretmek için:
+Paragma answers in one step:
 
-```sh
-pg install agents-md          # AGENTS.md'ye "Memory (Paragma)" bölümü (Antigravity, Codex, pi …)
-pg install claude --hooks     # Claude Code: skill + oturum başı prime + sıkıştırma öncesi checkpoint
+- **Known errors come back with their fix.** `pg run -- go test ./...` prints the recorded cause and fix next to a failure it has seen before.
+- **A topic in one call.** `pg context refund` returns the matching rules, decisions and past fixes, grouped by note, and ends by saying that nothing else matches, so the agent stops searching.
+- **Work outlives the conversation.** `pg start` records the goal, the steps and your decisions. In a new conversation `pg resume` brings them back, together with the code that changed since.
+
+## Results
+
+The same knowledge reached two ways: as plain Markdown notes the agent reads with its own tools, or through Paragma. Five questions answered from memory by the same agent (Antigravity CLI, Gemini 3.8 Flash High):
+
+| Memory | Access | Correct facts | Tool calls | Tokens processed | Time |
+| --- | --- | --- | --- | --- | --- |
+| 149 notes | plain notes | 17/17 | 42 | 1.14M | 281 s |
+| 149 notes | **Paragma** | 17/17 | **19** | **0.40M** | **173 s** |
+| 1,539 notes | plain notes | 17/17 | 60 | 2.17M | 591 s |
+| 1,539 notes | **Paragma** | 17/17 | **12** | **0.32M** | **163 s** |
+
+Both always answered correctly. With Paragma the agent made 2 to 5 times fewer tool calls and processed 3 to 7 times fewer tokens, and its cost did not grow with the memory.
+
+In full coding tasks, memory decides correctness: without it the agent fixed a recurring error the wrong way and missed a project rule it could not know; with the same knowledge, as notes or through Paragma, every task passed its hidden tests. Setup, scenarios and limits are in [bench/](bench/README.md) and [bench/RESULTS.md](bench/RESULTS.md).
+
+## Install
+
+```bash
+npm install -g paragma
 ```
 
-Proje akışı:
+This installs `pg` for Windows, macOS or Linux (x64 and arm64). You can also download `pg` from the [releases](https://github.com/Utku-Private/Paragma/releases) and put it on your `PATH`, or build it with Go:
 
-```sh
-pg prime                                  # sohbet başı: hafızada ne var, hangi projeler
-pg start payments --goal "Stripe ile kart ödemesi" --step "Webhook" --step "Testler" --decision "İndirim KDV'den önce"
-pg done t3f2                              # görevi bitir, sıradakini tam olarak verir
-pg log "webhook ham gövdeyi istiyor"      # bulgu
-pg decide "Yeniden deneme 5 kez"          # kullanıcının kararı
-pg new note "Webhook bulguları" --dir webhook   # proje klasörünü ajan düzenler
-pg resume payments                        # yeni sohbette ya da projeler arası geçişte
+```bash
+go install github.com/Utku-Private/Paragma/cmd/pg@latest
 ```
 
-Hata hafızası:
+Memory lives in `~/.paragma`, outside your repositories. The only file Paragma writes into a project is the instructions section, and only when you set up that project's conversations.
 
-```sh
-pg run -- go test ./...       # başarısızsa bilinen çözüm; geçerse değişen dosyaların kuralları
-pg error record --from-last --cause "CRLF checkout" --fix "Load içinde satır sonlarını normalize et"
-pg error find "database is locked (5)"
+## Connect your agent
+
+```bash
+pg setup
 ```
 
-## Kurulum
+`pg setup` finds the agents on your computer, including their desktop apps, and adds a short "Memory (Paragma)" section where each one reads its instructions. Choose **every conversation**, or pick **one conversation** from the agent's own history to set up only that conversation's folder. Running it again updates the section and leaves the rest of the file alone.
 
-```sh
-go build -o bin/pg ./cmd/pg      # Windows: bin/pg.exe
+| Agent | Apps | Every conversation | One conversation |
+| --- | --- | --- | --- |
+| Claude Code | CLI, desktop | `~/.claude/CLAUDE.md` | `CLAUDE.md` in its folder |
+| Codex | CLI, desktop | `~/.codex/AGENTS.md` | `AGENTS.md` in its folder |
+| Antigravity | CLI, IDE | `~/.gemini/AGENTS.md` | `AGENTS.md` in its folder |
+| OpenCode | CLI | `~/.config/opencode/AGENTS.md` | `AGENTS.md` in its folder |
+
+The benchmarks above were run with Antigravity. In scripts: `pg setup codex --global` or `pg setup claude --dir .`
+
+## What the agent does with it
+
+The agent learns these commands from the section `pg setup` writes; `pg help` lists the rest.
+
+```bash
+pg prime                         # start of a conversation: what memory holds
+pg context "refund"              # rules, decisions and fixes on a topic, in one call
+pg run -- go test ./...          # on failure: the known fix; on success: rules for the files you changed
+pg start payments --goal "Card payments" --step "Webhook" --step "Tests" --decision "Discount before VAT"
+pg done t2f4                     # mark a step done; prints the next one in full
+pg resume payments               # in a new conversation: goal, decisions, open steps, changed code
+pg error record --from-last --cause "CRLF checkout" --fix "Normalise line endings before hashing"
 ```
 
-## Hızlı bakış
+## How it works
 
-```sh
-pg context refund                         # bir konuda hafızadaki her şey, tek çağrıda
-pg search "database locked"               # bölüm düzeyinde arama: adres + snippet + token
-pg outline                                # space haritası: projeler ve notlar
-pg read shopkit/architecture#Middleware   # yalnızca o başlık
-pg read t3f2                              # tek blok / task
-pg read stack:10-24                       # satır aralığı
-pg related payments/refund.go             # bir kod dosyasının kuralları, kararları, hataları
-pg find --type error --since 30d          # metadata filtresi
-```
+- **Spaces and projects.** Notes are plain Markdown in `~/.paragma/Spaces/<space>/<project>/`. A space works like an Obsidian vault: search and links stay inside it. Open the folder in any editor.
+- **One index.** A SQLite full-text index next to the notes is updated on every call and can be deleted at any time.
+- **Addresses.** Every result starts with an address the agent can pass back: `shopkit/rules^r003`, `payments/payments#Decisions`, `shopkit/errors/catalog-checksum-crlf`.
+- **Local.** Paragma never opens a network connection. Memory stays on your computer and out of git.
 
-Adresler: `proje/not`, `not`, `not#Başlık`, `not#Üst/Alt`, `not^blok`, `^blok`, `not:10-24`, `@ULID`.
+## Development
 
-Çıkış kodları: 0 başarılı, 1 sonuç yok, 2 kullanım hatası, 3 adres bulunamadı, 4 çakışma (proje zaten var), 5 böyle bir space yok, 7 iç hata.
-
-## Geliştirme
-
-```sh
+```bash
 go test ./...
-go run ./tools/gen -n 500 -out /tmp/bench    # performans için sentetik space (PARAGMA_HOME=/tmp/bench)
-PARAGMA_TRACE=1 pg search x                  # aşama süreleri (stderr)
+python bench/quick.py          # retrieval test without an agent, about a minute
 ```
+
+## License
+
+[MIT](LICENSE)

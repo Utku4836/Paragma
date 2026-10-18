@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+// Runs the native pg binary that install.js downloaded. On Linux and macOS
+// install.js replaces this file with the binary itself, so this wrapper only
+// runs on Windows (or when the download has not happened yet).
+const { spawnSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const exe = path.join(__dirname, process.platform === "win32" ? "pg.exe" : "pg-native");
+if (!fs.existsSync(exe)) {
+  console.error("paragma: the pg binary is missing. Reinstall with: npm install -g paragma");
+  process.exit(7);
+}
+const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit", windowsHide: false });
+if (r.error) {
+  console.error("paragma: " + r.error.message);
+  process.exit(7);
+}
+process.exit(r.status === null ? 1 : r.status);

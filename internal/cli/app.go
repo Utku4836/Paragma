@@ -18,7 +18,7 @@ import (
 	"github.com/Utku-Private/Paragma/internal/textutil"
 )
 
-// Exit codes (see docs/TASARIM.md, "Çıkış kodları").
+// Exit codes (pg help prints them).
 const (
 	ExitOK         = 0
 	ExitNoResults  = 1
