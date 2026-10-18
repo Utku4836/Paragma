@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Utku-Private/Paragma/internal/textutil"
+	"github.com/Utku4836/Paragma/internal/textutil"
 )
 
 func TestFirstUseAndWorkDirState(t *testing.T) {

@@ -1,12 +1,12 @@
 {
   "name": "paragma",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local memory for AI coding agents: rules, decisions, past errors and project notes, one call away.",
   "keywords": ["ai", "agents", "memory", "claude-code", "codex", "antigravity", "opencode", "cli"],
-  "homepage": "https://github.com/Utku-Private/Paragma",
+  "homepage": "https://github.com/Utku4836/Paragma",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Utku-Private/Paragma.git"
+    "url": "git+https://github.com/Utku4836/Paragma.git"
   },
   "license": "MIT",
   "bin": {

@@ -15,9 +15,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Utku-Private/Paragma/internal/index"
-	"github.com/Utku-Private/Paragma/internal/space"
-	"github.com/Utku-Private/Paragma/internal/textutil"
+	"github.com/Utku4836/Paragma/internal/index"
+	"github.com/Utku4836/Paragma/internal/space"
+	"github.com/Utku4836/Paragma/internal/textutil"
 )
 
 // Kind of target an address points at.

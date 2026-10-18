@@ -1,4 +1,4 @@
-module github.com/Utku-Private/Paragma
+module github.com/Utku4836/Paragma
 
 go 1.27.0
 

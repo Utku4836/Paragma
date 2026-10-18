@@ -6,7 +6,7 @@ const https = require("https");
 const path = require("path");
 
 const { version } = require("./package.json");
-const REPO = "Utku-Private/Paragma";
+const REPO = "Utku4836/Paragma";
 
 const os = { win32: "windows", linux: "linux", darwin: "darwin" }[process.platform];
 const arch = { x64: "amd64", arm64: "arm64" }[process.arch];

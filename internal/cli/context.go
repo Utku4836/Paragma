@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Utku-Private/Paragma/internal/index"
-	"github.com/Utku-Private/Paragma/internal/space"
-	"github.com/Utku-Private/Paragma/internal/textutil"
+	"github.com/Utku4836/Paragma/internal/index"
+	"github.com/Utku4836/Paragma/internal/space"
+	"github.com/Utku4836/Paragma/internal/textutil"
 )
 
 // The context pack is built so that the agent does not need to ask again:

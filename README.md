@@ -42,10 +42,10 @@ In full coding tasks, memory decides correctness: without it the agent fixed a r
 npm install -g paragma
 ```
 
-This installs `pg` for Windows, macOS or Linux (x64 and arm64). You can also download `pg` from the [releases](https://github.com/Utku-Private/Paragma/releases) and put it on your `PATH`, or build it with Go:
+This installs `pg` for Windows, macOS or Linux (x64 and arm64). You can also download `pg` from the [releases](https://github.com/Utku4836/Paragma/releases) and put it on your `PATH`, or build it with Go:
 
 ```bash
-go install github.com/Utku-Private/Paragma/cmd/pg@latest
+go install github.com/Utku4836/Paragma/cmd/pg@latest
 ```
 
 Memory lives in `~/.paragma`, outside your repositories. The only file Paragma writes into a project is the instructions section, and only when you set up that project's conversations.

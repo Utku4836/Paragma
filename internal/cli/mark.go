@@ -7,9 +7,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Utku-Private/Paragma/internal/addr"
-	"github.com/Utku-Private/Paragma/internal/md"
-	"github.com/Utku-Private/Paragma/internal/textutil"
+	"github.com/Utku4836/Paragma/internal/addr"
+	"github.com/Utku4836/Paragma/internal/md"
+	"github.com/Utku4836/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
 

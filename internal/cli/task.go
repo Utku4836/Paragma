@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Utku-Private/Paragma/internal/addr"
-	"github.com/Utku-Private/Paragma/internal/index"
-	"github.com/Utku-Private/Paragma/internal/md"
-	"github.com/Utku-Private/Paragma/internal/space"
+	"github.com/Utku4836/Paragma/internal/addr"
+	"github.com/Utku4836/Paragma/internal/index"
+	"github.com/Utku4836/Paragma/internal/md"
+	"github.com/Utku4836/Paragma/internal/space"
 	"github.com/spf13/cobra"
 )
 

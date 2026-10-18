@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Utku-Private/Paragma/internal/space"
+	"github.com/Utku4836/Paragma/internal/space"
 )
 
 // File is one indexed Markdown file.

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Utku-Private/Paragma/internal/space"
+	"github.com/Utku4836/Paragma/internal/space"
 )
 
 // Run against a generated space:

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Utku-Private/Paragma/internal/space"
+	"github.com/Utku4836/Paragma/internal/space"
 	_ "modernc.org/sqlite"
 )
 

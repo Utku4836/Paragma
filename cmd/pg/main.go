@@ -6,8 +6,8 @@ import (
 	"os"
 	"runtime/pprof"
 
-	"github.com/Utku-Private/Paragma/internal/cli"
-	"github.com/Utku-Private/Paragma/internal/fasttz"
+	"github.com/Utku4836/Paragma/internal/cli"
+	"github.com/Utku4836/Paragma/internal/fasttz"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Utku-Private/Paragma/internal/agents"
+	"github.com/Utku4836/Paragma/internal/agents"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Utku-Private/Paragma/internal/agents"
+	"github.com/Utku4836/Paragma/internal/agents"
 )
 
 var reANSI = regexp.MustCompile("\x1b\\[[0-9;]*m")

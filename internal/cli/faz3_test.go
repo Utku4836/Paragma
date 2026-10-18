@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Utku-Private/Paragma/internal/textutil"
+	"github.com/Utku4836/Paragma/internal/textutil"
 )
 
 // failing returns a shell one-liner that prints msg and exits with code.
