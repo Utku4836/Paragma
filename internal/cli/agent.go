@@ -278,30 +278,40 @@ func installSection(path string) (bool, error) {
 	return true, space.WriteFileAtomic(path, []byte(text+section))
 }
 
-// installTargets are the agent CLIs pg knows how to set up.
-var installTargets = []struct{ name, tier, what string }{
-	{"claude", "1 native", "Claude Code: .claude/skills/paragma/SKILL.md; --hooks adds SessionStart (pg prime) and PreCompact (checkpoint)"},
-	{"agents-md", "2 instructions", "AGENTS.md section: Antigravity (verified), Codex, pi and other agents that read AGENTS.md"},
-	{"gemini", "2 instructions", "GEMINI.md section: Gemini CLI, Antigravity (verified)"},
+// installTargets are the agent CLIs pg knows how to set up: the file each
+// one reads its instructions from, in the project (the git work tree root).
+var installTargets = []struct{ name, agent, file, status string }{
+	{"claude", "Claude Code", ".claude/skills/paragma/SKILL.md", "skill; --hooks adds SessionStart and PreCompact"},
+	{"codex", "Codex CLI", "AGENTS.md", ""},
+	{"opencode", "OpenCode", "AGENTS.md", ""},
+	{"cursor", "Cursor Agent", "AGENTS.md", ""},
+	{"copilot", "GitHub Copilot CLI", "AGENTS.md", ""},
+	{"amp", "Amp", "AGENTS.md", ""},
+	{"goose", "Goose", "AGENTS.md", ""},
+	{"crush", "Crush", "AGENTS.md", ""},
+	{"antigravity", "Antigravity CLI", "AGENTS.md", "tested"},
+	{"gemini", "Gemini CLI", "GEMINI.md", ""},
+	{"agents-md", "any agent that reads AGENTS.md", "AGENTS.md", ""},
 }
 
 func (a *app) installCmd() *cobra.Command {
 	var list, hooks bool
 	var file string
 	c := &cobra.Command{
-		Use:   "install <claude|agents-md|gemini>",
-		Short: "Teach an agent CLI to use pg: skill file, instruction file section, optional hooks",
-		Long: `Write the agent instructions where a CLI reads them. Tier 1 (claude)
-uses the CLI's own skill system and, with --hooks, runs pg prime at session
-start and writes a checkpoint before context compaction. Tier 2 adds a
-"Memory (Paragma)" section to the instruction file; re-running replaces it.
-Every pg feature works without hooks.`,
-		Example: "pg install agents-md\npg install claude --hooks\npg install --list",
+		Use:    "install <agent>",
+		Hidden: true, // superseded by pg setup; kept for scripts
+		Short:  "Teach an agent CLI to use pg: writes the instructions where that agent reads them",
+		Long: `Write pg's instructions where an agent CLI reads them, in this project:
+a "Memory (Paragma)" section in AGENTS.md (Codex, OpenCode, Cursor, Copilot,
+Amp, Goose, Crush, Antigravity) or GEMINI.md, or a skill for Claude Code
+(with --hooks it also runs pg prime at session start). Re-running replaces
+the section; the rest of the file is kept. pg install --list shows all.`,
+		Example: "pg install codex\npg install claude --hooks\npg install --list",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if list || len(args) == 0 {
 				for _, t := range installTargets {
-					a.println(join(t.name, "["+t.tier+"]", t.what))
+					a.println(join(fmt.Sprintf("%-12s", t.name), fmt.Sprintf("%-31s", t.agent), t.file, t.status))
 				}
 				return nil
 			}
@@ -311,9 +321,26 @@ Every pg feature works without hooks.`,
 			}
 			base := a.workDir()
 			_ = s
-			switch args[0] {
+			target := strings.ToLower(args[0])
+			known := false
+			for _, t := range installTargets {
+				if t.name == target {
+					known = true
+					if t.file == "AGENTS.md" {
+						target = "agents-md"
+					}
+				}
+			}
+			if !known {
+				var names []string
+				for _, t := range installTargets {
+					names = append(names, t.name)
+				}
+				return fail(ExitUsage, "unknown agent %q (known: %s); an agent that reads AGENTS.md: pg install agents-md", args[0], strings.Join(names, ", "))
+			}
+			switch target {
 			case "agents-md", "gemini":
-				name := map[string]string{"agents-md": "AGENTS.md", "gemini": "GEMINI.md"}[args[0]]
+				name := map[string]string{"agents-md": "AGENTS.md", "gemini": "GEMINI.md"}[target]
 				p := filepath.Join(base, name)
 				if file != "" {
 					p = file
@@ -354,7 +381,7 @@ Every pg feature works without hooks.`,
 			return fail(ExitUsage, "unknown target %q (pg install --list)", args[0])
 		},
 	}
-	c.Flags().BoolVar(&list, "list", false, "list supported agent CLIs and their support tier")
+	c.Flags().BoolVar(&list, "list", false, "list the agent CLIs pg can set up")
 	c.Flags().BoolVar(&hooks, "hooks", false, "claude: also install the SessionStart and PreCompact hooks")
 	c.Flags().StringVar(&file, "file", "", "instruction file to write (default AGENTS.md / GEMINI.md in the project)")
 	return c

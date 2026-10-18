@@ -86,7 +86,7 @@ func (a *app) rootCmd() *cobra.Command {
 	pf.StringVar(&a.textFile, "file", "", "read the text to write from this file (UTF-8 or UTF-16)")
 
 	root.AddCommand(
-		a.statusCmd(), a.reindexCmd(), a.spaceCmd(),
+		a.setupCmd(), a.statusCmd(), a.reindexCmd(), a.spaceCmd(),
 		a.startCmd(), a.resumeCmd(), a.planCmd(), a.logCmd(), a.decideCmd(), a.checkpointCmd(), a.taskDoneCmd(),
 		a.searchCmd(), a.findCmd(),
 		a.outlineCmd(), a.readCmd(), a.peekCmd(),
@@ -118,7 +118,7 @@ var groups = []struct{ name, cmds string }{
 	{"rule", "rule add|list  promote supersede verify stale"},
 	{"graph", "related context neighbors graph orphans broken"},
 	{"mark", "mark highlight callout unmark marks"},
-	{"agent", "prime skill install hook"},
+	{"agent", "setup prime skill"},
 	{"admin", "space list|new|use  status reindex doctor dupes gc misses"},
 }
 
