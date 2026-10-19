@@ -1,14 +1,16 @@
 name: Release
 
 # Push a tag like v0.1.0: builds pg for every platform, attaches the binaries
-# to a GitHub release and, when the NPM_TOKEN secret is set, publishes the
-# npm package "paragma" with the same version.
+# to a GitHub release and publishes the npm package "paragma" with the same
+# version. npm accepts this workflow as a trusted publisher (OIDC), so no
+# token is needed; an NPM_TOKEN secret, if set, is used as a fallback.
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  id-token: write # npm trusted publishing
 
 jobs:
   release:
@@ -44,36 +46,24 @@ jobs:
           fi
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - name: npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "NPM_TOKEN not set: npm publish skipped"; exit 0; fi
+          npm install -g npm@latest # trusted publishing needs npm 11.5.1 or later
           v="${GITHUB_REF_NAME#v}"
-          publish() { # dir: publish unless this version is already on npm (re-runs are safe)
-            name=$(node -p "require('./$1/package.json').name")
-            if npm view "$name@$v" version >/dev/null 2>&1; then echo "$name@$v already on npm"; return; fi
-            (cd "$1" && npm publish --access public)
-          }
-          # one package per platform holding the binary; npm installs only
-          # the one whose os/cpu match, so no install script is needed
+          if npm view "paragma@$v" version >/dev/null 2>&1; then echo "paragma@$v already on npm"; exit 0; fi
+          # one package with every platform's binary; bin/pg runs the one for this machine
           for f in dist/pg-*; do
-            t="${f#dist/pg-}"; t="${t%.exe}"; os="${t%-*}"; arch="${t#*-}"
-            nos="${os/windows/win32}"; narch="${arch/amd64/x64}"
-            d="npm-$nos-$narch"; bin="pg"; [ "$os" = windows ] && bin="pg.exe"
-            mkdir -p "$d/bin" && cp "$f" "$d/bin/$bin" && chmod 755 "$d/bin/$bin"
-            cat > "$d/package.json" <<EOF
-          {"name": "paragma-$nos-$narch", "version": "$v", "description": "The pg binary of paragma for $nos/$narch.",
-           "repository": {"type": "git", "url": "git+https://github.com/Utku4836/Paragma.git"}, "license": "MIT",
-           "os": ["$nos"], "cpu": ["$narch"], "files": ["bin"]}
-          EOF
-            publish "$d"
+            t="${f#dist/pg-}"; ext=""; [ "${t%.exe}" != "$t" ] && ext=".exe"; t="${t%.exe}"
+            os="${t%-*}"; arch="${t#*-}"
+            cp "$f" "npm/bin/pg-${os/windows/win32}-${arch/amd64/x64}$ext"
           done
+          chmod 755 npm/bin/*
           cd npm
           npm version "$v" --no-git-tag-version --allow-same-version
-          for t in win32-x64 win32-arm64 linux-x64 linux-arm64 darwin-x64 darwin-arm64; do npm pkg set "optionalDependencies.paragma-$t=$v"; done
           # npm does not resolve the README's relative image paths
           sed 's#src="\.github/#src="https://raw.githubusercontent.com/Utku4836/Paragma/main/.github/#' ../README.md > README.md
-          cd .. && publish npm
+          npm publish --access public

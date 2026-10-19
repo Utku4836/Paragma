@@ -1,20 +1,15 @@
 #!/usr/bin/env node
-// Runs the native pg binary. npm installs it from the platform package that
-// matches this machine (paragma-<platform>-<arch>, an optional dependency),
-// so the install needs no download script.
+// Runs the native pg binary for this machine. The package carries one
+// binary per platform (bin/pg-<platform>-<arch>[.exe]), so the install
+// needs no download script.
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const pkg = `paragma-${process.platform}-${process.arch}`;
-const name = process.platform === "win32" ? "pg.exe" : "pg";
-let exe;
-try {
-  exe = path.join(path.dirname(require.resolve(`${pkg}/package.json`)), "bin", name);
-} catch {
-  console.error(`paragma: ${pkg} is not installed (no prebuilt pg for this platform, or optional dependencies were skipped).`);
-  console.error("Reinstall with: npm install -g paragma --include=optional");
-  console.error("or download pg from https://github.com/Utku4836/Paragma/releases");
+const exe = path.join(__dirname, `pg-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`);
+if (!fs.existsSync(exe)) {
+  console.error(`paragma: no prebuilt pg for ${process.platform}/${process.arch}.`);
+  console.error("Download it from https://github.com/Utku4836/Paragma/releases or build it: go install github.com/Utku4836/Paragma/cmd/pg@latest");
   process.exit(7);
 }
 if (process.platform !== "win32") {

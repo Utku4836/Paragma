@@ -13,7 +13,7 @@ import (
 )
 
 // Version is set at build time with -ldflags "-X .../internal/cli.Version=...".
-var Version = "0.1.1-dev (Paragma)"
+var Version = "0.1.2-dev (Paragma)"
 
 // Execute runs pg and returns the process exit code.
 func Execute(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
