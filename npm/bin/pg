@@ -1,19 +1,35 @@
 #!/usr/bin/env node
-// Runs the native pg binary that install.js downloaded. On Linux and macOS
-// install.js replaces this file with the binary itself, so this wrapper only
-// runs on Windows (or when the download has not happened yet).
+// Runs the native pg binary. npm installs it from the platform package that
+// matches this machine (paragma-<platform>-<arch>, an optional dependency),
+// so the install needs no download script.
 const { spawnSync } = require("child_process");
-const path = require("path");
 const fs = require("fs");
+const path = require("path");
 
-const exe = path.join(__dirname, process.platform === "win32" ? "pg.exe" : "pg-native");
-if (!fs.existsSync(exe)) {
-  console.error("paragma: the pg binary is missing. Reinstall with: npm install -g paragma");
+const pkg = `paragma-${process.platform}-${process.arch}`;
+const name = process.platform === "win32" ? "pg.exe" : "pg";
+let exe;
+try {
+  exe = path.join(path.dirname(require.resolve(`${pkg}/package.json`)), "bin", name);
+} catch {
+  console.error(`paragma: ${pkg} is not installed (no prebuilt pg for this platform, or optional dependencies were skipped).`);
+  console.error("Reinstall with: npm install -g paragma --include=optional");
+  console.error("or download pg from https://github.com/Utku4836/Paragma/releases");
   process.exit(7);
 }
-const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit", windowsHide: false });
+if (process.platform !== "win32") {
+  try {
+    fs.accessSync(exe, fs.constants.X_OK);
+  } catch {
+    try { fs.chmodSync(exe, 0o755); } catch {}
+  }
+}
+const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit" });
 if (r.error) {
   console.error("paragma: " + r.error.message);
   process.exit(7);
+}
+if (r.signal) {
+  process.kill(process.pid, r.signal);
 }
 process.exit(r.status === null ? 1 : r.status);

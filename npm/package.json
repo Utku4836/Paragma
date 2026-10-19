@@ -1,8 +1,17 @@
 {
   "name": "paragma",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local memory for AI coding agents: rules, decisions, past errors and project notes, one call away.",
-  "keywords": ["ai", "agents", "memory", "claude-code", "codex", "antigravity", "opencode", "cli"],
+  "keywords": [
+    "ai",
+    "agents",
+    "memory",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "opencode",
+    "cli"
+  ],
   "homepage": "https://github.com/Utku4836/Paragma",
   "repository": {
     "type": "git",
@@ -12,13 +21,28 @@
   "bin": {
     "pg": "bin/pg"
   },
-  "scripts": {
-    "postinstall": "node install.js"
-  },
-  "files": ["bin/pg", "install.js", "README.md"],
-  "os": ["win32", "linux", "darwin"],
-  "cpu": ["x64", "arm64"],
+  "files": [
+    "bin/pg",
+    "README.md"
+  ],
+  "os": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "engines": {
     "node": ">=18"
+  },
+  "optionalDependencies": {
+    "paragma-win32-x64": "0.1.1",
+    "paragma-win32-arm64": "0.1.1",
+    "paragma-linux-x64": "0.1.1",
+    "paragma-linux-arm64": "0.1.1",
+    "paragma-darwin-x64": "0.1.1",
+    "paragma-darwin-arm64": "0.1.1"
   }
 }
