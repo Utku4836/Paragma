@@ -4,3 +4,4 @@
 /bench/runs*/
 /bench/memory-big/
 /bench/quick-runs*/
+__pycache__/

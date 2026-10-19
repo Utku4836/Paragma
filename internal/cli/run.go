@@ -184,6 +184,34 @@ func (a *app) afterSuccess() {
 		}
 	case <-time.After(1500 * time.Millisecond):
 	}
+	a.progressReminder(s)
+}
+
+// progressReminder follows green tests in a project with open steps: mark
+// what is finished and leave a handoff before stopping. Once in a while,
+// not after every run.
+func (a *app) progressReminder(s *store) {
+	f := projectNote(s, s.project)
+	if f == nil {
+		return
+	}
+	ts, _ := s.db.Tasks(f.ID)
+	if index.CountTasks(ts, 1, 1<<30).Open == 0 {
+		return
+	}
+	sh := loadShown(s)
+	key := "progress:" + s.project
+	if sh.recent(key, 20*time.Minute) {
+		return
+	}
+	open := index.CountTasks(ts, 1, 1<<30).Open
+	next := ""
+	if nt, _ := a.nextTask(s, f); nt != nil {
+		next = fmt.Sprintf(" (next: ^%s %s)", nt.ID, textutil.OneLine(nt.Text, 60))
+	}
+	a.printf("--- paragma: %s has %d open steps%s; finished one: pg done <id>; before you stop: pg checkpoint \"<where it stands>\"\n", s.project, open, next)
+	sh.mark(key)
+	a.saveShown(s, sh)
 }
 
 func (a *app) ruleReminders(s *store) []string {

@@ -18,7 +18,7 @@ func (a *app) outlineCmd() *cobra.Command {
 	var depth int
 	c := &cobra.Command{
 		Use:     "outline [addr]",
-		Aliases: []string{"ls", "map", "tree", "toc"},
+		Aliases: []string{"ls", "map", "toc"},
 		Short:   "Map of the space (notes by project), or the heading skeleton of one note",
 		Long: `Without an address: a map of every note by layer with its token cost.
 With an address: the heading skeleton of a note (or of one heading's

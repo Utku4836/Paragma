@@ -135,3 +135,50 @@ func TestResumeShowsCodeChanges(t *testing.T) {
 		}
 	}
 }
+
+func TestTree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	v := copyVault(t)
+	repo := t.TempDir()
+	t.Chdir(repo)
+	files := map[string]string{
+		"internal/db/open.go":      "package db\n\n// Open opens the database.\nfunc Open(path string) (*DB, error) { return nil, nil }\n\ntype DB struct{}\n\nfunc (d *DB) Close() error { return nil }\n",
+		"internal/db/open_test.go": "package db\n\nfunc TestOpen(t *testing.T) {}\n",
+		"README.md":                "# demo\n",
+		"build/out.bin":            "ignored",
+	}
+	for p, body := range files {
+		os.MkdirAll(filepath.Join(repo, filepath.Dir(p)), 0o755)
+		os.WriteFile(filepath.Join(repo, p), []byte(body), 0o644)
+	}
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("build/\n"), 0o644)
+	c := exec.Command("git", "init", "-q")
+	c.Dir = repo
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	out := mustRun(t, v, "tree")
+	for _, want := range []string{"(4 files, git)", "internal/", "  db/", "    open.go  Open(), DB, DB.Close()  [1 error]", "    open_test.go", "README.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tree lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "out.bin") || strings.Contains(out, "TestOpen") {
+		t.Errorf("tree lists ignored files or test functions:\n%s", out)
+	}
+	if out := mustRun(t, v, "tree", "internal/db"); !strings.Contains(out, "open.go  Open()") || strings.Contains(out, "README") {
+		t.Errorf("tree internal/db:\n%s", out)
+	}
+	// a tight budget: one line per folder
+	if out := mustRun(t, v, "tree", "--budget", "30"); !strings.Contains(out, "db/  (2 files)  [1 error]") || !strings.Contains(out, "deeper folders summarised") {
+		t.Errorf("tree --budget 30:\n%s", out)
+	}
+	out = mustRun(t, v, "tree", "--notes", "demo")
+	for _, want := range []string{"notes: demo/", "errors/", "sqlite-database-locked  [error]", "rules  [rule]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tree --notes lacks %q:\n%s", want, out)
+		}
+	}
+}

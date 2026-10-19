@@ -19,23 +19,22 @@ import (
 const skillBody = `Memory lives in ` + "`pg`" + ` (Paragma): project notes, rules, decisions, past errors and their fixes. Pull only what you need, through pg; do not open its files.
 
 START
-- New conversation: ` + "`pg prime`" + ` (what memory holds, its projects). Continue earlier work: ` + "`pg resume <project>`" + `.
-- New multi-step work: ` + "`pg start <project> --goal \"...\" --step \"...\" --step \"...\" --decision \"<what the user decided>\"`" + `, once; the project stays current.
+- New conversation: ` + "`pg prime`" + `. Continuing earlier work: ` + "`pg resume <project>`" + `.
+- The user gives decisions, requirements or a plan, or the work may not end in this conversation: BEFORE writing code, ` + "`pg start <project> --goal \"...\" --step \"...\" --decision \"<each decision, in the user's words>\"`" + `. What is not recorded is lost to the next conversation.
 
-READ
-- Tests and builds through ` + "`pg run -- <cmd>`" + `: on failure it prints the known fix; on success, rules for the files you changed.
-- A topic or task: ` + "`pg context \"<topic>\"`" + `: every matching rule, decision and fix in one call, and a last line saying what else exists.
-- Before changing a file: ` + "`pg related <path>`" + `. An error seen elsewhere: ` + "`pg error find \"<error line>\"`" + `.
-- A specific fact: ` + "`pg search \"<words>\"`" + `, then ` + "`pg read <addr>`" + `.
+FIND
+- Where things are in the code, and the rules and past errors about each file: ` + "`pg tree [dir]`" + `, instead of listing and opening files.
+- A topic or task: ` + "`pg context \"<topic>\"`" + ` (every matching rule, decision and fix in one call). Before changing a file: ` + "`pg related <path>`" + `. An error: ` + "`pg error find \"<error line>\"`" + `. A fact: ` + "`pg search \"<words>\"`" + `, then ` + "`pg read <addr>`" + `.
+- Tests and builds through ` + "`pg run -- <cmd>`" + `: the known fix on failure, the rules for the files you changed on success.
 
-WRITE (goes to the current project)
-- Step finished: ` + "`pg done <id>`" + ` (prints the next step). More steps: ` + "`pg plan \"step\" \"step\"`" + `. Finding (also where things are in the code): ` + "`pg log \"...\"`" + `. Decision from the user: ` + "`pg decide \"...\"`" + `.
-- Your own notes: ` + "`pg new note \"<title>\" --dir <folder>`" + `; organise the project folder as you like.
-- Fixed a non-obvious error: ` + "`pg error record --from-last --cause \"...\" --fix \"...\"`" + `. A recorded fix worked again: ` + "`pg error seen <addr>`" + `.
-- Architectural choice: ` + "`pg decision record \"<title>\" --decision \"...\"`" + `. Rule from the user: ` + "`pg rule add \"<rule>\"`" + `.
+RECORD (in the current project)
+- Step done: ` + "`pg done <id>`" + `. New step: ` + "`pg plan \"...\"`" + `. Finding: ` + "`pg log \"...\"`" + `. New decision from the user: ` + "`pg decide \"...\"`" + `. Rule from the user: ` + "`pg rule add \"...\"`" + `.
+- Fixed a non-obvious error: ` + "`pg error record --from-last --cause \"...\" --fix \"...\"`" + `.
+- Your own notes: ` + "`pg new note \"<title>\" --dir <folder>`" + `; see the folder with ` + "`pg tree --notes`" + `.
+- BEFORE your final answer, when anything is left or another conversation may continue: ` + "`pg checkpoint \"<where it stands, what is next>\"`" + `.
 
 RULES
-- Exit code 1 means memory has nothing on it: solve it yourself, then record it. Do not record trivia.
+- Exit code 1 means memory has nothing on it: solve it yourself; record it if it was not obvious.
 - Long text: ` + "`-`" + ` and stdin, or ` + "`--file PATH`" + `. Anything else: ` + "`pg help`" + `.
 `
 
@@ -116,12 +115,18 @@ func (a *app) primeText(s *store) string {
 		b.WriteString(line + "\n")
 		b.WriteString("next: pg resume " + s.project + " (to continue it) | pg context <topic> | pg run -- <test cmd> | pg start <new project>\n")
 	} else if len(ps) > 0 {
-		b.WriteString("next: pg resume <project> (to continue one) | pg context <topic> | pg run -- <test cmd> | pg start <new project>\n")
+		b.WriteString("next: pg resume <project> (to continue one) | pg context <topic> | pg tree (the code) | pg run -- <test cmd>\n")
+		b.WriteString(newWorkHint)
 	} else {
-		b.WriteString("memory is empty; next: pg start <project> --goal \"...\" | pg run -- <test cmd>\n")
+		b.WriteString("memory is empty; next: pg tree (the code) | pg run -- <test cmd>\n")
+		b.WriteString(newWorkHint)
 	}
 	return b.String()
 }
+
+// newWorkHint is printed when no project is current here: the moment to
+// record the user's decisions is before the code is written.
+const newWorkHint = "new work with decisions or a plan from the user: record them first: pg start <project> --goal \"...\" --step \"...\" --decision \"...\"\n"
 
 // topTags are the most used tags, mark tags left out.
 func (a *app) topTags(s *store, n int) []string {

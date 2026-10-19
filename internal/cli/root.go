@@ -91,7 +91,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.setupCmd(), a.primeCmd(), a.skillCmd(),
 		a.startCmd(), a.resumeCmd(), a.planCmd(), a.logCmd(), a.decideCmd(), a.checkpointCmd(), a.taskDoneCmd(),
 		a.projectCmd(), a.taskCmd(),
-		a.contextCmd(), a.searchCmd(), a.findCmd(), a.grepCmd(), a.outlineCmd(), a.readCmd(),
+		a.contextCmd(), a.treeCmd(), a.searchCmd(), a.findCmd(), a.grepCmd(), a.outlineCmd(), a.readCmd(),
 		a.relatedCmd(), a.linksCmd(), a.backlinksCmd(), a.neighborsCmd(), a.orphansCmd(),
 		a.newCmd(), a.appendCmd(), a.writeCmd(), a.insertCmd(), a.editCmd(), a.sectionCmd(), a.linkCmd(),
 		a.keywordsCmd(), a.mvCmd(), a.archiveCmd(), a.rmCmd(),
@@ -108,7 +108,7 @@ func (a *app) rootCmd() *cobra.Command {
 
 // groups is the help index printed by pg help.
 var groups = []struct{ name, cmds string }{
-	{"read", "context search find grep outline read"},
+	{"read", "context tree search find grep outline read"},
 	{"write", "new append write insert edit section link keywords mv archive rm"},
 	{"project", "start resume plan done log decide checkpoint project list|status|close"},
 	{"task", "task add|list|show|start|done|block|cancel|ask|reopen|note|move|edit|next|claim"},
