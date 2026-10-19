@@ -369,7 +369,7 @@ func nullStr(s string) any {
 	return s
 }
 
-// scan lists every note under the vault root with its mtime and size.
+// scan lists every note under the space root with its mtime and size.
 // Directories are read concurrently: on Windows each directory listing has a
 // high fixed latency (often from filesystem filter drivers), and reading them
 // in parallel cut a 500-note scan from ~17ms to ~5ms.

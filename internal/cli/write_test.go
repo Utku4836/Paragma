@@ -232,13 +232,17 @@ func TestMarks(t *testing.T) {
 	if out := mustRun(t, v, "read", "architecture#Dağıtım"); !strings.Contains(out, "Fly.io") {
 		t.Fatal(out)
 	}
-	mustRun(t, v, "unmark", "architecture#Dağıtım")
+	mustRun(t, v, "mark", "architecture#Dağıtım", "--remove")
 	if _, _, code := run(t, v, "marks", "--as", "stale"); code != ExitNoResults {
-		t.Fatal("unmark left the mark")
+		t.Fatal("--remove left the mark")
 	}
-	mustRun(t, v, "callout", "stack:12", "--kind", "warning")
-	if !strings.Contains(readNote(t, v, "demo/stack.md"), "> [!warning] Go 1.24") {
-		t.Fatal(readNote(t, v, "demo/stack.md"))
+	mustRun(t, v, "mark", "stack:12", "--callout", "warning")
+	mustRun(t, v, "mark", "stack:12", "--highlight", "1.24")
+	if s := readNote(t, v, "demo/stack.md"); !strings.Contains(s, "> [!warning] Go ==1.24==") {
+		t.Fatal(s)
+	}
+	if _, errs, code := run(t, v, "mark", "stack:12", "--as", "pin", "--remove"); code != ExitUsage || !strings.Contains(errs, "exactly one") {
+		t.Fatalf("two actions at once: %d %s", code, errs)
 	}
 }
 

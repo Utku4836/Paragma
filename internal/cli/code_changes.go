@@ -150,19 +150,3 @@ func (a *app) printCodeChanges(base string) {
 		a.println(line)
 	}
 }
-
-// frontValue reads a scalar from a note's front matter.
-func frontValue(lines []string, key string) string {
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return ""
-	}
-	for _, l := range lines[1:] {
-		if strings.TrimSpace(l) == "---" {
-			break
-		}
-		if k, v, ok := strings.Cut(l, ":"); ok && strings.TrimSpace(k) == key {
-			return strings.Trim(strings.TrimSpace(v), `"'`)
-		}
-	}
-	return ""
-}

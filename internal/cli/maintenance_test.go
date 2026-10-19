@@ -69,34 +69,3 @@ func TestDupes(t *testing.T) {
 		t.Fatalf("dupes reason:\n%s", out)
 	}
 }
-
-func TestGC(t *testing.T) {
-	v := copyVault(t)
-	// close and archive the sample project and pretend it ended long ago
-	mustRun(t, v, "project", "close", "auth-refactor", "--summary", "paused")
-	mustRun(t, v, "archive", "auth-refactor/auth-refactor")
-	p := filepath.Join(v, "Spaces", "main", "auth-refactor", "archive", "auth-refactor.md")
-	b, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
-	i := strings.Index(s, "closed: ")
-	s = s[:i] + "closed: 2025-01-10 10:00" + s[strings.Index(s[i:], "\n")+i:]
-	os.WriteFile(p, []byte(s), 0o644)
-	out := mustRun(t, v, "gc")
-	if !strings.Contains(out, "auth-refactor/archive/auth-refactor  ended 2025-01-10") || !strings.Contains(out, "--apply") {
-		t.Fatalf("gc dry run:\n%s", out)
-	}
-	if _, err := os.Stat(p); err != nil {
-		t.Fatal("dry run deleted the file")
-	}
-	mustRun(t, v, "gc", "--apply")
-	if _, err := os.Stat(p); err == nil {
-		t.Fatal("not deleted")
-	}
-	j := readNote(t, v, "auth-refactor/journal/2025-01.md")
-	if !strings.Contains(j, "## 2025-01-10") || !strings.Contains(j, `project "Auth refactor" (gc)`) {
-		t.Fatalf("journal:\n%s", j)
-	}
-}

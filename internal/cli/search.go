@@ -2,50 +2,22 @@ package cli
 
 import (
 	"fmt"
+	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Utku4836/Paragma/internal/errsig"
 	"github.com/Utku4836/Paragma/internal/index"
 	"github.com/Utku4836/Paragma/internal/space"
 	"github.com/Utku4836/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
 
-func splitList(vals []string) []string {
-	var out []string
-	for _, v := range vals {
-		for _, p := range strings.Split(v, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				out = append(out, p)
-			}
-		}
-	}
-	return out
-}
-
-var layerAlias = map[string]string{"work": "working", "w": "working", "episode": "episodic", "episodes": "episodic", "e": "episodic", "knowledge": "semantic", "s": "semantic"}
-
-func normLayers(ls []string) ([]string, error) {
-	out := make([]string, 0, len(ls))
-	for _, l := range splitList(ls) {
-		l = strings.ToLower(l)
-		if a, ok := layerAlias[l]; ok {
-			l = a
-		}
-		switch l {
-		case "working", "episodic", "semantic":
-		default:
-			return nil, fail(ExitUsage, "--layer must be working, episodic or semantic (got %q)", l)
-		}
-		out = append(out, l)
-	}
-	return out, nil
-}
-
-// ---- search ----
+// Finding notes: full-text search, metadata filters, regular expressions.
 
 type searchFlags struct {
 	layers, types, statuses, tags, kinds []string
@@ -85,117 +57,68 @@ pg search timeout --type error --tag sqlite`,
 	return c
 }
 
-type hitOut struct {
-	index.Hit
-	s      *store
-	prefix string
-	stale  bool
-}
-
 func (a *app) search(q string, sf searchFlags) error {
 	layers, err := normLayers(sf.layers)
 	if err != nil {
 		return err
 	}
-	stores, err := a.allStores()
+	s, err := a.main()
 	if err != nil {
 		return err
 	}
-	opts := index.SearchOpts{
+	hits, err := s.db.Search(index.SearchOpts{
 		Query: q, Layers: layers, Types: splitList(sf.types), Statuses: splitList(sf.statuses),
 		Tags: splitList(sf.tags), Kinds: splitList(sf.kinds), All: sf.all, Raw: sf.raw,
-	}
-	var hits []hitOut
-	for _, s := range stores {
-		hs, err := s.db.Search(opts)
-		if err != nil {
-			if sf.raw {
-				return fail(ExitUsage, "bad FTS5 query: %v", err)
-			}
-			return fail(ExitInternal, "%v", err)
+	})
+	if err != nil {
+		if sf.raw {
+			return fail(ExitUsage, "bad FTS5 query: %v", err)
 		}
-		for _, h := range hs {
-			if s.project != "" && space.ProjectOf(h.File.Path) == s.project {
-				h.Score *= 1.15 // the current project's notes first among equals
-			}
-			hits = append(hits, hitOut{Hit: h, s: s, prefix: a.prefix(s), stale: h.File.Stale(s.v.Cfg.StaleDays)})
+		return fail(ExitInternal, "%v", err)
+	}
+	for i := range hits {
+		if s.project != "" && space.ProjectOf(hits[i].File.Path) == s.project {
+			hits[i].Score *= 1.15 // the current project's notes first among equals
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	total := len(hits)
-	if sf.offset > 0 {
-		if sf.offset >= len(hits) {
-			hits = nil
-		} else {
-			hits = hits[sf.offset:]
-		}
-	}
+	hits = hits[min(sf.offset, len(hits)):]
 	if sf.limit > 0 && len(hits) > sf.limit {
 		hits = hits[:sf.limit]
 	}
 	if len(hits) == 0 {
 		if sf.offset == 0 {
-			for _, st := range stores {
-				recordMiss(st, "search", q)
-			}
+			recordMiss(s, "search", q)
 		}
 		if a.jsonOut {
 			a.emitJSON([]any{})
 		} else {
 			a.println("no results")
-			a.searchHint(stores[0], q)
+			a.searchHint(s, q)
 		}
 		return errNoResults
 	}
-	for _, st := range stores {
-		var batch []index.Hit
-		var pos []int
-		for i, h := range hits {
-			if h.s == st {
-				batch = append(batch, h.Hit)
-				pos = append(pos, i)
-			}
-		}
-		if err := st.db.Hydrate(batch); err != nil {
-			return fail(ExitInternal, "%v", err)
-		}
-		for j, i := range pos {
-			hits[i].Hit = batch[j]
-		}
+	if err := s.db.Hydrate(hits); err != nil {
+		return fail(ExitInternal, "%v", err)
 	}
 
 	if a.jsonOut {
 		var out []map[string]any
 		for _, h := range hits {
 			out = append(out, map[string]any{
-				"addr": h.prefix + hitAddr(h.Hit), "type": h.File.Type, "layer": h.File.Layer, "status": h.File.Status,
+				"addr": hitAddr(h), "type": h.File.Type, "layer": h.File.Layer, "status": h.File.Status,
 				"date": h.File.Date(), "tokens": h.Sec.SubTokens, "snippet": textutil.OneLine(h.Snippet, 0),
-				"score": float64(int(h.Score*100)) / 100, "match": h.Via, "stale": h.stale,
+				"score": float64(int(h.Score*100)) / 100, "match": h.Via, "stale": h.File.Stale(s.v.Cfg.StaleDays),
 			})
 		}
 		return a.emitJSON(map[string]any{"total": total, "offset": sf.offset, "results": out})
 	}
 
-	bw := a.newBudget(a.budgetOr(a.defaultBudget(stores)))
+	bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
 	shown := 0
 	for _, h := range hits {
-		typ := h.File.Type
-		if typ == "note" {
-			typ = ""
-		}
-		st := h.File.Status
-		if st == "active" {
-			st = ""
-		}
-		seen := ""
-		if h.File.Seen > 0 {
-			seen = fmt.Sprintf("seen:%d", h.File.Seen)
-		}
-		stale := ""
-		if h.stale {
-			stale = "stale?"
-		}
-		head := join(h.prefix+hitAddr(h.Hit), meta(typ, st, seen, stale, bangKinds(h.Sec.Kinds)), h.File.Date(), textutil.FmtTokens(h.Sec.SubTokens))
+		head := join(hitAddr(h), meta(append(noteFlags(s, h.File), bangKinds(h.Sec.Kinds))...), h.File.Date(), textutil.FmtTokens(h.Sec.SubTokens))
 		snip := textutil.OneLine(h.Snippet, 160)
 		cost := textutil.Tokens(head) + 1
 		if snip != "" {
@@ -211,11 +134,12 @@ func (a *app) search(q string, sf searchFlags) error {
 		shown++
 	}
 	next := sf.offset + shown
-	if next < total {
+	switch {
+	case next < total:
 		a.printf("%d of %d shown; more: pg search %s --offset %d\n", shown, total, shellQuote(q), next)
-	} else if total == 1 {
+	case total == 1:
 		a.println("1 result")
-	} else {
+	default:
 		a.printf("%d results\n", total)
 	}
 	return nil
@@ -229,13 +153,6 @@ func bangKinds(k string) string {
 	return "!" + strings.ReplaceAll(k, " ", " !")
 }
 
-func (a *app) defaultBudget(stores []*store) int {
-	if len(stores) > 0 {
-		return stores[0].v.Cfg.Budget
-	}
-	return 800
-}
-
 func hitAddr(h index.Hit) string {
 	if h.Sec.Path == "" || h.Sec.IsTitle {
 		return h.File.Addr()
@@ -243,7 +160,24 @@ func hitAddr(h index.Hit) string {
 	return h.File.Addr() + "#" + h.Sec.Path
 }
 
-// ---- find ----
+var layerAlias = map[string]string{"work": "working", "w": "working", "episode": "episodic", "episodes": "episodic", "e": "episodic", "knowledge": "semantic", "s": "semantic"}
+
+func normLayers(ls []string) ([]string, error) {
+	out := make([]string, 0, len(ls))
+	for _, l := range splitList(ls) {
+		l = strings.ToLower(l)
+		if a, ok := layerAlias[l]; ok {
+			l = a
+		}
+		switch l {
+		case "working", "episodic", "semantic":
+		default:
+			return nil, fail(ExitUsage, "--layer must be working, episodic or semantic (got %q)", l)
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
 
 type findFlags struct {
 	types, layers, statuses, tags []string
@@ -320,7 +254,12 @@ func (a *app) find(ff findFlags) error {
 	if err != nil {
 		return err
 	}
-	stores, err := a.allStores()
+	switch ff.sortBy {
+	case "path", "date", "tokens":
+	default:
+		return fail(ExitUsage, "--sort must be path, date or tokens")
+	}
+	s, err := a.main()
 	if err != nil {
 		return err
 	}
@@ -331,68 +270,40 @@ func (a *app) find(ff findFlags) error {
 		}
 		return m
 	}
-	types, stats, tags := set(ff.types), set(ff.statuses), set(ff.tags)
-	lset := map[string]bool{}
-	for _, l := range layers {
-		lset[l] = true
+	types, stats, tags, lset := set(ff.types), set(ff.statuses), set(ff.tags), set(layers)
+	ftags, err := s.db.FileTags()
+	if err != nil {
+		return fail(ExitInternal, "%v", err)
 	}
-	type row struct {
-		f      *index.File
-		s      *store
-		prefix string
-		tc     index.TaskCount
+	tcs, err := s.db.TaskCountsByFile()
+	if err != nil {
+		return fail(ExitInternal, "%v", err)
 	}
-	var rows []row
-	for _, s := range stores {
-		ftags, err := s.db.FileTags()
-		if err != nil {
-			return fail(ExitInternal, "%v", err)
+	title := textutil.Fold(ff.title)
+	var rows []*index.File
+	for _, f := range s.res.Files() {
+		if len(types) > 0 && !types[f.Type] || len(lset) > 0 && !lset[f.Layer] || len(stats) > 0 && !stats[f.Status] {
+			continue
 		}
-		tcs, err := s.db.TaskCountsByFile()
-		if err != nil {
-			return fail(ExitInternal, "%v", err)
+		if len(tags) > 0 && !slices.ContainsFunc(ftags[f.ID], func(t string) bool { return tags[t] }) {
+			continue
 		}
-		for _, f := range s.res.Files() {
-			if len(types) > 0 && !types[f.Type] || len(lset) > 0 && !lset[f.Layer] || len(stats) > 0 && !stats[f.Status] {
-				continue
-			}
-			if len(tags) > 0 {
-				ok := false
-				for _, t := range ftags[f.ID] {
-					if tags[t] {
-						ok = true
-						break
-					}
-				}
-				if !ok {
-					continue
-				}
-			}
-			d := f.Date()
-			if since != "" && d < since || until != "" && (d == "" || d > until) {
-				continue
-			}
-			if ff.title != "" {
-				q := textutil.Fold(ff.title)
-				if !strings.Contains(textutil.Fold(f.Title), q) && !strings.Contains(textutil.Fold(f.Path), q) {
-					continue
-				}
-			}
-			tc := tcs[f.ID]
-			if ff.openTasks && tc.Open == 0 {
-				continue
-			}
-			rows = append(rows, row{f, s, a.prefix(s), tc})
+		if d := f.Date(); since != "" && d < since || until != "" && (d == "" || d > until) {
+			continue
 		}
+		if title != "" && !strings.Contains(textutil.Fold(f.Title), title) && !strings.Contains(textutil.Fold(f.Path), title) {
+			continue
+		}
+		if ff.openTasks && tcs[f.ID].Open == 0 {
+			continue
+		}
+		rows = append(rows, f)
 	}
 	switch ff.sortBy {
 	case "date":
-		sort.SliceStable(rows, func(i, j int) bool { return rows[i].f.Date() > rows[j].f.Date() })
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Date() > rows[j].Date() })
 	case "tokens":
-		sort.SliceStable(rows, func(i, j int) bool { return rows[i].f.Tokens > rows[j].f.Tokens })
-	case "path", "":
-	default:
-		return fail(ExitUsage, "--sort must be path, date or tokens")
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Tokens > rows[j].Tokens })
 	}
 	total := len(rows)
 	if total == 0 {
@@ -408,25 +319,17 @@ func (a *app) find(ff findFlags) error {
 	}
 	if a.jsonOut {
 		var out []map[string]any
-		for _, r := range rows {
-			out = append(out, map[string]any{"addr": r.prefix + r.f.Addr(), "title": r.f.Title, "type": r.f.Type, "layer": r.f.Layer,
-				"status": r.f.Status, "date": r.f.Date(), "tokens": r.f.Tokens, "tasks_open": r.tc.Open, "tasks": r.tc.Total})
+		for _, f := range rows {
+			tc := tcs[f.ID]
+			out = append(out, map[string]any{"addr": f.Addr(), "title": f.Title, "type": f.Type, "layer": f.Layer,
+				"status": f.Status, "date": f.Date(), "tokens": f.Tokens, "tasks_open": tc.Open, "tasks": tc.Total})
 		}
 		return a.emitJSON(map[string]any{"total": total, "results": out})
 	}
-	bw := a.newBudget(a.budgetOr(a.defaultBudget(stores)))
+	bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
 	shown := 0
-	for _, r := range rows {
-		tasks := ""
-		if r.tc.Total > 0 {
-			tasks = fmt.Sprintf("tasks %d/%d", r.tc.Done, r.tc.Total)
-		}
-		title := ""
-		base := r.f.Addr()[strings.LastIndex(r.f.Addr(), "/")+1:]
-		if textutil.Fold(r.f.Title) != textutil.Fold(base) {
-			title = strconviQuote(r.f.Title)
-		}
-		if !bw.line(join(r.prefix+r.f.Addr(), a.fileMeta(r.s, r.f), r.f.Date(), textutil.FmtTokens(r.f.Tokens), tasks, title)) {
+	for _, f := range rows {
+		if !bw.line(join(f.Addr(), a.fileMeta(s, f), f.Date(), textutil.FmtTokens(f.Tokens), taskCount(tcs[f.ID]), titleIfDifferent(f))) {
 			break
 		}
 		shown++
@@ -439,4 +342,111 @@ func (a *app) find(ff findFlags) error {
 	return nil
 }
 
-func strconviQuote(s string) string { return `"` + s + `"` }
+// taskCount renders "tasks 3/5", or "" for a note without tasks.
+func taskCount(tc index.TaskCount) string {
+	if tc.Total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("tasks %d/%d", tc.Done, tc.Total)
+}
+
+// titleIfDifferent is the note's quoted title when its file name does not
+// already say it.
+func titleIfDifferent(f *index.File) string {
+	if textutil.Fold(f.Title) == textutil.Fold(path.Base(f.Addr())) {
+		return ""
+	}
+	return `"` + f.Title + `"`
+}
+
+func (a *app) grepCmd() *cobra.Command {
+	var ignoreCase, all bool
+	var layers []string
+	c := &cobra.Command{
+		Use:   "grep <regex>",
+		Short: "Raw regular expression search over note lines; prints note:line addresses",
+		Long: `Search note text line by line with a Go regular expression. Use it for
+exact strings (identifiers, config keys) where pg search's word matching is
+too loose. Archived notes are skipped unless --all.`,
+		Example: `pg grep "busy_timeout"
+pg grep -i "ECONN\w+" --layer episodic`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pat := strings.Join(args, " ")
+			if ignoreCase {
+				pat = "(?i)" + pat
+			}
+			re, err := regexp.Compile(pat)
+			if err != nil {
+				return fail(ExitUsage, "bad regex: %v", err)
+			}
+			ls, err := normLayers(layers)
+			if err != nil {
+				return err
+			}
+			want := map[string]bool{}
+			for _, l := range ls {
+				want[l] = true
+			}
+			s, err := a.main()
+			if err != nil {
+				return err
+			}
+			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
+			hits := 0
+			for _, f := range s.res.Files() {
+				if (!all && f.Inactive()) || (len(want) > 0 && !want[f.Layer]) {
+					continue
+				}
+				lines, err := fileLines(s, f)
+				if err != nil {
+					continue
+				}
+				for i, l := range lines {
+					if !re.MatchString(l) {
+						continue
+					}
+					hits++
+					if bw.cut {
+						continue
+					}
+					if !bw.line(fmt.Sprintf("%s:%d  %s", f.Addr(), i+1, textutil.OneLine(l, 160))) {
+						continue
+					}
+				}
+			}
+			if hits == 0 {
+				a.println("no results")
+				return errNoResults
+			}
+			if bw.cut {
+				a.printf("... %d matches in all; narrow the pattern or --layer\n", hits)
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVarP(&ignoreCase, "ignore-case", "i", false, "case-insensitive")
+	c.Flags().BoolVar(&all, "all", false, "include archived and superseded notes")
+	c.Flags().StringSliceVar(&layers, "layer", nil, "working|episodic|semantic")
+	return c
+}
+
+// searchHint tells the agent how to try again after an empty search.
+func (a *app) searchHint(s *store, q string) {
+	if !s.v.Cfg.Hints {
+		return
+	}
+	var tips []string
+	if len(strings.Fields(q)) >= 3 {
+		tips = append(tips, "fewer words")
+	}
+	tips = append(tips, "synonyms or the other language your notes use")
+	if len(errsig.Lines(q, 1)) > 0 {
+		tips = append(tips, "for an error message: pg error find")
+	}
+	line := "try: " + strings.Join(tips, "; ")
+	if topics := a.topTags(s, 8); len(topics) > 0 {
+		line += "; topics: " + strings.Join(topics, ", ")
+	}
+	a.println(line)
+}

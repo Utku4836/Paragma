@@ -1,37 +1,117 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Utku4836/Paragma/internal/addr"
-	"github.com/Utku4836/Paragma/internal/md"
 	"github.com/Utku4836/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
 
-func newDiscard(w io.Writer) *bufio.Writer { return bufio.NewWriter(w) }
+// Marks: flags, callouts and highlights on parts of notes.
 
 var markKinds = []string{"pin", "important", "stale", "verify", "question", "warning"}
 
-// markLine is the line a mark is written on: the heading of a section, the
-// first line of a block or range, the title (or first body line) of a note.
-func markLine(n *note, t *addr.Target) int {
+var (
+	reMarkTokens = regexp.MustCompile(`\s+(?:#(?:pin|important|stale|verify|question|warning)\b|@note\([^)]*\))`)
+	reHighlight  = regexp.MustCompile(`==([^=]+)==`)
+)
+
+func (a *app) markCmd() *cobra.Command {
+	var as, noteText, callout, highlight string
+	var remove bool
+	c := &cobra.Command{
+		Use:   "mark <addr> --as KIND | --callout KIND | --highlight TEXT | --remove",
+		Short: "Flag a note, heading or block (pin, stale, warning...), make a callout, highlight text, or remove marks",
+		Long: `Mark part of a note. Exactly one of:
+  --as KIND        a #kind tag on the target's first line or heading (` + strings.Join(markKinds, ", ") + `);
+                   --note adds a short reason as @note(...)
+  --callout KIND   turn a block or line range into a > [!kind] callout (rule, warning, decision...)
+  --highlight TEXT wrap that exact text in ==highlight==
+  --remove         drop mark tags, @note(...) and ==highlights== from the target
+pg marks lists everything flagged.`,
+		Example: `pg mark architecture#Deploy --as stale --note "moved to fly.io"
+pg mark stack^b3 --callout warning
+pg mark rules^r001 --highlight "busy_timeout"
+pg mark architecture#Deploy --remove`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			given := 0
+			for _, set := range []bool{as != "", callout != "", highlight != "", remove} {
+				if set {
+					given++
+				}
+			}
+			if given != 1 {
+				return fail(ExitUsage, "give exactly one of --as, --callout, --highlight, --remove")
+			}
+			var edit func(n *note, t *addr.Target) (string, error)
+			switch {
+			case as != "":
+				kind := strings.ToLower(strings.TrimPrefix(as, "#"))
+				if !slices.Contains(markKinds, kind) {
+					return fail(ExitUsage, "--as must be one of %s", strings.Join(markKinds, ", "))
+				}
+				edit = func(n *note, t *addr.Target) (string, error) { return markTag(n, t, kind, noteText) }
+			case callout != "":
+				edit = func(n *note, t *addr.Target) (string, error) { return markCallout(n, t, callout) }
+			case highlight != "":
+				edit = func(n *note, t *addr.Target) (string, error) { return markHighlight(n, t, highlight) }
+			default:
+				edit = unmark
+			}
+			s, t, err := a.resolve(strings.Join(args, " "))
+			if err != nil {
+				return err
+			}
+			return a.withLock(s, func() error {
+				n, err := a.load(s, t.File)
+				if err != nil {
+					return err
+				}
+				done, err := edit(n, t)
+				if err != nil {
+					return err
+				}
+				if err := a.save(n); err != nil {
+					return err
+				}
+				a.ok(done)
+				return nil
+			})
+		},
+	}
+	c.Flags().StringVar(&as, "as", "", strings.Join(markKinds, " | "))
+	c.Flags().StringVar(&noteText, "note", "", "with --as: short reason, stored as @note(...)")
+	c.Flags().StringVar(&callout, "callout", "", "callout type: rule, warning, decision, question, pin...")
+	c.Flags().StringVar(&highlight, "highlight", "", "exact text to wrap in ==highlight==")
+	c.Flags().BoolVar(&remove, "remove", false, "remove marks and highlights")
+	return c
+}
+
+// markTag writes #kind (and @note(...)) on the target's heading or first line.
+func markTag(n *note, t *addr.Target, kind, noteText string) (string, error) {
+	i := t.From
 	switch t.Kind {
 	case addr.KindSection:
-		return t.Section.Line
+		i = t.Section.Line
 	case addr.KindFile:
-		for i := t.From; i <= len(n.lines); i++ {
-			if !isBlank(n.lines[i-1]) {
-				return i
-			}
+		for i <= len(n.lines) && isBlank(n.lines[i-1]) {
+			i++
 		}
-		return t.From
+		if i > len(n.lines) {
+			i = t.From
+		}
 	}
-	return t.From
+	line := addToken(n.lines[i-1], "#"+kind)
+	if noteText != "" {
+		line = addToken(line, "@note("+strings.ReplaceAll(noteText, ")", "]")+")")
+	}
+	n.lines[i-1] = line
+	return fmt.Sprintf("%s [%s]", t.Addr(), kind), nil
 }
 
 // addToken appends " token" to a line, before a trailing ^block-id so the
@@ -40,183 +120,53 @@ func addToken(line, token string) string {
 	if strings.Contains(line, " "+token) {
 		return line
 	}
-	if m := regexp.MustCompile(`\s\^[A-Za-z0-9][\w-]*\s*$`).FindStringIndex(line); m != nil && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+	if m := reTrailingID.FindStringIndex(line); m != nil && !strings.HasPrefix(strings.TrimSpace(line), "#") {
 		return line[:m[0]] + " " + token + line[m[0]:]
 	}
 	return strings.TrimRight(line, " ") + " " + token
 }
 
-func (a *app) markCmd() *cobra.Command {
-	var as, noteText string
-	c := &cobra.Command{
-		Use:   "mark <addr> --as <kind>",
-		Short: "Flag a block, heading or note: pin, important, stale, verify, question, warning",
-		Long: `Flag something so it can be found with pg marks and is labelled in
-search results. Writes a #kind tag (and @note(...) with --note) on the
-target's first line or heading.`,
-		Example: `pg mark architecture#Deploy --as stale --note "moved to fly.io"
-pg mark rules^r004 --as pin`,
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			kind := strings.ToLower(strings.TrimPrefix(as, "#"))
-			okKind := false
-			for _, k := range markKinds {
-				okKind = okKind || k == kind
-			}
-			if !okKind {
-				return fail(ExitUsage, "--as must be one of %s", strings.Join(markKinds, ", "))
-			}
-			s, t, err := a.resolve(strings.Join(args, " "))
-			if err != nil {
-				return err
-			}
-			return a.withLock(s, func() error {
-				n, err := a.load(s, t.File)
-				if err != nil {
-					return err
-				}
-				i := markLine(n, t)
-				line := addToken(n.lines[i-1], "#"+kind)
-				if noteText != "" {
-					line = addToken(line, "@note("+strings.ReplaceAll(noteText, ")", "]")+")")
-				}
-				n.lines[i-1] = line
-				if err := a.save(n); err != nil {
-					return err
-				}
-				a.ok(fmt.Sprintf("%s [%s]", t.Addr(), kind))
-				return nil
-			})
-		},
+// markCallout turns a block or line range into a > [!kind] callout.
+func markCallout(n *note, t *addr.Target, kind string) (string, error) {
+	if t.Kind == addr.KindFile || t.Kind == addr.KindSection {
+		return "", fail(ExitUsage, "--callout takes a block (note^id) or a line range (note:10-12)")
 	}
-	c.Flags().StringVar(&as, "as", "", strings.Join(markKinds, " | "))
-	c.Flags().StringVar(&noteText, "note", "", "short reason, stored as @note(...)")
-	return c
+	var block []string
+	for i := t.From; i <= t.To; i++ {
+		l := strings.TrimLeft(n.lines[i-1], " \t")
+		l = strings.TrimPrefix(strings.TrimPrefix(l, "> "), ">")
+		if i == t.From {
+			l, _ = stripMarker(l)
+			l = "[!" + strings.ToLower(kind) + "] " + l
+		}
+		block = append(block, "> "+l)
+	}
+	n.lines = replaceRange(n.lines, t.From, t.To, block)
+	return t.Addr(), nil
 }
 
-func (a *app) highlightCmd() *cobra.Command {
-	var text string
-	c := &cobra.Command{
-		Use:     "highlight <addr> --text TEXT",
-		Short:   "Wrap exact text inside the target in ==highlight==",
-		Example: `pg highlight rules^r001 --text "busy_timeout"`,
-		Args:    cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if text == "" {
-				return fail(ExitUsage, "--text is required")
-			}
-			s, t, err := a.resolve(strings.Join(args, " "))
-			if err != nil {
-				return err
-			}
-			return a.withLock(s, func() error {
-				n, err := a.load(s, t.File)
-				if err != nil {
-					return err
-				}
-				for i := t.From; i <= t.To && i <= len(n.lines); i++ {
-					l := n.lines[i-1]
-					if j := strings.Index(l, text); j >= 0 && !strings.Contains(l, "=="+text+"==") {
-						n.lines[i-1] = l[:j] + "==" + text + "==" + l[j+len(text):]
-						if err := a.save(n); err != nil {
-							return err
-						}
-						a.ok(fmt.Sprintf("%s:%d", t.File.Addr(), i))
-						return nil
-					}
-				}
-				return fail(ExitNotFound, "not found in %s: %q", t.Addr(), text)
-			})
-		},
+// markHighlight wraps the first occurrence of text in the target.
+func markHighlight(n *note, t *addr.Target, text string) (string, error) {
+	for i := t.From; i <= t.To && i <= len(n.lines); i++ {
+		l := n.lines[i-1]
+		if j := strings.Index(l, text); j >= 0 && !strings.Contains(l, "=="+text+"==") {
+			n.lines[i-1] = l[:j] + "==" + text + "==" + l[j+len(text):]
+			return fmt.Sprintf("%s:%d", t.File.Addr(), i), nil
+		}
 	}
-	c.Flags().StringVar(&text, "text", "", "exact text to highlight")
-	return c
+	return "", fail(ExitNotFound, "not found in %s: %q", t.Addr(), text)
 }
 
-func (a *app) calloutCmd() *cobra.Command {
-	var kind string
-	c := &cobra.Command{
-		Use:   "callout <addr> --kind KIND",
-		Short: "Turn a block or line range into a > [!kind] callout (rule, warning, decision, pin, ...)",
-		Example: `pg callout stack^b3 --kind warning
-pg callout architecture:30-31 --kind rule`,
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if kind == "" {
-				return fail(ExitUsage, "--kind is required (rule, warning, decision, question, pin, stale)")
-			}
-			s, t, err := a.resolve(strings.Join(args, " "))
-			if err != nil {
-				return err
-			}
-			if t.Kind == addr.KindFile || t.Kind == addr.KindSection {
-				return fail(ExitUsage, "callout takes a block (note^id) or a line range (note:10-12)")
-			}
-			return a.withLock(s, func() error {
-				n, err := a.load(s, t.File)
-				if err != nil {
-					return err
-				}
-				var block []string
-				for i := t.From; i <= t.To; i++ {
-					l := strings.TrimLeft(n.lines[i-1], " \t")
-					l = strings.TrimPrefix(strings.TrimPrefix(l, "> "), ">")
-					if i == t.From {
-						if tl, ok := md.ParseTaskLine(l); ok {
-							l = strings.TrimSpace(strings.TrimPrefix(l, tl.Indent+tl.Marker+" ["+string(tl.State)+"]"))
-						} else {
-							l, _ = stripMarker(l)
-						}
-						l = "[!" + strings.ToLower(kind) + "] " + l
-					}
-					block = append(block, "> "+l)
-				}
-				n.lines = replaceRange(n.lines, t.From, t.To, block)
-				if err := a.save(n); err != nil {
-					return err
-				}
-				a.ok(t.Addr())
-				return nil
-			})
-		},
+// unmark drops mark tags, @note(...) and ==highlights== from the target.
+func unmark(n *note, t *addr.Target) (string, error) {
+	from := t.From
+	if t.Kind == addr.KindSection {
+		from = t.Section.Line
 	}
-	c.Flags().StringVar(&kind, "kind", "", "callout type")
-	return c
-}
-
-var reMarkTokens = regexp.MustCompile(`\s+(?:#(?:pin|important|stale|verify|question|warning)\b|@note\([^)]*\))`)
-var reHighlight = regexp.MustCompile(`==([^=]+)==`)
-
-func (a *app) unmarkCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "unmark <addr>",
-		Short: "Remove mark tags, @note(...) and ==highlights== from the target",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(strings.Join(args, " "))
-			if err != nil {
-				return err
-			}
-			return a.withLock(s, func() error {
-				n, err := a.load(s, t.File)
-				if err != nil {
-					return err
-				}
-				from := t.From
-				if t.Kind == addr.KindSection {
-					from = t.Section.Line
-				}
-				for i := from; i <= t.To && i <= len(n.lines); i++ {
-					n.lines[i-1] = reHighlight.ReplaceAllString(reMarkTokens.ReplaceAllString(n.lines[i-1], ""), "$1")
-				}
-				if err := a.save(n); err != nil {
-					return err
-				}
-				a.ok(t.Addr())
-				return nil
-			})
-		},
+	for i := from; i <= t.To && i <= len(n.lines); i++ {
+		n.lines[i-1] = reHighlight.ReplaceAllString(reMarkTokens.ReplaceAllString(n.lines[i-1], ""), "$1")
 	}
+	return t.Addr(), nil
 }
 
 func (a *app) marksCmd() *cobra.Command {

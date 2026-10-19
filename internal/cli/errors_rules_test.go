@@ -133,50 +133,32 @@ func TestAgentIntegration(t *testing.T) {
 	if n := textutil.Tokens(skillBody); n > 500 {
 		t.Errorf("skill is %d tokens", n)
 	}
+	// setup writes the section once, after what the file already holds
 	os.WriteFile(filepath.Join(base, "AGENTS.md"), []byte("# Team notes\n\nKeep PRs small.\n"), 0o644)
-	if out := mustRun(t, v, "install", "agents-md"); !strings.Contains(out, "(written)") {
+	if out := mustRun(t, v, "setup", "codex", "--dir", base); !strings.Contains(out, "(written)") {
 		t.Fatal(out)
 	}
-	if out := mustRun(t, v, "install", "agents-md"); !strings.Contains(out, "(up to date)") {
+	if out := mustRun(t, v, "setup", "codex", "--dir", base); !strings.Contains(out, "(already up to date)") {
 		t.Fatal(out)
 	}
 	agents, _ := os.ReadFile(filepath.Join(base, "AGENTS.md"))
 	if !strings.HasPrefix(string(agents), "# Team notes") || strings.Count(string(agents), markStart) != 1 {
 		t.Fatalf("AGENTS.md:\n%s", agents)
 	}
-	os.MkdirAll(filepath.Join(base, ".claude"), 0o755)
-	os.WriteFile(filepath.Join(base, ".claude", "settings.json"), []byte(`{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`), 0o644)
-	mustRun(t, v, "install", "claude", "--hooks")
-	mustRun(t, v, "install", "claude", "--hooks")
-	sb, _ := os.ReadFile(filepath.Join(base, ".claude", "settings.json"))
-	s := string(sb)
-	if strings.Count(s, "pg hook session-start") != 1 || strings.Count(s, "pg hook pre-compact") != 1 || !strings.Contains(s, "say done") || !strings.Contains(s, `"model": "opus"`) {
-		t.Fatalf("settings.json:\n%s", s)
-	}
-	if _, err := os.Stat(filepath.Join(base, ".claude", "skills", "paragma", "SKILL.md")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PARAGMA_PROJECT", "auth-refactor")
-	out, _, code := runIn(t, v, `{"hook_event_name":"PreCompact"}`, "hook", "pre-compact")
-	if code != 0 || out != "" {
-		t.Fatalf("pre-compact must be silent: %d %q", code, out)
-	}
-	if s := readNote(t, v, "auth-refactor/auth-refactor.md"); !strings.Contains(s, "Automatic checkpoint before context compaction") {
-		t.Fatal(s)
-	}
 }
 
-func TestDoctorGrepRecent(t *testing.T) {
+func TestDoctorAndGrep(t *testing.T) {
 	v := copyVault(t)
 	if out := mustRun(t, v, "grep", "busy_timeout"); !strings.Contains(out, "demo/errors/sqlite-database-locked:") {
 		t.Fatal(out)
 	}
-	if out := mustRun(t, v, "recent", "--limit", "3"); strings.Count(out, "\n") != 3 {
+	if out := mustRun(t, v, "find", "--sort", "date", "--limit", "3"); !strings.Contains(out, "3 of 12 shown") {
 		t.Fatal(out)
 	}
-	os.WriteFile(filepath.Join(v, "Spaces", "main", "demo", "broken.md"), []byte("# Broken\n\nsee [[nowhere]]\n"), 0o644)
+	os.WriteFile(filepath.Join(v, "Spaces", "main", "demo", "broken.md"), []byte("# Broken\n\nsee [[nowhere]] and [[jwt-exp-timzone]]\n"), 0o644)
 	out, _, code := run(t, v, "doctor")
-	if code != ExitValidation || !strings.Contains(out, "broken link [[nowhere]]") || !strings.Contains(out, "demo/broken  no id") {
+	if code != ExitValidation || !strings.Contains(out, "broken link [[nowhere]]") || !strings.Contains(out, "demo/broken  no id") ||
+		!strings.Contains(out, "broken link [[jwt-exp-timzone]] (did you mean jwt-exp-timezone?)") {
 		t.Fatalf("doctor: %d\n%s", code, out)
 	}
 	// --fix adds the missing id; the broken link is still reported (exit 6)

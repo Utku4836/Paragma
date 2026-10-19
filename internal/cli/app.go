@@ -5,6 +5,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -76,9 +77,15 @@ func (a *app) close() {
 }
 
 func (a *app) printf(f string, args ...any) { fmt.Fprintf(a.stdout, f, args...) }
-func (a *app) println(s string)             { a.stdout.WriteString(s); a.stdout.WriteByte('\n') }
+
+func (a *app) println(s string) { a.stdout.WriteString(s); a.stdout.WriteByte('\n') }
 
 func (a *app) home() string { return space.Home(a.homeFlag) }
+
+func home() string {
+	h, _ := os.UserHomeDir()
+	return h
+}
 
 // workDir is the directory pg remembers the current project for: the git
 // work tree root, else the working directory.
@@ -260,19 +267,26 @@ func join(parts ...string) string {
 	return strings.Join(keep, "  ")
 }
 
-func readStdin(r io.Reader) (string, error) {
-	b, err := io.ReadAll(r)
-	return string(b), err
+func (a *app) emitJSON(v any) error {
+	enc := json.NewEncoder(a.stdout)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(v)
 }
 
-// allStores is the space searched by search and find.
-func (a *app) allStores() ([]*store, error) {
-	s, err := a.main()
-	if err != nil {
-		return nil, err
+func (a *app) ok(s string) {
+	switch {
+	case a.dryRun:
+	case a.quiet:
+		a.println(strings.Fields(s)[0]) // the address alone
+	default:
+		a.println("ok " + s)
 	}
-	return []*store{s}, nil
 }
 
-// prefix is the address prefix for results from s (none: one space).
-func (a *app) prefix(s *store) string { return "" }
+func now() time.Time { return time.Now() }
+
+func today() string { return now().Format("2006-01-02") }
+
+func clock() string { return now().Format("15:04") }
+
+func stamp() string { return now().Format("2006-01-02 15:04") }

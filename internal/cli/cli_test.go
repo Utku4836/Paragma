@@ -46,9 +46,6 @@ func copyVault(t *testing.T) string {
 	return home
 }
 
-// projectDir is a project folder of the sample space.
-func projectDir(home, p string) string { return filepath.Join(home, "Spaces", "main", p) }
-
 func run(t *testing.T, home string, args ...string) (string, string, int) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -81,7 +78,6 @@ func TestCommands(t *testing.T) {
 		{[]string{"read", "stack", "--meta"}, 0, []string{"verified: 2026-05-01"}, nil},
 		{[]string{"read", "architecture#Middlewre"}, 3, nil, nil},
 		{[]string{"read", "archtecture"}, 3, nil, nil},
-		{[]string{"peek", "auth-refactor", "--lines", "2"}, 0, []string{"# Auth refactor", "more: pg read auth-refactor/auth-refactor"}, nil},
 		{[]string{"links", "auth-refactor"}, 0, []string{"demo/errors/jwt-exp-timezone  [wiki]  L26,30", "demo/architecture#Middleware  [wiki]"}, nil},
 		{[]string{"links", "0007-wal-modu"}, 0, []string{"0003-journal-mode  [supersedes]"}, nil},
 		{[]string{"backlinks", "jwt-exp-timezone"}, 0, []string{"demo/rules#Güvenlik  [fixes]", "auth-refactor/auth-refactor#Devir"}, nil},
@@ -215,7 +211,7 @@ func TestUnquotedHeading(t *testing.T) {
 	for _, args := range [][]string{
 		{"read", "jwt-exp-timezone#Kök", "neden"},
 		{"read", "jwt-exp-timezone#Kök", "neden", "rules^r003"},
-		{"peek", "jwt-exp-timezone#Kök", "neden"},
+		{"neighbors", "jwt-exp-timezone#Kök", "neden"},
 		{"outline", "rules#Kod", "stili"},
 	} {
 		out, errs, code := run(t, v, args...)

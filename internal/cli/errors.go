@@ -16,7 +16,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ---- matching ----
+// Error memory: matching command output against recorded errors, and the
+// pg error commands.
 
 // errMatch is a recorded error that matches some output.
 type errMatch struct {
@@ -123,8 +124,6 @@ func (a *app) fixText(s *store, f *index.File, maxRunes int) (string, string) {
 	return addr, textutil.OneLine(strings.Join(body, " "), maxRunes)
 }
 
-// ---- last failed run ----
-
 type lastRun struct {
 	Cmd    string   `json:"cmd"`
 	Exit   int      `json:"exit"`
@@ -146,8 +145,6 @@ func loadLastRun(s *store) (*lastRun, error) {
 	}
 	return &lr, nil
 }
-
-// ---- commands ----
 
 func (a *app) errorCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -177,14 +174,13 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 			if err != nil {
 				return err
 			}
-			proj := s // where pg run saved the last failure
 			p, err := a.writeProject(s)
 			if err != nil {
 				return err
 			}
 			var lr *lastRun
 			if fromLast {
-				if lr, err = loadLastRun(proj); err != nil {
+				if lr, err = loadLastRun(s); err != nil {
 					return err
 				}
 				if sig == "" && len(lr.Lines) > 0 {
@@ -239,7 +235,7 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 					return err
 				}
 				if fromLast && !a.dryRun {
-					os.Remove(lastRunPath(proj))
+					os.Remove(lastRunPath(s))
 				}
 				a.ok(n.addr())
 				a.suggestLinks(s, n.addr(), title+" "+cause)
@@ -374,27 +370,9 @@ func (a *app) errorSeenCmd() *cobra.Command {
 						// is short enough to be one; a long fix needs a person
 						// (or the agent) to phrase the rule: pg promote --text
 						if s.v.Cfg.AutoPromote && fix != "" && len([]rune(fix)) <= 300 && !a.dryRun {
-							g, err := s.res.ResolveFile(t.File.Addr())
+							src := shortRef(s, t.File) + strings.TrimPrefix(fixAddr, t.File.Addr())
+							ruleAddr, err := a.promote(s, t.File, src, fix, "")
 							if err != nil {
-								return err
-							}
-							src := shortRef(s, g) + strings.TrimPrefix(fixAddr, g.Addr())
-							p := space.ProjectOf(g.Path)
-							if p == "" {
-								if p, err = a.writeProject(s); err != nil {
-									return err
-								}
-							}
-							ruleAddr, err := a.addRule(s, p, fix, "", src)
-							if err != nil {
-								return err
-							}
-							en, err := a.load(s, g)
-							if err != nil {
-								return err
-							}
-							en.lines, _ = place(en.lines, lastLine(en.lines, 1, len(en.lines)), []string{"promoted:: [[" + ruleAddr + "]]"})
-							if err := a.save(en); err != nil {
 								return err
 							}
 							a.ok(fmt.Sprintf("seen %d times: promoted to rule %s (edit or move it: pg read %s)", seen, ruleAddr, ruleAddr))

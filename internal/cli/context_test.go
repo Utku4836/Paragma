@@ -86,7 +86,7 @@ func TestRelatedAndContext(t *testing.T) {
 	}
 }
 
-func TestNeighborsOrphansBroken(t *testing.T) {
+func TestNeighborsAndOrphans(t *testing.T) {
 	v := copyVault(t)
 	out := mustRun(t, v, "neighbors", "jwt-exp-timezone")
 	for _, want := range []string{"<- demo/rules", "fixes", "<- auth-refactor/auth-refactor"} {
@@ -94,15 +94,11 @@ func TestNeighborsOrphansBroken(t *testing.T) {
 			t.Errorf("neighbors lacks %q:\n%s", want, out)
 		}
 	}
-	out = mustRun(t, v, "neighbors", "0007-wal-modu", "--depth", "2")
+	out = mustRun(t, v, "graph", "0007-wal-modu", "--depth", "2") // graph is another name for neighbors
 	if !strings.Contains(out, "-> demo/decisions/0003-journal-mode") || !strings.Contains(out, "supersedes") {
 		t.Fatalf("depth 2:\n%s", out)
 	}
 	if out := mustRun(t, v, "orphans"); !strings.Contains(out, "demo/stack") {
-		t.Fatal(out)
-	}
-	os.WriteFile(filepath.Join(v, "Spaces", "main", "demo", "x.md"), []byte("# X\n\nsee [[jwt-exp-timzone]]\n"), 0o644)
-	if out := mustRun(t, v, "broken"); !strings.Contains(out, "[[jwt-exp-timzone]]  did you mean jwt-exp-timezone") {
 		t.Fatal(out)
 	}
 }

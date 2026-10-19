@@ -2,247 +2,16 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/Utku4836/Paragma/internal/addr"
 	"github.com/Utku4836/Paragma/internal/index"
-	"github.com/Utku4836/Paragma/internal/space"
-	"github.com/Utku4836/Paragma/internal/textutil"
-	"github.com/Utku4836/Paragma/internal/ulid"
 	"github.com/spf13/cobra"
 )
 
-// sectionNames are the headings pg writes and recognises, per language.
-// Recognition accepts every language so a vault can mix them.
-var sectionNames = map[string]map[string]string{
-	"goal":      {"en": "Goal", "tr": "Hedef"},
-	"plan":      {"en": "Plan", "tr": "Plan"},
-	"notes":     {"en": "Log", "tr": "Günlük"},
-	"handoff":   {"en": "Handoff", "tr": "Devir"},
-	"symptom":   {"en": "Symptom", "tr": "Belirti"},
-	"cause":     {"en": "Root cause", "tr": "Kök neden"},
-	"fix":       {"en": "Fix", "tr": "Çözüm"},
-	"files":     {"en": "Files", "tr": "Dosyalar"},
-	"context":   {"en": "Context", "tr": "Bağlam"},
-	"decision":  {"en": "Decision", "tr": "Karar"},
-	"options":   {"en": "Alternatives", "tr": "Alternatifler"},
-	"outcome":   {"en": "Consequences", "tr": "Sonuçlar"},
-	"bgoal":     {"en": "Goal", "tr": "Amaç"},
-	"status":    {"en": "Status", "tr": "Durum"},
-	"decisions": {"en": "Decisions", "tr": "Kararlar"},
-	"questions": {"en": "Open questions", "tr": "Açık sorular"},
-	"tasks":     {"en": "Tasks", "tr": "Görevler"},
-}
-
-// extra spellings that count as the same section
-var sectionAliases = map[string][]string{
-	"goal":    {"Amaç", "Objective"},
-	"notes":   {"Notes", "Notlar", "Log"},
-	"handoff": {"Checkpoint"},
-	"plan":    {"Tasks", "Görevler"},
-	"tasks":   {"Plan"},
-	"bgoal":   {"Hedef"},
-}
-
-func (a *app) sec(s *store, key string) string {
-	lang := s.v.Cfg.Lang
-	if lang != "tr" {
-		lang = "en"
-	}
-	return sectionNames[key][lang]
-}
-
-// findSection returns the top-level section of a file whose heading is one of
-// key's spellings (level 2 under a title, or level 1 otherwise).
-func findSection(s *store, f *index.File, key string) *index.Section {
-	secs, err := s.res.Sections(f)
-	if err != nil {
-		return nil
-	}
-	names := map[string]bool{}
-	for _, n := range sectionNames[key] {
-		names[foldName(n)] = true
-	}
-	for _, n := range sectionAliases[key] {
-		names[foldName(n)] = true
-	}
-	for _, sec := range secs {
-		if sec.IsTitle || sec.Level == 0 {
-			continue
-		}
-		if names[foldName(sec.Path)] {
-			return sec
-		}
-	}
-	return nil
-}
-
-func foldName(s string) string { return strings.TrimSpace(textutil.Fold(s)) }
-
-// ---- new ----
-
-// typeDirs are the default folders inside a project, per note type.
-var typeDirs = map[string]string{
-	"note":     "",
-	"concept":  "concepts",
-	"error":    "errors",
-	"decision": "decisions",
-}
-
-func (a *app) newCmd() *cobra.Command {
-	var dir, tags, keywords string
-	c := &cobra.Command{
-		Use:   "new <type> <title> [text|-]",
-		Short: "Create a note from a template: note, concept, error, decision",
-		Long: `Create a note in the current project. Templates: error (symptom, root
-cause, fix, files), decision (numbered ADR: context, decision, alternatives,
-consequences), concept and note (title only). Optional text becomes the
-intro paragraph. --dir is a folder inside the project (created as needed):
-organise the project as you like. Prints the new address. To start a
-project use pg start.`,
-		Example: `pg new note "Webhook signature findings" --dir webhook
-pg new concept "Refresh token rotation"
-pg new decision "Use WAL mode" --tags sqlite`,
-		Args: cobra.MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			typ := strings.ToLower(args[0])
-			d, ok := typeDirs[typ]
-			if !ok {
-				if typ == "project" || typ == "session" {
-					return fail(ExitUsage, "use: pg start <project> --goal \"...\"")
-				}
-				return fail(ExitUsage, "type must be note, concept, error or decision (got %q)", typ)
-			}
-			if dir != "" {
-				d = strings.Trim(filepath.ToSlash(dir), "/")
-				if strings.Contains("/"+d+"/", "/../") {
-					return fail(ExitUsage, "--dir must stay inside the project")
-				}
-			}
-			title := args[1]
-			text, err := a.inputText(args[2:], false)
-			if err != nil {
-				return err
-			}
-			s, err := a.main()
-			if err != nil {
-				return err
-			}
-			p, err := a.writeProject(s)
-			if err != nil {
-				return err
-			}
-			// --dir may already name the project ("payments/webhook")
-			if d == p || strings.HasPrefix(d, p+"/") {
-				d = strings.TrimPrefix(strings.TrimPrefix(d, p), "/")
-			}
-			d = strings.Trim(p+"/"+d, "/")
-			name := slug(title)
-			if typ == "decision" {
-				name = fmt.Sprintf("%04d-%s", nextDecisionNumber(s, p), name)
-				title = fmt.Sprintf("%s: %s", name[:4], title)
-			}
-			var tagList []string
-			for _, t := range splitList([]string{tags}) {
-				tagList = append(tagList, strings.TrimPrefix(t, "#"))
-			}
-			rel := freePath(s, d+"/"+name+".md")
-			lines := withKeywords(a.template(s, typ, title, tagList, text), keywords)
-			return a.withLock(s, func() error {
-				n := newNote(s, rel, lines)
-				if err := a.save(n); err != nil {
-					return err
-				}
-				a.ok(n.addr())
-				if first := a.firstTemplateSection(s, typ); first != "" && !a.dryRun {
-					a.printf("next: pg write %s \"...\"\n", shellQuote(n.addr()+"#"+first))
-				}
-				return nil
-			})
-		},
-	}
-	c.Flags().StringVar(&dir, "dir", "", "folder inside the project (default by type: errors/, decisions/, concepts/)")
-	c.Flags().StringVar(&tags, "tags", "", "comma separated tags")
-	c.Flags().StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language")
-	return c
-}
-
-// nextDecisionNumber numbers decision records per project.
-func nextDecisionNumber(s *store, p string) int {
-	re := regexp.MustCompile(`^(\d{4})-`)
-	maxN := 0
-	for _, f := range s.res.Files() {
-		if !strings.Contains(f.Path, "decisions/") || space.ProjectOf(f.Path) != p {
-			continue
-		}
-		if m := re.FindStringSubmatch(filepath.Base(f.Path)); m != nil {
-			if n, _ := strconv.Atoi(m[1]); n > maxN {
-				maxN = n
-			}
-		}
-	}
-	return maxN + 1
-}
-
-func (a *app) firstTemplateSection(s *store, typ string) string {
-	switch typ {
-	case "error":
-		return a.sec(s, "symptom")
-	case "decision":
-		return a.sec(s, "context")
-	}
-	return ""
-}
-
-// template builds a new note's lines.
-func (a *app) template(s *store, typ, title string, tags []string, text string) []string {
-	layer := map[string]string{"note": "semantic", "concept": "semantic", "error": "episodic", "decision": "episodic", "session": "working", "branch": "working", "project": "working"}[typ]
-	fm := []string{"---", "id: " + ulid.New(), "type: " + typ, "layer: " + layer, "title: " + yamlString(title)}
-	switch typ {
-	case "error":
-		fm = append(fm, "status: active", "seen: 1")
-	case "decision", "session", "branch":
-		fm = append(fm, "status: active")
-	}
-	if len(tags) > 0 {
-		fm = append(fm, "tags: ["+strings.Join(tags, ", ")+"]")
-	}
-	fm = append(fm, "created: "+today())
-	if layer == "semantic" {
-		fm = append(fm, "verified: "+today())
-	}
-	fm = append(fm, "---")
-	lines := append(fm, "# "+title)
-	if text != "" {
-		lines = append(lines, "")
-		lines = append(lines, splitText(text)...)
-	}
-	var secs []string
-	switch typ {
-	case "error":
-		secs = []string{"symptom", "cause", "fix", "files"}
-	case "decision":
-		secs = []string{"context", "decision", "options", "outcome"}
-	}
-	for _, k := range secs {
-		lines = append(lines, "", "## "+a.sec(s, k))
-	}
-	return lines
-}
-
-// yamlString quotes a value when YAML would misread it.
-func yamlString(s string) string {
-	if strings.ContainsAny(s, ":#[]{}&*!|>'\"%@`,") || strings.HasPrefix(s, "-") || strings.HasPrefix(s, "?") {
-		return strconv.Quote(s)
-	}
-	return s
-}
-
-// ---- append / write / insert ----
+// Commands that change part of an existing note: append, write, insert,
+// edit, section add, link, keywords.
 
 func (a *app) appendCmd() *cobra.Command {
 	return &cobra.Command{
@@ -426,8 +195,6 @@ pg insert stack:12 --before "## Runtime"`,
 	return c
 }
 
-// ---- edit (find / replace) ----
-
 func (a *app) editCmd() *cobra.Command {
 	var find, repl string
 	var all bool
@@ -476,8 +243,6 @@ pg edit rules^r002 --find "mock" --replace "fake" --all`,
 	c.Flags().BoolVar(&all, "all", false, "replace every occurrence")
 	return c
 }
-
-// ---- section add ----
 
 func (a *app) sectionCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -534,18 +299,6 @@ pg section add architecture#Layers "Queue" "Workers read from Redis streams."`,
 	})
 	return c
 }
-
-func hasTitle(s *store, f *index.File) bool {
-	secs, _ := s.res.Sections(f)
-	for _, sec := range secs {
-		if sec.IsTitle {
-			return true
-		}
-	}
-	return false
-}
-
-// ---- link ----
 
 func (a *app) linkCmd() *cobra.Command {
 	var kind string
@@ -607,202 +360,46 @@ func shortRef(s *store, f *index.File) string {
 	return f.Addr()
 }
 
-// ---- mv / archive / rm ----
-
-func (a *app) mvCmd() *cobra.Command {
+func (a *app) keywordsCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "mv <addr> <new-name>",
-		Short: "Rename or move a note and rewrite the [[links]] that point to it",
-		Long: `Rename a note. A bare name keeps the directory; a name with "/" is a path
-inside the vault. Every [[link]] to the note is rewritten.`,
-		Example: "pg mv auth-notes auth\npg mv scratch knowledge/concepts/token-rotation",
-		Args:    cobra.ExactArgs(2),
+		Use:   "keywords <addr> <keyword>[, keyword...]",
+		Short: "Add search keywords to a note: synonyms, the other language, words a future search will use",
+		Long: `Add keywords to a note's front matter. They are searched like the
+note's text, so a note written as "database is locked" can also be found
+by "kilitlenme" or "sqlite busy". Use it after a search missed a note that
+existed, or when recording something under one name that others will
+look for under another.`,
+		Example: `pg keywords sqlite-database-locked "kilitlenme, sqlite busy, lock contention"`,
+		Args:    cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, t, err := a.resolve(args[0])
 			if err != nil {
 				return err
 			}
-			if t.Kind != addr.KindFile {
-				return fail(ExitUsage, "mv moves whole notes; give a note address")
-			}
-			dest := strings.TrimSuffix(filepath.ToSlash(args[1]), ".md")
-			if !strings.Contains(dest, "/") {
-				dest = filepath.ToSlash(filepath.Dir(t.File.Path)) + "/" + dest
-			}
-			dest = strings.TrimPrefix(dest, "./") + ".md"
+			add := keywordList(strings.Join(args[1:], ","))
 			return a.withLock(s, func() error {
-				return a.move(s, t.File, dest, true)
-			})
-		},
-	}
-}
-
-// move renames f to dest (vault-relative) and, if rewrite, updates links.
-func (a *app) move(s *store, f *index.File, dest string, rewrite bool) error {
-	dp := filepath.Join(s.v.Root, filepath.FromSlash(dest))
-	if _, err := os.Stat(dp); err == nil {
-		return fail(ExitConflict, "%s already exists", strings.TrimSuffix(dest, ".md"))
-	}
-	// collect links to f before the move, while they still resolve
-	type fix struct {
-		src *index.File
-		old string
-	}
-	var fixes []fix
-	if rewrite {
-		ls, err := s.db.LinksTo(fileKeys(f))
-		if err != nil {
-			return fail(ExitInternal, "%v", err)
-		}
-		seen := map[string]bool{}
-		for _, l := range ls {
-			src, err := s.db.FileByID(l.SrcFile)
-			if err != nil {
-				continue
-			}
-			tt, err := resolveLink(s.res, src, l.Target)
-			if err != nil || tt.File.ID != f.ID {
-				continue
-			}
-			raw := l.Target
-			if i := strings.IndexAny(raw, "#^"); i >= 0 {
-				raw = raw[:i]
-			}
-			if raw == "" || seen[src.Path+"\x00"+raw] {
-				continue
-			}
-			seen[src.Path+"\x00"+raw] = true
-			fixes = append(fixes, fix{src, raw})
-		}
-	}
-	if a.dryRun {
-		a.printf("would move %s -> %s and rewrite %d links\n", f.Addr(), strings.TrimSuffix(dest, ".md"), len(fixes))
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(dp), 0o755); err != nil {
-		return fail(ExitInternal, "%v", err)
-	}
-	if err := os.Rename(filepath.Join(s.v.Root, filepath.FromSlash(f.Path)), dp); err != nil {
-		return fail(ExitInternal, "move: %v", err)
-	}
-	changed := []string{f.Path, dest}
-	newRef := strings.TrimSuffix(filepath.Base(dest), ".md")
-	if err := a.reindex(s, changed...); err != nil {
-		return err
-	}
-	if g, err := s.res.ResolveFile(newRef); err != nil || g.Path != dest {
-		newRef = strings.TrimSuffix(dest, ".md")
-	}
-	updated := map[string]bool{}
-	for _, fx := range fixes {
-		srcPath := fx.src.Path
-		if srcPath == f.Path {
-			srcPath = dest
-		}
-		g, err := s.res.ResolveFile(strings.TrimSuffix(srcPath, ".md"))
-		if err != nil {
-			continue
-		}
-		n, err := a.load(s, g)
-		if err != nil {
-			return err
-		}
-		re := regexp.MustCompile(`\[\[` + regexp.QuoteMeta(fx.old) + `([\]|#^])`)
-		for i, l := range n.lines {
-			n.lines[i] = re.ReplaceAllString(l, "[["+newRef+"$1")
-		}
-		if err := a.save(n); err != nil {
-			return err
-		}
-		updated[srcPath] = true
-	}
-	msg := strings.TrimSuffix(dest, ".md")
-	if len(updated) > 0 {
-		msg += fmt.Sprintf(" (links updated in %d notes)", len(updated))
-	}
-	a.ok(msg)
-	return nil
-}
-
-func (a *app) archiveCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "archive <addr>",
-		Short:   "Move a note to its project's archive/ (kept, searchable with --all, ranked low)",
-		Example: "pg archive old-deploy",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, t, err := a.resolve(args[0])
-			if err != nil {
-				return err
-			}
-			if t.Kind != addr.KindFile {
-				return fail(ExitUsage, "archive works on whole notes")
-			}
-			if space.Archived(t.File.Path) {
-				return fail(ExitValidation, "%s is already archived", t.File.Addr())
-			}
-			return a.withLock(s, func() error { return a.archiveFile(s, t.File) })
-		},
-	}
-}
-
-// archiveFile marks a note archived and moves it under its project's
-// archive/, keeping the rest of its path so links by name keep resolving.
-func (a *app) archiveFile(s *store, f *index.File) error {
-	n, err := a.load(s, f)
-	if err != nil {
-		return err
-	}
-	n.lines = setFront(n.lines, "status", "archived")
-	if err := a.save(n); err != nil {
-		return err
-	}
-	dest := "archive/" + f.Path
-	if p := space.ProjectOf(f.Path); p != "" {
-		dest = p + "/archive/" + strings.TrimPrefix(f.Path, p+"/")
-	}
-	return a.move(s, f, dest, false)
-}
-
-func (a *app) rmCmd() *cobra.Command {
-	var hard bool
-	c := &cobra.Command{
-		Use:     "rm <addr> --hard",
-		Short:   "Delete a note for good (prefer pg archive)",
-		Example: "pg rm scratch --hard",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !hard {
-				return fail(ExitUsage, "rm deletes for good; pass --hard, or keep it with: pg archive %s", args[0])
-			}
-			s, t, err := a.resolve(args[0])
-			if err != nil {
-				return err
-			}
-			if t.Kind != addr.KindFile {
-				return fail(ExitUsage, "rm deletes whole notes; to remove part of one use pg write")
-			}
-			bl, _ := a.backlinks(s, t)
-			return a.withLock(s, func() error {
-				if a.dryRun {
-					a.printf("would delete %s (%d links to it would break)\n", t.File.Addr(), len(bl))
-					return nil
-				}
-				if err := os.Remove(filepath.Join(s.v.Root, filepath.FromSlash(t.File.Path))); err != nil {
-					return fail(ExitInternal, "%v", err)
-				}
-				if err := a.reindex(s, t.File.Path); err != nil {
+				n, err := a.load(s, t.File)
+				if err != nil {
 					return err
 				}
-				msg := "removed " + t.File.Addr()
-				if len(bl) > 0 {
-					msg += fmt.Sprintf(" (%d links to it are now broken)", len(bl))
+				var have []string
+				for _, l := range n.lines {
+					if strings.HasPrefix(l, "keywords:") {
+						have = keywordList(strings.Trim(strings.TrimSpace(strings.TrimPrefix(l, "keywords:")), "[]"))
+						break
+					}
 				}
-				a.ok(msg)
+				all := keywordList(strings.Join(append(have, add...), ","))
+				for i, k := range all {
+					all[i] = strings.Trim(k, `"'`)
+				}
+				n.lines = setFront(n.lines, "keywords", yamlList(all))
+				if err := a.save(n); err != nil {
+					return err
+				}
+				a.ok(t.File.Addr() + " keywords: " + strings.Join(all, ", "))
 				return nil
 			})
 		},
 	}
-	c.Flags().BoolVar(&hard, "hard", false, "really delete the file")
-	return c
 }

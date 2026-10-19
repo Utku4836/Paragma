@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// The root command, help, and argument handling.
+
 // Version is set at build time with -ldflags "-X .../internal/cli.Version=...".
 var Version = "0.1.2-dev (Paragma)"
 
@@ -86,20 +88,16 @@ func (a *app) rootCmd() *cobra.Command {
 	pf.StringVar(&a.textFile, "file", "", "read the text to write from this file (UTF-8 or UTF-16)")
 
 	root.AddCommand(
-		a.setupCmd(), a.statusCmd(), a.reindexCmd(), a.spaceCmd(),
+		a.setupCmd(), a.primeCmd(), a.skillCmd(),
 		a.startCmd(), a.resumeCmd(), a.planCmd(), a.logCmd(), a.decideCmd(), a.checkpointCmd(), a.taskDoneCmd(),
-		a.searchCmd(), a.findCmd(),
-		a.outlineCmd(), a.readCmd(), a.peekCmd(),
-		a.linksCmd(), a.backlinksCmd(),
+		a.projectCmd(), a.taskCmd(),
+		a.contextCmd(), a.searchCmd(), a.findCmd(), a.grepCmd(), a.outlineCmd(), a.readCmd(),
+		a.relatedCmd(), a.linksCmd(), a.backlinksCmd(), a.neighborsCmd(), a.orphansCmd(),
 		a.newCmd(), a.appendCmd(), a.writeCmd(), a.insertCmd(), a.editCmd(), a.sectionCmd(), a.linkCmd(),
-		a.mvCmd(), a.archiveCmd(), a.rmCmd(),
-		a.taskCmd(), a.projectCmd(),
-		a.markCmd(), a.highlightCmd(), a.calloutCmd(), a.unmarkCmd(), a.marksCmd(),
-		a.errorCmd(), a.runCmd(), a.decisionCmd(), a.journalCmd(), a.ruleCmd(), a.promoteCmd(), a.supersedeCmd(),
-		a.verifyCmd(), a.staleCmd(), a.primeCmd(), a.indexCmd(), a.skillCmd(), a.installCmd(), a.hookCmd(),
-		a.grepCmd(), a.recentCmd(), a.doctorCmd(),
-		a.relatedCmd(), a.contextCmd(), a.neighborsCmd("neighbors"), a.graphCmd(), a.orphansCmd(), a.brokenCmd(),
-		a.keywordsCmd(), a.missesCmd(), a.dupesCmd(), a.gcCmd(),
+		a.keywordsCmd(), a.mvCmd(), a.archiveCmd(), a.rmCmd(),
+		a.runCmd(), a.errorCmd(), a.decisionCmd(), a.journalCmd(), a.ruleCmd(), a.promoteCmd(), a.supersedeCmd(),
+		a.markCmd(), a.marksCmd(),
+		a.spaceCmd(), a.statusCmd(), a.reindexCmd(), a.doctorCmd(), a.verifyCmd(), a.staleCmd(), a.dupesCmd(), a.missesCmd(),
 	)
 	root.AddCommand(a.guessedCmds()...)
 	root.SetHelpCommand(a.helpCmd(root))
@@ -110,16 +108,16 @@ func (a *app) rootCmd() *cobra.Command {
 
 // groups is the help index printed by pg help.
 var groups = []struct{ name, cmds string }{
-	{"read", "outline search read peek links backlinks find grep recent index"},
+	{"read", "context search find grep outline read"},
 	{"write", "new append write insert edit section link keywords mv archive rm"},
 	{"project", "start resume plan done log decide checkpoint project list|status|close"},
 	{"task", "task add|list|show|start|done|block|cancel|ask|reopen|note|move|edit|next|claim"},
 	{"error", "run  error record|find|seen|reopen  decision record  journal"},
-	{"rule", "rule add|list  promote supersede verify stale"},
-	{"graph", "related context neighbors graph orphans broken"},
-	{"mark", "mark highlight callout unmark marks"},
+	{"rule", "rule add|list  promote supersede"},
+	{"graph", "related links backlinks neighbors orphans"},
+	{"mark", "mark marks"},
 	{"agent", "setup prime skill"},
-	{"admin", "space list|new|use  status reindex doctor dupes gc misses"},
+	{"admin", "space list|new|use  status reindex doctor verify stale dupes misses"},
 }
 
 func (a *app) helpCmd(root *cobra.Command) *cobra.Command {

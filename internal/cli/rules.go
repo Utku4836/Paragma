@@ -3,10 +3,8 @@ package cli
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Utku4836/Paragma/internal/addr"
 	"github.com/Utku4836/Paragma/internal/index"
@@ -15,157 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ---- decision record ----
-
-func (a *app) decisionCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "decision",
-		Short: "Architecture decision records (ADR): decision record",
-	}
-	var ctx, dec, alts, cons, supersedes, tags, keywords string
-	rec := &cobra.Command{
-		Use:   "record <title> --context TEXT --decision TEXT",
-		Short: "Write a numbered decision record (context, decision, alternatives, consequences)",
-		Example: `pg decision record "WAL mode for SQLite" --context "parallel tests locked the DB" --decision "open with WAL and busy_timeout=5000" --alternatives "serial tests: 3x slower CI"
-pg decision record "Postgres for sessions" --decision "..." --supersedes 0007-redis-sessions`,
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			title := strings.Join(args, " ")
-			if dec == "" {
-				return fail(ExitUsage, "--decision is required: what was decided")
-			}
-			s, err := a.main()
-			if err != nil {
-				return err
-			}
-			p, err := a.writeProject(s)
-			if err != nil {
-				return err
-			}
-			var tagList []string
-			for _, t := range splitList([]string{tags}) {
-				tagList = append(tagList, strings.TrimPrefix(t, "#"))
-			}
-			rel, lines := a.decisionNote(s, p, title, tagList, keywords, ctx, dec, alts, cons)
-			var old *index.File
-			if supersedes != "" {
-				_, t, err := a.resolve(supersedes)
-				if err != nil {
-					return err
-				}
-				old = t.File
-				lines = append(lines, "", "supersedes:: [["+shortRef(s, old)+"]]")
-			}
-			return a.withLock(s, func() error {
-				n := newNote(s, rel, lines)
-				if err := a.save(n); err != nil {
-					return err
-				}
-				if old != nil {
-					if err := a.markSuperseded(s, old, strings.TrimSuffix(rel[strings.LastIndex(rel, "/")+1:], ".md")); err != nil {
-						return err
-					}
-				}
-				a.ok(n.addr())
-				a.suggestLinks(s, n.addr(), title+" "+ctx+" "+dec)
-				return nil
-			})
-		},
-	}
-	f := rec.Flags()
-	f.StringVar(&ctx, "context", "", "why a decision was needed")
-	f.StringVar(&dec, "decision", "", "what was decided")
-	f.StringVar(&alts, "alternatives", "", "options considered and why not")
-	f.StringVar(&cons, "consequences", "", "what follows from it")
-	f.StringVar(&supersedes, "supersedes", "", "earlier decision this replaces")
-	f.StringVar(&tags, "tags", "", "comma separated tags")
-	f.StringVar(&keywords, "keywords", "", "comma separated search words: synonyms, other language")
-	c.AddCommand(rec)
-	return c
-}
-
-// decisionNote builds a numbered decision record for project p.
-func (a *app) decisionNote(s *store, p, title string, tags []string, keywords, ctx, dec, alts, cons string) (string, []string) {
-	num := fmt.Sprintf("%04d", nextDecisionNumber(s, p))
-	lines := withKeywords(a.template(s, "decision", num+": "+title, tags, ""), keywords)
-	for _, kv := range []struct{ key, text string }{{"context", ctx}, {"decision", dec}, {"options", alts}, {"outcome", cons}} {
-		if kv.text != "" {
-			lines = fillSection(lines, "## "+a.sec(s, kv.key), splitText(kv.text))
-		}
-	}
-	return freePath(s, p+"/decisions/"+num+"-"+slug(title)+".md"), lines
-}
-
-// writeDecision saves a decision record (the caller holds the lock).
-func (a *app) writeDecision(s *store, p, title, ctx, dec, alts, cons string) (string, error) {
-	rel, lines := a.decisionNote(s, p, title, nil, "", ctx, dec, alts, cons)
-	n := newNote(s, rel, lines)
-	if err := a.save(n); err != nil {
-		return "", err
-	}
-	return n.addr(), nil
-}
-
-// fillSection puts body right under the heading line in lines.
-func fillSection(lines []string, heading string, body []string) []string {
-	for i, l := range lines {
-		if l == heading {
-			out := append([]string(nil), lines[:i+1]...)
-			out = append(out, body...)
-			return append(out, lines[i+1:]...)
-		}
-	}
-	return lines
-}
-
-// markSuperseded sets status: superseded and superseded_by on an old note.
-func (a *app) markSuperseded(s *store, old *index.File, by string) error {
-	g, err := s.res.ResolveFile(old.Addr())
-	if err != nil {
-		return err
-	}
-	n, err := a.load(s, g)
-	if err != nil {
-		return err
-	}
-	n.lines = setFront(n.lines, "status", "superseded")
-	n.lines = setFront(n.lines, "superseded_by", strconv.Quote("[["+by+"]]"))
-	n.lines = setFront(n.lines, "updated", today())
-	return a.save(n)
-}
-
-func (a *app) journalCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "journal <text|->",
-		Short:   "Add a time-stamped line to the current project's journal (this month)",
-		Example: `pg journal "v0.3 released; migration 0014 ran in prod"`,
-		Args:    cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			text, err := a.inputText(args, true)
-			if err != nil {
-				return err
-			}
-			s, err := a.main()
-			if err != nil {
-				return err
-			}
-			p, err := a.writeProject(s)
-			if err != nil {
-				return err
-			}
-			return a.withLock(s, func() error {
-				j, err := a.journalAppend(s, p, textutil.OneLine(text, 2000))
-				if err != nil {
-					return err
-				}
-				a.ok(j)
-				return nil
-			})
-		},
-	}
-}
-
-// ---- rules ----
+// Project rules (<project>/rules.md) and promoting a fix to a rule.
 
 var reRuleID = regexp.MustCompile(`\^r(\d+)\b`)
 
@@ -390,28 +238,9 @@ than one rule sentence.`,
 				}
 			}
 			srcRef := shortRef(s, t.File) + strings.TrimPrefix(t.Addr(), t.File.Addr())
-			p := space.ProjectOf(t.File.Path)
-			if p == "" {
-				if p, err = a.writeProject(s); err != nil {
-					return err
-				}
-			}
 			return a.withLock(s, func() error {
-				ruleAddr, err := a.addRule(s, p, text, section, srcRef)
+				ruleAddr, err := a.promote(s, t.File, srcRef, text, section)
 				if err != nil {
-					return err
-				}
-				g, err := s.res.ResolveFile(t.File.Addr())
-				if err != nil {
-					return err
-				}
-				n, err := a.load(s, g)
-				if err != nil {
-					return err
-				}
-				link := "promoted:: [[" + ruleAddr + "]]"
-				n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), []string{link})
-				if err := a.save(n); err != nil {
 					return err
 				}
 				a.ok(ruleAddr)
@@ -424,126 +253,28 @@ than one rule sentence.`,
 	return c
 }
 
-func (a *app) supersedeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "supersede <old> <new>",
-		Short:   "Mark a note as replaced by another: old sinks in search, both linked",
-		Example: "pg supersede 0003-journal-mode 0007-wal-mode",
-		Args:    cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, oldT, err := a.resolve(args[0])
-			if err != nil {
-				return err
-			}
-			_, newT, err := a.resolve(args[1])
-			if err != nil {
-				return err
-			}
-			if oldT.File.ID == newT.File.ID {
-				return fail(ExitUsage, "a note cannot supersede itself")
-			}
-			return a.withLock(s, func() error {
-				if err := a.markSuperseded(s, oldT.File, shortRef(s, newT.File)); err != nil {
-					return err
-				}
-				g, err := s.res.ResolveFile(newT.File.Addr())
-				if err != nil {
-					return err
-				}
-				n, err := a.load(s, g)
-				if err != nil {
-					return err
-				}
-				n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), []string{"supersedes:: [[" + shortRef(s, oldT.File) + "]]"})
-				if err := a.save(n); err != nil {
-					return err
-				}
-				a.ok(oldT.File.Addr() + " [superseded by " + newT.File.Addr() + "]")
-				return nil
-			})
-		},
+// promote makes text a rule of src's project, citing srcRef, and links src
+// to the rule with promoted:: (the caller holds the lock).
+func (a *app) promote(s *store, src *index.File, srcRef, text, section string) (string, error) {
+	p := space.ProjectOf(src.Path)
+	if p == "" {
+		var err error
+		if p, err = a.writeProject(s); err != nil {
+			return "", err
+		}
 	}
-}
-
-func (a *app) verifyCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "verify <addr>...",
-		Short:   "You checked it and it is still true: set verified to today",
-		Example: "pg verify stack architecture",
-		Args:    cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, arg := range args {
-				s, t, err := a.resolve(arg)
-				if err != nil {
-					return err
-				}
-				err = a.withLock(s, func() error {
-					n, err := a.load(s, t.File)
-					if err != nil {
-						return err
-					}
-					n.lines = setFront(n.lines, "verified", today())
-					if err := a.save(n); err != nil {
-						return err
-					}
-					a.ok(t.File.Addr() + " verified " + today())
-					return nil
-				})
-				if err != nil {
-					return err
-				}
-			}
-			return nil
-		},
+	ruleAddr, err := a.addRule(s, p, text, section, srcRef)
+	if err != nil {
+		return "", err
 	}
-}
-
-func (a *app) staleCmd() *cobra.Command {
-	var days int
-	c := &cobra.Command{
-		Use:     "stale",
-		Short:   "Semantic notes not verified for a while (default: stale_days from config)",
-		Example: "pg stale\npg stale --days 30",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := a.main()
-			if err != nil {
-				return err
-			}
-			if days <= 0 {
-				days = s.v.Cfg.StaleDays
-			}
-			type row struct {
-				f   *index.File
-				age int
-			}
-			var rows []row
-			for _, f := range s.res.Files() {
-				if !f.Stale(days) {
-					continue
-				}
-				d := f.Verified
-				if d == "" {
-					d = f.Updated
-				}
-				age := 0
-				if t, err := time.Parse("2006-01-02", d[:min(len(d), 10)]); err == nil {
-					age = int(time.Since(t).Hours() / 24)
-				}
-				rows = append(rows, row{f, age})
-			}
-			if len(rows) == 0 {
-				a.println("no results")
-				return errNoResults
-			}
-			sort.Slice(rows, func(i, j int) bool { return rows[i].age > rows[j].age })
-			for _, r := range rows {
-				a.println(join(r.f.Addr(), fmt.Sprintf("verified %s (%dd ago)", r.f.Date(), r.age), textutil.FmtTokens(r.f.Tokens)))
-			}
-			a.println("next: check it, then pg verify <addr> | pg mark <addr> --as stale")
-			return nil
-		},
+	g, err := s.res.ResolveFile(src.Addr()) // the index changed: resolve again
+	if err != nil {
+		return "", err
 	}
-	c.Flags().IntVar(&days, "days", 0, "older than this many days")
-	return c
+	n, err := a.load(s, g)
+	if err != nil {
+		return "", err
+	}
+	n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), []string{"promoted:: [[" + ruleAddr + "]]"})
+	return ruleAddr, a.save(n)
 }

@@ -2,14 +2,12 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Utku4836/Paragma/internal/index"
-	"github.com/Utku4836/Paragma/internal/md"
 	"github.com/Utku4836/Paragma/internal/space"
 	"github.com/Utku4836/Paragma/internal/textutil"
 	"github.com/Utku4836/Paragma/internal/ulid"
@@ -109,38 +107,6 @@ func (a *app) noteForWrite(s *store) (*index.File, error) {
 	return nil, fail(ExitInternal, "could not create %s/%s.md", p, p)
 }
 
-// sectionBody returns the non-blank lines of a section.
-func (a *app) sectionBody(s *store, f *index.File, key string) []string {
-	sec := findSection(s, f, key)
-	if sec == nil {
-		return nil
-	}
-	lines, err := fileLines(s, f)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, l := range sliceLines(lines, sec.Line+1, sec.BodyEnd) {
-		if !isBlank(l) {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
-// appendToSection appends block at the end of section key in n, creating
-// the section (at the end of the note) if it is missing.
-func (a *app) appendToSection(n *note, f *index.File, key string) func(block []string) {
-	return func(block []string) {
-		sec := findSection(n.s, f, key)
-		if sec == nil {
-			n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), append([]string{"## " + a.sec(n.s, key), ""}, block...))
-			return
-		}
-		n.lines, _ = place(n.lines, lastLine(n.lines, sec.Line, sec.BodyEnd), block)
-	}
-}
-
 // appendTo adds block to section key of the current project's note.
 func (a *app) appendTo(key string, block []string) error {
 	s, err := a.main()
@@ -164,8 +130,6 @@ func (a *app) appendTo(key string, block []string) error {
 		return nil
 	})
 }
-
-// ---- commands ----
 
 func (a *app) startCmd() *cobra.Command {
 	var goal, title string
@@ -215,23 +179,14 @@ If the project exists, nothing is created: continue it with pg resume.`,
 					n.lines = setFront(n.lines, "base", h) // where the work began, for pg resume
 				}
 				if len(steps) > 0 {
-					taken := map[string]bool{}
-					var block []string
+					var items []taskItem
 					for _, st := range steps {
 						text, state := stripMarker(strings.TrimSpace(st))
-						tl := md.TaskLine{Marker: "-", State: state}
-						if parsed, ok := md.ParseTaskLine("- [ ] " + text); ok {
-							tl.Task = parsed.Task
-						}
-						tl.ID = newBlockID(s, "t", taken)
-						block = append(block, tl.String())
+						items = append(items, taskItem{text: text, state: state})
 					}
-					for i, l := range n.lines {
-						if l == "## "+a.sec(s, "plan") {
-							n.lines, _ = place(n.lines, i+1, block)
-							break
-						}
-					}
+					block, _ := taskLines(s, items, taskFlags{}, "", "-")
+					at := slices.Index(n.lines, "## "+a.sec(s, "plan"))
+					n.lines, _ = place(n.lines, at+1, block)
 				}
 				if err := a.save(n); err != nil {
 					return err
@@ -515,8 +470,6 @@ func (a *app) printProject(s *store, p string, full bool) error {
 	maxOpen := 8
 	if full {
 		maxOpen = 30
-	}
-	if full {
 		var done []string
 		for _, t := range ts {
 			if t.Closed() {
@@ -815,148 +768,3 @@ func isDatePrefix(s string) bool {
 	_, err := time.Parse("2006-01-02", s)
 	return err == nil
 }
-
-// ---- spaces ----
-
-func (a *app) spaceCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "space",
-		Short: "Spaces (separate memories, like Obsidian vaults): list new use",
-	}
-	list := &cobra.Command{
-		Use:   "list",
-		Short: "Spaces with their project and note counts; * marks the one used here",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := a.main()
-			if err != nil {
-				return err
-			}
-			for _, name := range space.List(a.home()) {
-				mark := " "
-				if name == s.v.Name {
-					mark = "*"
-				}
-				sp, err := space.Open(a.home(), name)
-				if err != nil {
-					continue
-				}
-				ps := sp.Projects()
-				a.printf("%s %s  %d projects%s\n", mark, name, len(ps), projectsHint(ps))
-			}
-			a.printf("home: %s\n", filepath.ToSlash(a.home()))
-			return nil
-		},
-	}
-	newC := &cobra.Command{
-		Use:     "new <name>",
-		Short:   "Create an empty space",
-		Example: "pg space new work",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if space.Exists(a.home(), name) {
-				return fail(ExitConflict, "space %s already exists; use it here: pg space use %s", name, name)
-			}
-			if _, err := space.Create(a.home(), name); err != nil {
-				return fail(ExitUsage, "%v", err)
-			}
-			a.ok("space " + name)
-			a.printf("next: pg space use %s (use it in this directory) | pg --space %s <command>\n", name, name)
-			return nil
-		},
-	}
-	use := &cobra.Command{
-		Use:   "use <name>",
-		Short: "Use this space in the current directory (the git work tree root) from now on",
-		Long: `Map the current directory (the root of its git work tree) to a space;
-pg run anywhere below it uses that space. "pg space use --default <name>"
-changes the space used where nothing is mapped.`,
-		Example: "pg space use work",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if !space.Exists(a.home(), name) {
-				return fail(ExitNotFound, "no space %s (pg space list; pg space new %s)", name, name)
-			}
-			def, _ := cmd.Flags().GetBool("default")
-			reg := space.LoadRegistry(a.home())
-			if def {
-				reg.Default = name
-			} else {
-				reg.Touch(a.workDir()).Space = name
-			}
-			if err := reg.Save(); err != nil {
-				return fail(ExitInternal, "%v", err)
-			}
-			if def {
-				a.ok("default space " + name)
-			} else {
-				a.ok(fmt.Sprintf("space %s for %s", name, filepath.ToSlash(a.workDir())))
-			}
-			return nil
-		},
-	}
-	use.Flags().Bool("default", false, "set the default space instead")
-	c.AddCommand(list, newC, use)
-	return c
-}
-
-func projectsHint(ps []string) string {
-	if len(ps) == 0 {
-		return ""
-	}
-	if len(ps) > 6 {
-		return ": " + strings.Join(ps[:6], ", ") + ", ..."
-	}
-	return ": " + strings.Join(ps, ", ")
-}
-
-// journalAppend adds "- HH:MM text" under today's heading in the project's
-// journal/YYYY-MM.md and returns the day's address.
-func (a *app) journalAppend(s *store, p, text string) (string, error) {
-	return a.journalAppendAt(s, p, now(), text)
-}
-
-// journalAppendAt writes the entry under the day of when.
-func (a *app) journalAppendAt(s *store, p string, when time.Time, text string) (string, error) {
-	month := when.Format("2006-01")
-	rel := "journal/" + month + ".md"
-	if p != "" {
-		rel = p + "/" + rel
-	}
-	day := when.Format("2006-01-02")
-	entry := "- " + when.Format("15:04") + " " + text
-	var n *note
-	if f, err := s.res.ResolveFile(strings.TrimSuffix(rel, ".md")); err == nil && f.Path == rel {
-		if n, err = a.load(s, f); err != nil {
-			return "", err
-		}
-	} else {
-		n = newNote(s, rel, []string{"---", "type: journal", "layer: episodic", "---", "# " + month})
-	}
-	at := -1
-	for i, l := range n.lines {
-		if strings.TrimSpace(l) == "## "+day {
-			at = i + 1
-		}
-	}
-	if at < 0 {
-		n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), []string{"## " + day, "", entry})
-	} else {
-		end := len(n.lines)
-		for i := at; i < len(n.lines); i++ {
-			if isHeadingLine(n.lines[i]) {
-				end = i
-				break
-			}
-		}
-		n.lines, _ = place(n.lines, lastLine(n.lines, at, end), []string{entry})
-	}
-	if err := a.save(n); err != nil {
-		return "", err
-	}
-	return strings.TrimSuffix(rel, ".md") + "#" + day, nil
-}
-
-var _ = os.Getenv

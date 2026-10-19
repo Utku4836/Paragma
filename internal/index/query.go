@@ -14,7 +14,7 @@ import (
 // File is one indexed Markdown file.
 type File struct {
 	ID       int64
-	Path     string // relative to the vault root, slash separated, with .md
+	Path     string // relative to the space root, slash separated, with .md
 	ULID     string
 	Type     string
 	Layer    string

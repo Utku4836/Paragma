@@ -279,7 +279,7 @@ func LayerOf(typ string) string {
 		return "episodic"
 	case "rule", "concept":
 		return "semantic"
-	case "project", "session", "branch":
+	case "project":
 		return "working"
 	}
 	return ""

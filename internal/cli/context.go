@@ -1,16 +1,17 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
+	"regexp"
 	"sort"
 	"strings"
-	"time"
 
+	"github.com/Utku4836/Paragma/internal/addr"
 	"github.com/Utku4836/Paragma/internal/index"
+	"github.com/Utku4836/Paragma/internal/md"
 	"github.com/Utku4836/Paragma/internal/space"
 	"github.com/Utku4836/Paragma/internal/textutil"
+	"github.com/spf13/cobra"
 )
 
 // The context pack is built so that the agent does not need to ask again:
@@ -25,52 +26,281 @@ const wholeNoteTokens = 300
 // them printed; a bigger one gets the matching rules and an index of the rest.
 const allRulesTokens = 1200
 
-// ---- what was already shown in this conversation ----
-
-// shown remembers what pg printed recently (rules in a context pack, rule
-// reminders after pg run) so it is not repeated in the same conversation.
-// pg prime, run at the start of a conversation, forgets everything.
-type shown map[string]int64
-
-const shownWindow = 30 * time.Minute
-
-func loadShown(s *store) shown {
-	m := shown{}
-	if b, err := os.ReadFile(s.v.Meta("shown.json")); err == nil {
-		json.Unmarshal(b, &m)
-	}
-	return m
+type ctxItem struct {
+	f     *index.File
+	addr  string
+	from  int // line range to print
+	to    int
+	score float64
+	why   string
 }
 
-func (m shown) recent(key string, window time.Duration) bool {
-	t, ok := m[key]
-	return ok && time.Since(time.Unix(t, 0)) < window
-}
-
-func (m shown) mark(key string) { m[key] = time.Now().Unix() }
-
-func (a *app) saveShown(s *store, m shown) {
-	if a.dryRun {
-		return
-	}
-	cut := time.Now().Add(-24 * time.Hour).Unix()
-	for k, t := range m {
-		if t < cut {
-			delete(m, k)
+// keyRange is the part of a note that carries its point: an error's fix, a
+// decision's decision, a project's goal, else the note's opening text.
+func (a *app) keyRange(s *store, f *index.File) (string, int, int) {
+	key := map[string]string{"error": "fix", "decision": "decision", "project": "goal"}[f.Type]
+	if key != "" {
+		if sec := findSection(s, f, key); sec != nil {
+			return f.Addr() + "#" + sec.Path, sec.Line, sec.BodyEnd
 		}
 	}
-	if b, err := json.Marshal(m); err == nil {
-		space.WriteFileAtomic(s.v.Meta("shown.json"), b)
+	secs, _ := s.res.Sections(f)
+	for _, sec := range secs {
+		if sec.Level == 0 || sec.IsTitle {
+			if sec.BodyEnd > sec.Line || sec.Level == 0 {
+				return f.Addr(), sec.Line, sec.BodyEnd
+			}
+		}
 	}
+	if len(secs) > 1 {
+		return f.Addr() + "#" + secs[1].Path, secs[1].Line, secs[1].BodyEnd
+	}
+	return f.Addr(), f.BodyLine, f.NLines
 }
 
-func (a *app) forgetShown(s *store) {
-	if !a.dryRun {
-		os.Remove(s.v.Meta("shown.json"))
+func (a *app) contextCmd() *cobra.Command {
+	var budget int
+	c := &cobra.Command{
+		Use:   "context <topic|addr|code path>",
+		Short: "One call for everything memory knows about a topic: best sections plus linked fixes, decisions and rules",
+		Long: `Collect what memory knows about a topic in one output, within a token
+budget: the best search hits, the notes they link to (fixes, decisions,
+superseded and promoted notes), and for a code path the rules and errors
+about that file. Use it instead of several search + read calls. Items that
+did not fit are listed at the end with their cost.`,
+		Example: `pg context "refund window"
+pg context payments/refund.go --budget 400
+pg context sqlite-database-locked`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := strings.Join(args, " ")
+			s, err := a.main()
+			if err != nil {
+				return err
+			}
+			if budget <= 0 {
+				budget = a.budgetOr(1000)
+			}
+			items := a.gatherContext(s, q)
+			if len(items) == 0 {
+				recordMiss(s, "context", q)
+				a.println("no results")
+				a.searchHint(s, q)
+				return errNoResults
+			}
+			return a.printContext(s, q, items, budget)
+		},
 	}
+	c.Flags().IntVar(&budget, "budget", 0, "token budget for the topic part of the pack (default 1000)")
+	return c
 }
 
-// ---- rendering ----
+// gatherContext ranks the sections worth reading for q.
+func (a *app) gatherContext(s *store, q string) []ctxItem {
+	cand := map[string]*ctxItem{}
+	add := func(it ctxItem) {
+		if cur, ok := cand[it.addr]; ok {
+			if it.score > cur.score {
+				cur.score, cur.why = it.score, it.why
+			} else {
+				cur.score += it.score * 0.2 // reached twice: a little more relevant
+			}
+			return
+		}
+		cand[it.addr] = &it
+	}
+	seedFiles := map[int64]float64{}
+
+	// 1. an exact address
+	if p, err := addr.Parse(q); err == nil && !strings.Contains(q, " ") {
+		if t, err := s.res.Resolve(p); err == nil {
+			ad, from, to := t.Addr(), t.From, t.To
+			if t.Kind == addr.KindFile {
+				ad, from, to = a.keyRange(s, t.File)
+			}
+			add(ctxItem{f: t.File, addr: ad, from: from, to: to, score: 10, why: "asked"})
+			seedFiles[t.File.ID] = 10
+		}
+	}
+	// 2. a code path: notes about that file
+	if len(md.CodeRefs(" "+q+" ")) > 0 && !strings.Contains(strings.TrimSpace(q), " ") {
+		for _, h := range a.relatedNotes(s, []string{a.codePath(q)}, 1.5, false) {
+			from, to := h.line, h.line
+			if t, err := s.res.Resolve(mustParse(h.addr)); err == nil {
+				from, to = t.From, t.To
+			}
+			add(ctxItem{f: h.f, addr: h.addr, from: from, to: to, score: 3 + h.score, why: h.why})
+			seedFiles[h.f.ID] = max(seedFiles[h.f.ID], 3)
+		}
+	}
+	// 3. full-text hits
+	hits, _ := s.db.Search(index.SearchOpts{Query: q, Max: 400})
+	if len(hits) > 0 {
+		// one note per fix: the same error recorded in many packages must
+		// not crowd out everything else
+		seenFix := map[string]bool{}
+		kept := hits[:0]
+		for _, h := range hits {
+			if k := a.fixKey(s, h.File); k != "" {
+				if seenFix[k] {
+					continue
+				}
+				seenFix[k] = true
+			}
+			kept = append(kept, h)
+		}
+		hits = kept
+		// what binds a change ranks above what merely mentions the topic: in
+		// a big memory dozens of error notes say "refund" in passing, the
+		// one rule that governs refunds must not drown among them
+		for i := range hits {
+			w := contextTypeWeight[hits[i].File.Type]
+			if w == 0 {
+				w = 1
+			}
+			hits[i].Score *= w
+		}
+		sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+		hits = hits[:min(len(hits), 10)]
+		s.db.Hydrate(hits)
+		top := hits[0].Score
+		for _, h := range hits {
+			if h.Sec == nil {
+				continue
+			}
+			sc := 5 * h.Score / top
+			seedFiles[h.File.ID] = max(seedFiles[h.File.ID], sc)
+			// a section of rules: take the individual rules that match,
+			// not the whole list
+			if strings.Contains(" "+h.Sec.Kinds+" ", " rule ") {
+				if rules := a.matchingBlocks(s, h.File, h.Sec.Line, h.Sec.BodyEnd, q); len(rules) > 0 {
+					for i, r := range rules {
+						add(ctxItem{f: h.File, addr: r.addr, from: r.from, to: r.to, score: sc * (1 - 0.05*float64(i)), why: "rule matches"})
+					}
+					continue
+				}
+			}
+			ad := hitAddr(h)
+			from, to := h.Sec.Line, h.Sec.BodyEnd
+			if h.Sec.IsTitle || h.Sec.Path == "" {
+				ad, from, to = a.keyRange(s, h.File)
+			}
+			add(ctxItem{f: h.File, addr: ad, from: from, to: to, score: sc, why: "matches"})
+		}
+	}
+	// 4. one hop along links from the strongest seeds
+	type seed struct {
+		id int64
+		sc float64
+	}
+	var seeds []seed
+	for id, sc := range seedFiles {
+		seeds = append(seeds, seed{id, sc})
+	}
+	sort.Slice(seeds, func(i, j int) bool { return seeds[i].sc > seeds[j].sc })
+	for _, sd := range seeds[:min(len(seeds), 4)] {
+		f, err := s.db.FileByID(sd.id)
+		if err != nil {
+			continue
+		}
+		for _, e := range a.edges(s, f) {
+			if e.f.ID == f.ID || e.f.Type == "journal" {
+				continue
+			}
+			w := 0.35
+			if e.kind != "wiki" && e.kind != "md" && e.kind != "embed" {
+				w = 0.55 // typed links (fixes, supersedes, promoted, from) carry more
+			}
+			ad, from, to := e.addr, e.from, e.to
+			if e.whole {
+				ad, from, to = a.keyRange(s, e.f)
+			}
+			add(ctxItem{f: e.f, addr: ad, from: from, to: to, score: sd.sc * w, why: e.kind + " " + e.dir + " " + f.Addr()})
+		}
+	}
+	var out []ctxItem
+	for _, it := range cand {
+		if it.f.Inactive() {
+			it.score *= 0.3
+		}
+		// a whole section of rules, however it was reached: keep only the
+		// rules that match the topic
+		if it.f.Type == "rule" && strings.Contains(it.addr, "#") {
+			if rules := a.matchingBlocks(s, it.f, it.from, it.to, q); len(rules) > 0 {
+				for i, r := range rules {
+					if _, dup := cand[r.addr]; !dup {
+						out = append(out, ctxItem{f: it.f, addr: r.addr, from: r.from, to: r.to, score: it.score * (1 - 0.05*float64(i)), why: it.why})
+					}
+				}
+				continue
+			}
+		}
+		out = append(out, *it)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].score != out[j].score {
+			return out[i].score > out[j].score
+		}
+		return out[i].addr < out[j].addr
+	})
+	return out
+}
+
+type blockRange struct {
+	addr     string
+	from, to int
+}
+
+// matchingBlocks returns the ^id blocks in [from,to] of f whose text shares
+// a word with q, best overlap first.
+func (a *app) matchingBlocks(s *store, f *index.File, from, to int, q string) []blockRange {
+	rows, err := s.db.Query(`SELECT block_id, line, line_end FROM blocks WHERE file_id=? AND line>=? AND line<=? ORDER BY line`, f.ID, from, to)
+	if err != nil {
+		return nil
+	}
+	type cand struct {
+		blockRange
+		hits int
+	}
+	var cs []cand
+	var bs []blockRange
+	for rows.Next() {
+		var b blockRange
+		var id string
+		rows.Scan(&id, &b.from, &b.to)
+		b.addr = f.Addr() + "^" + id
+		bs = append(bs, b)
+	}
+	rows.Close()
+	lines, err := fileLines(s, f)
+	if err != nil {
+		return nil
+	}
+	words := strings.Fields(textutil.Fold(q))
+	for _, b := range bs {
+		text := textutil.Fold(strings.Join(sliceLines(lines, b.from, b.to), " "))
+		n := 0
+		for _, w := range words {
+			if len(w) >= 3 && strings.Contains(text, w) {
+				n++
+			}
+		}
+		if n > 0 {
+			cs = append(cs, cand{b, n})
+		}
+	}
+	sort.SliceStable(cs, func(i, j int) bool { return cs[i].hits > cs[j].hits })
+	var out []blockRange
+	for _, c := range cs[:min(len(cs), 4)] {
+		out = append(out, c.blockRange)
+	}
+	return out
+}
+
+func mustParse(s string) addr.Addr {
+	p, _ := addr.Parse(s)
+	return p
+}
 
 // cleanLine strips callout markers, quote marks and trailing block ids.
 func cleanLine(l string) string {
@@ -80,6 +310,8 @@ func cleanLine(l string) string {
 	}
 	return strings.TrimSpace(reTrailingID.ReplaceAllString(l, ""))
 }
+
+var reTrailingID = regexp.MustCompile(`\s\^[A-Za-z0-9][\w-]*\s*$`)
 
 // sectionText renders lines [from,to] of a note: the heading as a "Name:"
 // prefix, blank lines dropped.
@@ -456,7 +688,7 @@ func (a *app) printProjectRules(s *store, p string, already map[string]bool) int
 // contextTypeWeight scales search scores in a context pack by note type.
 var contextTypeWeight = map[string]float64{
 	"rule": 2.0, "decision": 1.7, "concept": 1.4, "note": 1.2, "project": 1.1,
-	"error": 1.0, "session": 0.6, "journal": 0.5,
+	"error": 1.0, "journal": 0.5,
 }
 
 // fixKey identifies an error note by its fix (words only), so notes that

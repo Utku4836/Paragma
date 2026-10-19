@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Checkbox tasks with ids.
+
 // taskItem is one task to add; level 0 is top level, 1 a subtask, ...
 type taskItem struct {
 	text  string
@@ -99,42 +101,35 @@ func stripMarker(s string) (string, byte) {
 	return s, ' '
 }
 
-// taskHome is where new tasks go by default: the current project's Plan.
-func (a *app) taskHome(s *store) (*index.File, string, error) {
-	f, err := a.noteForWrite(s)
-	if err != nil {
-		return nil, "", err
+// taskLines renders items as new task lines with fresh ids, indented by
+// indent plus one level per item level.
+func taskLines(s *store, items []taskItem, fl taskFlags, indent, marker string) (block, ids []string) {
+	taken := map[string]bool{}
+	for _, it := range items {
+		tl := md.TaskLine{Indent: indent + strings.Repeat("    ", it.level), Marker: marker, State: it.state}
+		if parsed, ok := md.ParseTaskLine("- [ ] " + it.text); ok {
+			tl.Task = parsed.Task
+		}
+		if tl.ID == "" {
+			tl.ID = newBlockID(s, "t", taken)
+		}
+		applyTaskFlags(&tl, fl)
+		block = append(block, tl.String())
+		ids = append(ids, tl.ID)
 	}
-	return f, "plan", nil
+	return block, ids
 }
 
-// addTasks writes tasks into f (at the end of section key, or of the file
-// when key is "") and prints one address per task.
-func (a *app) addTasks(s *store, f *index.File, key string, items []taskItem, fl taskFlags) error {
+// writeTasks adds items to f as new tasks; put inserts the rendered lines
+// into the note. It prints one address per task.
+func (a *app) writeTasks(s *store, f *index.File, items []taskItem, fl taskFlags, indent, marker string, put func(n *note, block []string)) error {
 	return a.withLock(s, func() error {
 		n, err := a.load(s, f)
 		if err != nil {
 			return err
 		}
-		taken := map[string]bool{}
-		var block, ids []string
-		for _, it := range items {
-			tl := md.TaskLine{Indent: strings.Repeat("    ", it.level), Marker: "-", State: it.state}
-			if parsed, ok := md.ParseTaskLine("- [ ] " + it.text); ok {
-				tl.Task = parsed.Task
-			}
-			if tl.ID == "" {
-				tl.ID = newBlockID(s, "t", taken)
-			}
-			applyTaskFlags(&tl, fl)
-			block = append(block, tl.String())
-			ids = append(ids, tl.ID)
-		}
-		if key == "" {
-			n.lines, _ = place(n.lines, lastLine(n.lines, 1, len(n.lines)), block)
-		} else {
-			a.appendToSection(n, f, key)(block)
-		}
+		block, ids := taskLines(s, items, fl, indent, marker)
+		put(n, block)
 		if err := a.save(n); err != nil {
 			return err
 		}
@@ -143,6 +138,12 @@ func (a *app) addTasks(s *store, f *index.File, key string, items []taskItem, fl
 		}
 		return nil
 	})
+}
+
+// addTasks appends tasks at the end of section key of f (created if
+// missing).
+func (a *app) addTasks(s *store, f *index.File, key string, items []taskItem, fl taskFlags) error {
+	return a.writeTasks(s, f, items, fl, "", "-", func(n *note, block []string) { a.appendToSection(n, f, key)(block) })
 }
 
 func applyTaskFlags(tl *md.TaskLine, fl taskFlags) {
@@ -166,13 +167,6 @@ func applyTaskFlags(tl *md.TaskLine, fl taskFlags) {
 	}
 }
 
-// ---- locating a task ----
-
-type taskRef struct {
-	t    *addr.Target
-	line md.TaskLine
-}
-
 // findTask resolves "t3f2", "^t3f2" or "note^t3f2" to a task line.
 func (a *app) findTask(s *store, id string) (*addr.Target, error) {
 	raw := strings.TrimSpace(id)
@@ -192,8 +186,6 @@ func (a *app) findTask(s *store, id string) (*addr.Target, error) {
 	}
 	return t, nil
 }
-
-// ---- state changes ----
 
 // changeTasks applies fn to each task id, each in its own locked edit, and
 // prints "ok <addr> [state]" per task.
@@ -395,54 +387,36 @@ pg task add - < tasks.txt`,
 				if err != nil {
 					return err
 				}
-				return a.withLock(s, func() error {
-					n, err := a.load(s, pt.File)
-					if err != nil {
-						return err
-					}
-					ptl, ok := md.ParseTaskLine(n.lines[pt.From-1])
-					if !ok {
-						return fail(ExitValidation, "%s is not a task", pt.Addr())
-					}
-					taken := map[string]bool{}
-					var block, ids []string
-					for _, it := range items {
-						tl := md.TaskLine{Indent: ptl.Indent + "    " + strings.Repeat("    ", it.level), Marker: ptl.Marker, State: it.state}
-						if parsed, ok := md.ParseTaskLine("- [ ] " + it.text); ok {
-							tl.Task = parsed.Task
-						}
-						if tl.ID == "" {
-							tl.ID = newBlockID(s, "t", taken)
-						}
-						applyTaskFlags(&tl, fl)
-						block = append(block, tl.String())
-						ids = append(ids, tl.ID)
-					}
+				lines, err := fileLines(s, pt.File)
+				if err != nil {
+					return err
+				}
+				parent, ok := md.ParseTaskLine(lines[pt.From-1])
+				if !ok {
+					return fail(ExitValidation, "%s is not a task", pt.Addr())
+				}
+				// right below the parent's block, one level deeper
+				return a.writeTasks(s, pt.File, items, fl, parent.Indent+"    ", parent.Marker, func(n *note, block []string) {
 					n.lines = replaceRange(n.lines, pt.To+1, pt.To, block)
-					if err := a.save(n); err != nil {
-						return err
-					}
-					for _, id := range ids {
-						a.ok(pt.File.Addr() + "^" + id)
-					}
-					return nil
 				})
 			case to != "":
 				ts, t, err := a.resolve(to)
 				if err != nil {
 					return err
 				}
-				key := ""
-				if t.Kind == addr.KindSection && !t.Section.IsTitle {
-					return a.addTasksAt(ts, t, items, fl)
-				}
-				return a.addTasks(ts, t.File, key, items, fl)
+				return a.writeTasks(ts, t.File, items, fl, "", "-", func(n *note, block []string) {
+					after := lastLine(n.lines, 1, len(n.lines))
+					if t.Kind == addr.KindSection && !t.Section.IsTitle {
+						after = lastLine(n.lines, t.Section.Line, t.Section.BodyEnd)
+					}
+					n.lines, _ = place(n.lines, after, block)
+				})
 			}
-			f, key, err := a.taskHome(s)
+			f, err := a.noteForWrite(s)
 			if err != nil {
 				return err
 			}
-			return a.addTasks(s, f, key, items, fl)
+			return a.addTasks(s, f, "plan", items, fl)
 		},
 	}
 	c.Flags().StringVar(&under, "under", "", "parent task id: add as subtask")
@@ -452,40 +426,6 @@ pg task add - < tasks.txt`,
 	c.Flags().StringSliceVar(&fl.tags, "tag", nil, "tag(s)")
 	return c
 }
-
-// addTasksAt appends tasks at the end of a heading's own text.
-func (a *app) addTasksAt(s *store, t *addr.Target, items []taskItem, fl taskFlags) error {
-	return a.withLock(s, func() error {
-		n, err := a.load(s, t.File)
-		if err != nil {
-			return err
-		}
-		taken := map[string]bool{}
-		var block, ids []string
-		for _, it := range items {
-			tl := md.TaskLine{Indent: strings.Repeat("    ", it.level), Marker: "-", State: it.state}
-			if parsed, ok := md.ParseTaskLine("- [ ] " + it.text); ok {
-				tl.Task = parsed.Task
-			}
-			if tl.ID == "" {
-				tl.ID = newBlockID(s, "t", taken)
-			}
-			applyTaskFlags(&tl, fl)
-			block = append(block, tl.String())
-			ids = append(ids, tl.ID)
-		}
-		n.lines, _ = place(n.lines, lastLine(n.lines, t.Section.Line, t.Section.BodyEnd), block)
-		if err := a.save(n); err != nil {
-			return err
-		}
-		for _, id := range ids {
-			a.ok(t.File.Addr() + "^" + id)
-		}
-		return nil
-	})
-}
-
-// ---- list / show / next ----
 
 var stateFilters = map[string]string{
 	"open":     " /",
@@ -767,8 +707,6 @@ func (a *app) taskNextCmd() *cobra.Command {
 	return c
 }
 
-// ---- note / move / edit / claim ----
-
 func (a *app) taskNoteCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "note <id> <text|->",
@@ -957,5 +895,3 @@ func (a *app) taskClaimCmd() *cobra.Command {
 		},
 	}
 }
-
-var _ = os.Getenv

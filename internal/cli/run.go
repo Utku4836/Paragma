@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-
 	"os/exec"
 	"runtime"
 	"strings"
@@ -19,6 +18,8 @@ import (
 	"github.com/Utku4836/Paragma/internal/textutil"
 	"github.com/spf13/cobra"
 )
+
+// pg run: run a command and, when it fails, print the known fix.
 
 // tailBuffer keeps the last max bytes written to it.
 type tailBuffer struct {

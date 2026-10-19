@@ -58,8 +58,8 @@ func onPath(names ...string) bool {
 	return false
 }
 
-// all lists every agent pg knows, installed or not.
-func all() []*Agent {
+// Known returns every agent pg can set up, installed or not.
+func Known() []*Agent {
 	h := home()
 	roaming, _ := os.UserConfigDir() // %AppData% on Windows
 	local, _ := os.UserCacheDir()    // %LocalAppData% on Windows
@@ -95,13 +95,10 @@ func all() []*Agent {
 	return []*Agent{claude, codex, ag, oc}
 }
 
-// Known returns every agent pg can set up, installed or not.
-func Known() []*Agent { return all() }
-
 // Installed returns the agents found on this computer.
 func Installed() []*Agent {
 	var out []*Agent
-	for _, a := range all() {
+	for _, a := range Known() {
 		if len(a.Apps) > 0 || exists(a.Home) {
 			if len(a.Apps) == 0 {
 				a.Apps = []string{"CLI"}
@@ -114,7 +111,7 @@ func Installed() []*Agent {
 
 // Find returns the agent with this id (installed or not).
 func Find(id string) *Agent {
-	for _, a := range all() {
+	for _, a := range Known() {
 		if a.ID == strings.ToLower(id) {
 			return a
 		}
@@ -167,7 +164,7 @@ func cleanDir(d string) string {
 	return filepath.Clean(filepath.FromSlash(d))
 }
 
-/// ---- Claude Code: ~/.claude/projects/<folder>/<session>.jsonl ----
+// ---- Claude Code: ~/.claude/projects/<folder>/<session>.jsonl ----
 
 func claudeConversations(a *Agent) []Conversation {
 	files, _ := filepath.Glob(filepath.Join(a.Home, "projects", "*", "*.jsonl"))
@@ -326,11 +323,13 @@ func opencodeConversations(a *Agent) []Conversation {
 	}
 	defer db.Close()
 	var out []Conversation
+	// newer versions keep sessions in session_v2; older ones in session
 	for _, table := range []string{"session_v2", "session"} {
 		rows, err := db.Query(`SELECT COALESCE(title,''), directory, time_updated FROM ` + table + ` WHERE parent_id IS NULL`)
 		if err != nil {
 			continue
 		}
+		defer rows.Close()
 		for rows.Next() {
 			var t, dir string
 			var up int64
@@ -338,7 +337,7 @@ func opencodeConversations(a *Agent) []Conversation {
 				out = append(out, Conversation{Title: t, Dir: cleanDir(dir), Updated: time.UnixMilli(up)})
 			}
 		}
-		rows.Close()
+		return out
 	}
 	return out
 }

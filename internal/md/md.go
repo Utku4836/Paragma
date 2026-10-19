@@ -359,7 +359,7 @@ func (d *Doc) parseLines(code []bool) {
 			start, end := d.blockExtent(i, code)
 			// a line holding only "^id" labels the block above it
 			if strings.TrimSpace(clean) == "^"+id && i > 0 {
-				start, end = d.blockExtent(i-1, code)
+				start, _ = d.blockExtent(i-1, code)
 				end = ln
 			}
 			d.Blocks = append(d.Blocks, Block{ID: id, Line: start, End: end, Section: sec})
