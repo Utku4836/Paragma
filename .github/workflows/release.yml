@@ -53,6 +53,7 @@ jobs:
           if [ -z "$NODE_AUTH_TOKEN" ]; then echo "NPM_TOKEN not set: npm publish skipped"; exit 0; fi
           cd npm
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
-          cp ../README.md README.md
+          # npm does not resolve the README's relative image paths
+          sed 's#src="\.github/#src="https://raw.githubusercontent.com/Utku4836/Paragma/main/.github/#' ../README.md > README.md
           if npm view "paragma@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then echo "already on npm"; exit 0; fi
           npm publish --access public
