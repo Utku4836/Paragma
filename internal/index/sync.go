@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,9 +41,15 @@ type dbFile struct {
 	hash  string
 }
 
+// bulkMin is the number of changed notes from which a sync rebuilds the
+// full-text tables in one pass instead of updating them row by row (the
+// first indexing of a space, a reindex, a large import).
+const bulkMin = 100
+
 // Sync brings the index up to date with the Markdown files on disk. Unchanged
 // files cost one stat each; no write transaction is opened when nothing
-// changed.
+// changed. Several pg processes may sync at once: the write transaction
+// waits for the others, and what they already indexed is not redone.
 func (d *DB) Sync() (SyncStats, error) {
 	start := time.Now()
 	var st SyncStats
@@ -55,34 +63,35 @@ func (d *DB) Sync() (SyncStats, error) {
 		return st, err
 	}
 	st.Files = len(disk)
-
 	known := make(map[string]dbFile, len(files))
 	for _, f := range files {
 		known[f.Path] = dbFile{f.ID, f.Mtime, f.Size, f.Hash}
 	}
-
-	var changed []string
-	for rel, df := range disk {
-		if k, ok := known[rel]; !ok || k.mtime != df.mtime || k.size != df.size {
-			changed = append(changed, rel)
-		}
-	}
-	var removed []string
-	for rel := range known {
-		if _, ok := disk[rel]; !ok {
-			removed = append(removed, rel)
-		}
-	}
-	if len(changed) == 0 && len(removed) == 0 {
+	if changed, removed := diffDisk(disk, known); len(changed) == 0 && len(removed) == 0 {
 		st.Elapsed = time.Since(start)
 		return st, nil
 	}
 
-	tx, err := d.Begin()
-	if err != nil {
+	var tx *sql.Tx // immediate: waits while another pg process writes
+	if err := retryBusy(func() (err error) { tx, err = d.Begin(); return err }); err != nil {
 		return st, err
 	}
 	defer tx.Rollback()
+	// another process may have indexed the same changes while this one waited
+	if known, err = loadKnown(tx); err != nil {
+		return st, err
+	}
+	changed, removed := diffDisk(disk, known)
+	if len(changed) == 0 && len(removed) == 0 {
+		st.Elapsed = time.Since(start)
+		return st, nil
+	}
+	bulk := len(changed) >= bulkMin
+	if bulk {
+		if _, err := tx.Exec(`DROP TRIGGER IF EXISTS sections_ai; DROP TRIGGER IF EXISTS sections_ad`); err != nil {
+			return st, err
+		}
+	}
 	w, err := newWriter(tx, d.V)
 	if err != nil {
 		return st, err
@@ -94,24 +103,29 @@ func (d *DB) Sync() (SyncStats, error) {
 		}
 		st.Removed++
 	}
-	for _, rel := range changed {
-		src, err := os.ReadFile(filepath.Join(d.V.Root, filepath.FromSlash(rel)))
-		if err != nil {
+	for p := range parseAll(d.V.Root, changed, known) {
+		if p.err != nil {
 			continue // vanished between walk and read
 		}
-		h := hashBytes(src)
-		df := disk[rel]
-		if k, ok := known[rel]; ok && k.hash == h {
+		df := disk[p.rel]
+		k, isKnown := known[p.rel]
+		if isKnown && k.hash == p.hash {
 			if _, err := tx.Exec(`UPDATE files SET mtime=?, size=? WHERE id=?`, df.mtime, df.size, k.id); err != nil {
 				return st, err
 			}
 			st.Touched++
 			continue
 		}
-		if err := w.writeFile(rel, src, df.mtime, df.size, h); err != nil {
+		if err := w.writeFile(p.rel, p.src, p.doc, df.mtime, df.size, p.hash, isKnown); err != nil {
 			return st, err
 		}
 		st.Changed++
+	}
+	if bulk {
+		if _, err := tx.Exec(`INSERT INTO sections_fts(sections_fts) VALUES('rebuild');
+			INSERT INTO sections_tri(sections_tri) VALUES('rebuild');` + ftsTriggers); err != nil {
+			return st, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return st, err
@@ -119,6 +133,86 @@ func (d *DB) Sync() (SyncStats, error) {
 	d.files = nil // reload on next use
 	st.Elapsed = time.Since(start)
 	return st, nil
+}
+
+// diffDisk lists the notes whose mtime or size differ from the index, and
+// the indexed notes that are gone from disk.
+func diffDisk(disk map[string]diskFile, known map[string]dbFile) (changed, removed []string) {
+	for rel, df := range disk {
+		if k, ok := known[rel]; !ok || k.mtime != df.mtime || k.size != df.size {
+			changed = append(changed, rel)
+		}
+	}
+	for rel := range known {
+		if _, ok := disk[rel]; !ok {
+			removed = append(removed, rel)
+		}
+	}
+	sort.Strings(changed) // a stable order: section ids follow the paths
+	return changed, removed
+}
+
+func loadKnown(tx *sql.Tx) (map[string]dbFile, error) {
+	rows, err := tx.Query(`SELECT id, path, mtime, size, hash FROM files`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	known := map[string]dbFile{}
+	for rows.Next() {
+		var k dbFile
+		var path string
+		if err := rows.Scan(&k.id, &path, &k.mtime, &k.size, &k.hash); err != nil {
+			return nil, err
+		}
+		known[path] = k
+	}
+	return known, rows.Err()
+}
+
+type parsed struct {
+	rel  string
+	src  []byte
+	hash string
+	doc  *md.Doc // nil when the content did not change
+	err  error
+}
+
+// parseAll reads, hashes and parses notes on all cores; results come back in
+// the order of rels so the index is built the same way every time.
+func parseAll(root string, rels []string, known map[string]dbFile) <-chan parsed {
+	out := make(chan parsed, 64)
+	slots := make([]chan parsed, len(rels))
+	for i := range slots {
+		slots[i] = make(chan parsed, 1)
+	}
+	next := make(chan int, len(rels))
+	for i := range rels {
+		next <- i
+	}
+	close(next)
+	for range runtime.NumCPU() {
+		go func() {
+			for i := range next {
+				p := parsed{rel: rels[i]}
+				p.src, p.err = os.ReadFile(filepath.Join(root, filepath.FromSlash(p.rel)))
+				if p.err == nil {
+					p.hash = hashBytes(p.src)
+					if k, ok := known[p.rel]; !ok || k.hash != p.hash {
+						p.doc = md.Parse(p.src)
+					}
+				}
+				slots[i] <- p
+			}
+		}()
+	}
+	go func() {
+		for _, s := range slots {
+			out <- <-s
+		}
+		close(out)
+	}()
+	return out
 }
 
 func hashBytes(b []byte) string {
@@ -190,11 +284,17 @@ func (w *writer) deleteFile(rel string) error {
 	return nil
 }
 
-func (w *writer) writeFile(rel string, src []byte, mtime, size int64, hash string) error {
-	if err := w.deleteFile(rel); err != nil {
-		return err
+// writeFile indexes one note; doc is its parsed form (parsed here when
+// nil), indexed says whether an older version must be deleted first.
+func (w *writer) writeFile(rel string, src []byte, doc *md.Doc, mtime, size int64, hash string, indexed bool) error {
+	if indexed {
+		if err := w.deleteFile(rel); err != nil {
+			return err
+		}
 	}
-	doc := md.Parse(src)
+	if doc == nil {
+		doc = md.Parse(src)
+	}
 
 	typ := doc.FrontString("type")
 	if typ == "" {
@@ -447,7 +547,7 @@ func (d *DB) IndexFile(rels ...string) error {
 		if err != nil {
 			return err
 		}
-		if err := w.writeFile(rel, src, info.ModTime().UnixNano(), info.Size(), hashBytes(src)); err != nil {
+		if err := w.writeFile(rel, src, nil, info.ModTime().UnixNano(), info.Size(), hashBytes(src), true); err != nil {
 			return err
 		}
 	}
