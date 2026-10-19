@@ -3,7 +3,7 @@ name: Release
 # Push a tag like v0.1.0: builds pg for every platform, attaches the binaries
 # to a GitHub release and publishes the npm package "paragma" with the same
 # version. npm accepts this workflow as a trusted publisher (OIDC), so no
-# token is needed; an NPM_TOKEN secret, if set, is used as a fallback.
+# token is needed. A tag with a suffix (v0.2.0-rc.1) is a pre-release.
 on:
   push:
     tags: ["v*"]
@@ -42,15 +42,14 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/* --title "Paragma $GITHUB_REF_NAME" --generate-notes
+            pre=""; case "$GITHUB_REF_NAME" in *-*) pre="--prerelease";; esac # v0.2.0-rc.1
+            gh release create "$GITHUB_REF_NAME" dist/* --title "Paragma $GITHUB_REF_NAME" --generate-notes $pre
           fi
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - name: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm install -g npm@latest # trusted publishing needs npm 11.5.1 or later
           v="${GITHUB_REF_NAME#v}"
@@ -66,4 +65,6 @@ jobs:
           npm version "$v" --no-git-tag-version --allow-same-version
           # npm does not resolve the README's relative image paths
           sed 's#src="\.github/#src="https://raw.githubusercontent.com/Utku4836/Paragma/main/.github/#' ../README.md > README.md
-          npm publish --access public
+          # a pre-release goes to the "next" tag, so npm install paragma keeps the last release
+          tag=latest; case "$v" in *-*) tag=next;; esac
+          npm publish --access public --tag "$tag"
