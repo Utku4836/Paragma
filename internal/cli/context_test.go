@@ -273,3 +273,41 @@ func TestReadCode(t *testing.T) {
 		t.Errorf("missing declaration: %d %s", code, errs)
 	}
 }
+
+// A file moved with git keeps its notes: pg related finds notes that name
+// the old path, pg doctor reports them and --fix rewrites the path.
+func TestRenamedFileKeepsItsNotes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	v := copyVault(t)
+	repo := t.TempDir()
+	t.Chdir(repo)
+	git := func(args ...string) {
+		c := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	os.MkdirAll(filepath.Join(repo, "internal", "db"), 0o755)
+	os.WriteFile(filepath.Join(repo, "internal", "db", "open.go"), []byte("package db\n\nfunc Open() {}\n"), 0o644)
+	git("add", "-A")
+	git("commit", "-qm", "db")
+	os.MkdirAll(filepath.Join(repo, "internal", "store"), 0o755)
+	git("mv", "internal/db/open.go", "internal/store/open.go")
+	git("commit", "-qm", "move")
+	out := mustRun(t, v, "related", "internal/store/open.go")
+	if !strings.Contains(out, "demo/errors/sqlite-database-locked") || !strings.Contains(out, "since renamed") {
+		t.Fatalf("related after the rename:\n%s", out)
+	}
+	out, _, _ = run(t, v, "doctor")
+	if !strings.Contains(out, "names internal/db/open.go, renamed to internal/store/open.go") {
+		t.Fatalf("doctor:\n%s", out)
+	}
+	run(t, v, "doctor", "--fix")
+	if s := readNote(t, v, "demo/errors/sqlite-database-locked.md"); !strings.Contains(s, "internal/store/open.go") || strings.Contains(s, "internal/db/open.go") {
+		t.Fatalf("note after doctor --fix:\n%s", s)
+	}
+}

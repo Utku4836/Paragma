@@ -68,12 +68,20 @@ func (a *app) relatedNotes(s *store, paths []string, minScore float64, includeIn
 	}
 	best := map[string]relHit{}
 	secCache := map[int64]*index.Section{}
+	moved := a.renames()
 	for _, r := range refs {
 		var sc float64
 		var why string
+		ref := r.Ref
+		if cur, ok := moved[ref]; ok {
+			ref = cur // a note about the file under its old name
+		}
 		for _, p := range paths {
-			if x, w := refScore(r.Ref, p); x > sc {
+			if x, w := refScore(ref, p); x > sc {
 				sc, why = x, w
+				if ref != r.Ref {
+					why += " (as " + r.Ref + ", since renamed)"
+				}
 			}
 		}
 		if sc < minScore {

@@ -130,7 +130,7 @@ func TestAgentIntegration(t *testing.T) {
 	if !strings.Contains(out, "projects: auth-refactor (1 notes, tasks 2/7), *demo") {
 		t.Errorf("prime lacks the session:\n%s", out)
 	}
-	if n := textutil.Tokens(skillBody); n > 500 {
+	if n := textutil.Tokens(skillBody); n > 300 {
 		t.Errorf("skill is %d tokens", n)
 	}
 	// setup writes the section once, after what the file already holds

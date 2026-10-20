@@ -150,3 +150,38 @@ func (a *app) printCodeChanges(base string) {
 		a.println(line)
 	}
 }
+
+// renames maps the old paths of files git saw renamed to their current
+// paths (lower case, like the code references in notes), following chains
+// of renames, so notes about a file follow it when it moves.
+func (a *app) renames() map[string]string {
+	if a.renamed != nil {
+		return a.renamed
+	}
+	a.renamed = map[string]string{}
+	if _, err := os.Stat(filepath.Join(a.workDir(), ".git")); err != nil {
+		return a.renamed
+	}
+	var pairs [][2]string
+	for _, l := range strings.Split(a.gitOut("log", "-M", "--diff-filter=R", "--name-status", "--format=", "-n", "500"), "\n") {
+		f := strings.Split(strings.TrimSpace(l), "\t")
+		if len(f) == 3 && strings.HasPrefix(f[0], "R") {
+			pairs = append(pairs, [2]string{strings.ToLower(f[1]), strings.ToLower(f[2])})
+		}
+	}
+	for i := len(pairs) - 1; i >= 0; i-- { // oldest first
+		old, cur := pairs[i][0], pairs[i][1]
+		for k, v := range a.renamed {
+			if v == old {
+				a.renamed[k] = cur
+			}
+		}
+		a.renamed[old] = cur
+	}
+	for old, cur := range a.renamed {
+		if old == cur {
+			delete(a.renamed, old)
+		}
+	}
+	return a.renamed
+}

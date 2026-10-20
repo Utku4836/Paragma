@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -172,6 +173,59 @@ missing ids. Exit 6 when problems remain.`,
 					}
 					problems = append(problems, p)
 				}
+			}
+			// code references to files git has renamed since the note was written
+			type stale struct {
+				f         *index.File
+				line      int
+				old, path string
+			}
+			var stales []stale
+			if moved := a.renames(); len(moved) > 0 {
+				refs, _ := s.db.CodeRefs()
+				for _, r := range refs {
+					if cur, ok := moved[r.Ref]; ok {
+						if f, err := s.db.FileByID(r.FileID); err == nil && !f.Inactive() {
+							stales = append(stales, stale{f, r.Line, r.Ref, cur})
+						}
+					}
+				}
+			}
+			if fix && len(stales) > 0 {
+				err := a.withLock(s, func() error {
+					byFile := map[int64][]stale{}
+					for _, x := range stales {
+						byFile[x.f.ID] = append(byFile[x.f.ID], x)
+					}
+					for _, xs := range byFile {
+						g, err := s.res.ResolveFile(xs[0].f.Addr())
+						if err != nil {
+							continue
+						}
+						n, err := a.load(s, g)
+						if err != nil {
+							return err
+						}
+						for _, x := range xs {
+							if x.line >= 1 && x.line <= len(n.lines) {
+								re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(x.old))
+								n.lines[x.line-1] = re.ReplaceAllString(n.lines[x.line-1], x.path)
+							}
+						}
+						if err := a.save(n); err != nil {
+							return err
+						}
+					}
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+				a.ok(fmt.Sprintf("updated %d references to renamed files", len(stales)))
+				stales = nil
+			}
+			for _, x := range stales {
+				problems = append(problems, fmt.Sprintf("%s:%d  names %s, renamed to %s (pg doctor --fix updates it)", x.f.Addr(), x.line, x.old, x.path))
 			}
 			if fix && len(missing) > 0 {
 				err := a.withLock(s, func() error {

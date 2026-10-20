@@ -66,6 +66,7 @@ Re-running replaces Paragma's section; the rest of the file is kept.`,
 				a.printf("would write Paragma's section to %s\n", filepath.ToSlash(path))
 				return nil
 			}
+			a.ensureSkills()
 			changed, err := installSection(path)
 			if err != nil {
 				return fail(ExitInternal, "%v", err)

@@ -64,6 +64,11 @@ func (a *app) printBrief(s *store, p string, f *index.File) {
 		return
 	}
 	text := strings.Join(a.sectionBody(s, f, "goal"), " ")
+	for _, l := range a.sectionBody(s, f, "log") { // a goal changed later comes first
+		if _, g, ok := strings.Cut(l, "goal now: "); ok {
+			text = g + " " + text
+		}
+	}
 	if ts, err := s.db.Tasks(f.ID); err == nil {
 		for _, t := range ts {
 			if !t.Closed() {

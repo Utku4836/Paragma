@@ -1,24 +1,12 @@
 <!-- paragma:start -->
 ## Memory (Paragma)
 
-Memory lives in `pg` (Paragma): project notes, rules, decisions, past errors and their fixes. Pull only what you need, through pg; do not open its files.
+Memory lives in `pg` (Paragma): project rules, decisions, past errors and their fixes, work notes. Read it through pg, not by opening its files.
 
-START
-- New conversation: `pg prime`. Continuing earlier work: `pg resume <project>`.
-- The user gives decisions, requirements or a plan, or the work may not end in this conversation: BEFORE writing code, `pg start <project> --goal "..." --step "..." --decision "<each decision, in the user's words>"`. What is not recorded is lost to the next conversation.
-
-FIND
-- Where things are in the code, and the rules and past errors about each file: `pg tree [dir]`, instead of listing and opening files.
-- A topic or task: `pg context "<topic>"` (every matching rule, decision and fix in one call). Before changing a file: `pg related <path>`. An error: `pg error find "<error line>"`. A fact: `pg search "<words>"`, then `pg read <addr>`.
-- Tests and builds through `pg run -- <cmd>`: the known fix on failure, the rules for the files you changed on success.
-
-RECORD (in the current project)
-- Step done: `pg done <id>`. New step: `pg plan "..."`. Finding: `pg log "..."`. New decision from the user: `pg decide "..."`. Rule from the user: `pg rule add "..."`.
-- Fixed a non-obvious error: `pg error record --from-last --cause "..." --fix "..."`.
-- Your own notes: `pg new note "<title>" --dir <folder>`; see the folder with `pg tree --notes`, rename or move notes and folders with `pg mv`.
-- BEFORE your final answer, when anything is left or another conversation may continue: `pg checkpoint "<where it stands, what is next>"`.
-
-RULES
-- Exit code 1: memory has nothing on it; solve it, and record it if it was not obvious.
-- Long text: `-` and stdin, or `--file PATH`. Anything else: `pg help`.
+- Start of a conversation: `pg prime`.
+- Before a task, and whenever the user gives decisions or a plan: `pg start <project> --goal "..." --step "..." --decision "<each decision, in the user's words>"` (it continues the project if it exists; `pg resume <project>` in a new conversation). It prints a brief: the rules, decisions and past fixes for the task, the files it likely touches and the test command. Work from it.
+- Before changing a file: `pg related <file>`. Tests and builds: `pg run -- <command>`.
+- Before your final answer: `pg finish "<what changed, what is next>" --done <ids>`.
+- Exit code 1 means memory has nothing on it.
+- More, when you need it: `pg skill coding` (code, tests, errors), `pg skill projects` (steps, notes, folders), `pg skill knowledge` (rules, decisions, search).
 <!-- paragma:end -->

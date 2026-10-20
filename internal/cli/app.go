@@ -62,6 +62,7 @@ type app struct {
 	heldLock string            // the lock file held for the whole command
 	ctxSkip  int64             // a note printContext leaves out (printed by the caller)
 	again    bool              // --again: print what this conversation was shown before
+	renamed  map[string]string // git renames, old path -> current (see renames)
 }
 
 // errStale: a note changed on disk after this command looked it up (another
@@ -147,6 +148,7 @@ func (a *app) main() (*store, error) {
 	s.project = a.currentProject(s)
 	res.Prefer = s.project
 	a.st = s
+	a.ensureSkills()
 	return s, nil
 }
 

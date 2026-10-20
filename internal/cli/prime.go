@@ -13,49 +13,6 @@ import (
 // What an agent is told: its instructions (pg skill, the section pg setup
 // writes) and the start-of-conversation summary (pg prime).
 
-// skillBody teaches an agent the core loop. It is the single source for
-// pg skill and the section pg setup writes into an agent's instructions
-// file; everything else is learnt from pg help when needed.
-const skillBody = `Memory lives in ` + "`pg`" + ` (Paragma): project notes, rules, decisions, past errors and their fixes. Pull only what you need, through pg; do not open its files.
-
-START
-- New conversation: ` + "`pg prime`" + `. Continuing earlier work: ` + "`pg resume <project>`" + `.
-- The user gives decisions, requirements or a plan, or the work may not end in this conversation: BEFORE writing code, ` + "`pg start <project> --goal \"...\" --step \"...\" --decision \"<each decision, in the user's words>\"`" + `. What is not recorded is lost to the next conversation.
-
-FIND
-- Where things are in the code, and the rules and past errors about each file: ` + "`pg tree [dir]`" + `, instead of listing and opening files.
-- A topic or task: ` + "`pg context \"<topic>\"`" + ` (every matching rule, decision and fix in one call). Before changing a file: ` + "`pg related <path>`" + `. An error: ` + "`pg error find \"<error line>\"`" + `. A fact: ` + "`pg search \"<words>\"`" + `, then ` + "`pg read <addr>`" + `.
-- Tests and builds through ` + "`pg run -- <cmd>`" + `: the known fix on failure, the rules for the files you changed on success.
-
-RECORD (in the current project)
-- Step done: ` + "`pg done <id>`" + `. New step: ` + "`pg plan \"...\"`" + `. Finding: ` + "`pg log \"...\"`" + `. New decision from the user: ` + "`pg decide \"...\"`" + `. Rule from the user: ` + "`pg rule add \"...\"`" + `.
-- Fixed a non-obvious error: ` + "`pg error record --from-last --cause \"...\" --fix \"...\"`" + `.
-- Your own notes: ` + "`pg new note \"<title>\" --dir <folder>`" + `; see the folder with ` + "`pg tree --notes`" + `, rename or move notes and folders with ` + "`pg mv`" + `.
-- BEFORE your final answer, when anything is left or another conversation may continue: ` + "`pg checkpoint \"<where it stands, what is next>\"`" + `.
-
-RULES
-- Exit code 1: memory has nothing on it; solve it, and record it if it was not obvious.
-- Long text: ` + "`-`" + ` and stdin, or ` + "`--file PATH`" + `. Anything else: ` + "`pg help`" + `.
-`
-
-const skillDescription = "Project memory (Paragma). Use at the start of a conversation, when an error may have been seen before, when you need a project rule or past decision, to resume long work, or to record a fix, decision, task or rule."
-
-func skillFile() string {
-	return "---\nname: paragma\ndescription: " + skillDescription + "\n---\n" + skillBody
-}
-
-func (a *app) skillCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "skill",
-		Short: "Print the agent instructions (SKILL.md format, under 400 tokens)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a.stdout.WriteString(skillFile())
-			return nil
-		},
-	}
-}
-
 func (a *app) primeText(s *store) string {
 	var b strings.Builder
 	files := s.res.Files()

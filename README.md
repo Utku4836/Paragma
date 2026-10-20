@@ -71,22 +71,24 @@ The results above were measured with OpenCode, earlier ones with Antigravity. In
 
 ## What the agent does with it
 
-The agent learns these commands from the section `pg setup` writes; `pg help` lists the rest.
+The section `pg setup` writes is short: when to call `pg`. The details are in three skills the agent opens when it needs them, `pg skill coding`, `pg skill projects` and `pg skill knowledge`, also kept as files in `~/.paragma/skills/`. `pg help` lists every command.
 
 ```bash
 pg prime                         # start of a conversation: what memory holds
 pg start payments --goal "Card payments" --step "Webhook" --step "Tests" --decision "Discount before VAT"
+                                 # prints a brief: rules, decisions, past fixes, likely files, test command
 pg tree                          # the code: files, their declarations, the rules and errors about each
 pg related payments/refund.go    # before changing a file: its rules, decisions, past fixes, last commits
 pg context "refund"              # rules, decisions and fixes on a topic, in one call
-pg run -- go test ./...          # on failure: the known fix; on success: rules for the files you changed
+pg read payments/refund.go#Refund  # one function, not the whole file
+pg run -- go test ./...          # failing tests: new, still failing or flaky; the known fix
 pg done t2f4                     # mark a step done; prints the next one in full
-pg checkpoint "where it stands"  # before stopping: a handoff for the next conversation
+pg finish "what changed, next"   # before the final answer: closes steps, checks rules, writes the handoff
 pg resume payments               # in a new conversation: goal, decisions, open steps, changed code
 pg error record --from-last --cause "CRLF checkout" --fix "Normalise line endings before hashing"
 ```
 
-`pg start` on a project that exists continues it. `pg related` without a path lists the files you changed with the rules that apply to them. Notes, folders and whole projects are renamed or moved with `pg mv`, and many `pg` calls can run at once.
+`pg start` on a project that exists continues it. `pg related` without a path lists the files you changed with the rules that apply to them, and notes follow files renamed in git. Notes, folders and whole projects are renamed or moved with `pg mv`, and many `pg` calls can run at once.
 
 ## How it works
 

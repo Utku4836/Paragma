@@ -251,6 +251,9 @@ func (a *app) codeMarks(s *store, files []string) (map[string]memMark, map[strin
 			continue
 		}
 		ref := r.Ref
+		if cur, ok := a.renames()[ref]; ok {
+			ref = cur
+		}
 		switch {
 		case strings.HasPrefix(ref, "pkg:"):
 			for d, orig := range dirs {
