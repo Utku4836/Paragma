@@ -182,3 +182,20 @@ func TestTree(t *testing.T) {
 		}
 	}
 }
+
+// pg related puts binding notes first, says what each note says (an error's
+// fix, a decision's decision) and folds errors that record the same fix.
+func TestRelatedFoldsSameFix(t *testing.T) {
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "demo")
+	for _, sig := range []string{"open: timeout waiting for lock A", "open: timeout waiting for lock B"} {
+		mustRun(t, v, "error", "record", "--sig", sig, "--cause", "no busy timeout", "--fix", "Open with busy_timeout=5000 and retry once", "--files", "internal/db/open.go", "--new")
+	}
+	out := mustRun(t, v, "related", "internal/db/open.go")
+	if strings.Count(out, "fix: Open with busy_timeout=5000 and retry once") != 1 || !strings.Contains(out, "(+1 notes with the same fix)") {
+		t.Errorf("same fix not folded:\n%s", out)
+	}
+	if strings.Index(out, "[error") < strings.Index(out, "demo/architecture") && strings.Contains(out, "[rule]") {
+		t.Errorf("errors before the architecture note:\n%s", out)
+	}
+}

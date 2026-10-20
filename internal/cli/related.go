@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"path"
 	"path/filepath"
 	"sort"
@@ -102,13 +103,15 @@ func (a *app) relatedNotes(s *store, paths []string, minScore float64, includeIn
 	for _, h := range best {
 		out = append(out, h)
 	}
+	// what binds a change comes first: a rule about the package outranks an
+	// old error that names the file
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].score != out[j].score {
-			return out[i].score > out[j].score
-		}
 		ri, rj := typeRank[out[i].f.Type], typeRank[out[j].f.Type]
 		if ri != rj {
 			return ri < rj
+		}
+		if out[i].score != out[j].score {
+			return out[i].score > out[j].score
 		}
 		return out[i].addr < out[j].addr
 	})
@@ -154,24 +157,34 @@ about files in the same directory.`,
 				a.println("no results")
 				return errNoResults
 			}
+			// errors that record the same fix (the same mistake in many places)
+			// are one line: the first, with the others counted
+			sameFix := map[string]int{}
+			firstOf := map[string]string{}
+			var shown []relHit
+			for _, h := range hits {
+				if k := a.fixKey(s, h.f); k != "" {
+					if first, ok := firstOf[k]; ok && first != h.f.Addr() {
+						sameFix[first]++
+						continue
+					}
+					firstOf[k] = h.f.Addr()
+				}
+				shown = append(shown, h)
+			}
 			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
-			cache := map[int64][]string{}
-			for i, h := range hits {
-				lines, ok := cache[h.f.ID]
-				if !ok {
-					lines, _ = fileLines(s, h.f)
-					cache[h.f.ID] = lines
-				}
-				text := ""
-				if h.line >= 1 && h.line <= len(lines) {
-					text = strings.TrimSpace(strings.TrimLeft(lines[h.line-1], " >-*"))
-				}
+			for i, h := range shown {
 				typ := h.f.Type
 				if typ == "note" {
 					typ = ""
 				}
-				if !bw.line(join(h.addr, meta(typ, statusWord(h.f)), h.why)) || (text != "" && !bw.line("  "+textutil.OneLine(text, 150))) {
-					a.printf("... %d more; pg related %s --json for all\n", len(hits)-i, strings.Join(args, " "))
+				head := join(h.addr, meta(typ, statusWord(h.f)), h.why)
+				if n := sameFix[h.f.Addr()]; n > 0 {
+					head += fmt.Sprintf("  (+%d notes with the same fix)", n)
+				}
+				text := a.relatedText(s, h)
+				if !bw.line(head) || (text != "" && !bw.line("  "+text)) {
+					a.printf("... %d more; pg related %s --json for all\n", len(shown)-i, strings.Join(args, " "))
 					break
 				}
 			}
@@ -181,6 +194,26 @@ about files in the same directory.`,
 	c.Flags().BoolVar(&loose, "loose", false, "also notes about other files in the same directory")
 	c.Flags().BoolVar(&all, "all", false, "include archived and superseded notes")
 	return c
+}
+
+// relatedText is what a related hit says, so it needs no pg read: an
+// error's fix, a decision's decision, else the line that names the code.
+func (a *app) relatedText(s *store, h relHit) string {
+	switch h.f.Type {
+	case "error":
+		if _, fix := a.fixText(s, h.f, 220); fix != "" {
+			return "fix: " + fix
+		}
+	case "decision":
+		if d := a.sectionBody(s, h.f, "decision"); len(d) > 0 {
+			return "decision: " + textutil.OneLine(strings.Join(d, " "), 220)
+		}
+	}
+	lines, err := fileLines(s, h.f)
+	if err != nil || h.line < 1 || h.line > len(lines) {
+		return ""
+	}
+	return textutil.OneLine(cleanLine(strings.TrimLeft(lines[h.line-1], " -*")), 200)
 }
 
 func statusWord(f *index.File) string {

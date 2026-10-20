@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -169,7 +170,11 @@ func applyTaskFlags(tl *md.TaskLine, fl taskFlags) {
 
 // findTask resolves "t3f2", "^t3f2" or "note^t3f2" to a task line.
 func (a *app) findTask(s *store, id string) (*addr.Target, error) {
-	raw := strings.TrimSpace(id)
+	// marks shells and habits put around an id: %t3f2% (cmd), "t3f2", #t3f2
+	raw := strings.Trim(strings.TrimSpace(id), "%$'\"`,;")
+	if strings.HasPrefix(raw, "#") && reBareID.MatchString(raw[1:]) {
+		raw = raw[1:]
+	}
 	if !strings.ContainsAny(raw, "^#:@") {
 		raw = "^" + raw
 	}
@@ -186,6 +191,9 @@ func (a *app) findTask(s *store, id string) (*addr.Target, error) {
 	}
 	return t, nil
 }
+
+// reBareID is a block id written without its note: t3f2, r004.
+var reBareID = regexp.MustCompile(`^[A-Za-z][\w-]{1,15}$`)
 
 // changeTasks applies fn to each task id, each in its own locked edit, and
 // prints "ok <addr> [state]" per task.

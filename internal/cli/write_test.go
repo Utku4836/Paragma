@@ -49,9 +49,9 @@ func TestProjectFlow(t *testing.T) {
 	if len(plan) != 3 {
 		t.Fatalf("plan ids: %v\n%s", plan, out)
 	}
-	// starting it again does not overwrite it
-	if _, errs, code := run(t, v, "start", "payment-flow"); code != ExitConflict || !strings.Contains(errs, "pg resume payment-flow") {
-		t.Fatalf("second start: exit %d %s", code, errs)
+	// starting it again continues it, changing nothing when nothing is given
+	if out := mustRun(t, v, "start", "payment-flow"); !strings.Contains(out, "payment-flow continued") || !strings.Contains(out, "tasks 0/3") {
+		t.Fatalf("second start:\n%s", out)
 	}
 	sub := ids(mustRun(t, v, "task", "add", "Retry logic", "--under", plan[0]))[0]
 	mustRun(t, v, "task", "note", sub, "use exponential backoff")
@@ -109,6 +109,41 @@ func TestProjectFlow(t *testing.T) {
 	}
 	if d := mustRun(t, v, "find", "--type", "decision", "--title", "discount"); !strings.Contains(d, "payment-flow/decisions/0001-discount-before-vat") {
 		t.Fatalf("decision record from the project: %s", d)
+	}
+}
+
+// pg start on a project that exists continues it and adds what it brings;
+// a name that swallowed the goal (a shell split the quotes) is refused.
+func TestStartContinues(t *testing.T) {
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	first := ids(mustRun(t, v, "start", "billing", "--goal", "Invoices", "--step", "Model"))
+	out := mustRun(t, v, "start", "Billing", "--goal", "Invoices and credit notes", "--step", "PDF export", "--decision", "Amounts in kurus (user)")
+	for _, want := range []string{"ok billing continued", "2 added", "project: billing", "Amounts in kurus (user)", "PDF export", "^" + first[0]} {
+		if !strings.Contains(out, want) {
+			t.Errorf("continued start lacks %q:\n%s", want, out)
+		}
+	}
+	body := readNote(t, v, "billing/billing.md")
+	for _, want := range []string{"- [ ] Model ^" + first[0], "- [ ] PDF export ^", "Amounts in kurus (user)", "goal now: Invoices and credit notes", "## Goal\nInvoices\n"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("billing.md lacks %q:\n%s", want, body)
+		}
+	}
+	// by title: the sample project "Auth refactor"
+	if out := mustRun(t, v, "start", "Auth refactor"); !strings.Contains(out, "auth-refactor continued") {
+		t.Fatalf("start by title:\n%s", out)
+	}
+	if _, errs, code := run(t, v, "start", "billing", "Add", "refunds", "with", "a", "30", "day", "window"); code != ExitUsage || !strings.Contains(errs, "--goal") {
+		t.Fatalf("long name: %d %s", code, errs)
+	}
+	// task ids as shells and habits write them
+	mustRun(t, v, "resume", "billing")
+	plan := ids(mustRun(t, v, "plan", "a", "b", "c"))
+	for i, id := range []string{"%" + plan[0] + "%", "#" + plan[1], `"` + plan[2] + `"`} {
+		if out := mustRun(t, v, "done", id); !strings.Contains(out, "^"+plan[i]+" [x]") {
+			t.Errorf("done %s:\n%s", id, out)
+		}
 	}
 }
 

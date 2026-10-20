@@ -141,11 +141,18 @@ func (a *app) startCmd() *cobra.Command {
 (Goal, Decisions, Plan, Log, Handoff) and make it the current project of
 this directory. Every --step becomes a task, every --decision a dated line.
 Inside the folder organise notes as you like (pg new <project>/<path> ...).
-If the project exists, nothing is created: continue it with pg resume.`,
+If the project exists (by folder or title) it is continued instead: the new
+--step tasks go to its Plan, the --decision lines to its Decisions, and it
+is printed like pg resume.`,
 		Example: `pg start payments --goal "Card payments with Stripe" --step "Webhook endpoint" --step "Tests" --decision "Discount is applied before VAT"`,
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.Join(args, " ")
+			// text that belonged in --goal arrives as words when a shell split
+			// the quotes; a project name is a few words at most
+			if len(strings.Fields(name)) > 5 || len([]rune(name)) > 48 {
+				return fail(ExitUsage, "%q is too long for a project name (it looks like text meant for --goal); give a short name: pg start <name> --goal \"...\"", textutil.OneLine(name, 80))
+			}
 			p := projectFolder(name)
 			if !space.ValidName(p) {
 				return fail(ExitUsage, "bad project name %q", name)
@@ -154,14 +161,8 @@ If the project exists, nothing is created: continue it with pg resume.`,
 			if err != nil {
 				return err
 			}
-			if s.v.HasProject(p) {
-				msg := fmt.Sprintf("project %s already exists", p)
-				if f := projectNote(s, p); f != nil {
-					ts, _ := s.db.Tasks(f.ID)
-					tc := index.CountTasks(ts, 1, 1<<30)
-					msg += fmt.Sprintf(" (%d/%d tasks, updated %s)", tc.Done, tc.Total, f.Date())
-				}
-				return fail(ExitConflict, "%s; continue it: pg resume %s", msg, p)
+			if ex, err := a.findProject(s, name); err == nil {
+				return a.continueProject(s, ex, goal, steps, decisions)
 			}
 			if title == "" {
 				title = name
@@ -213,6 +214,83 @@ If the project exists, nothing is created: continue it with pg resume.`,
 	c.Flags().StringArrayVar(&steps, "step", nil, "a plan step; repeat for each (each becomes a task)")
 	c.Flags().StringArrayVar(&decisions, "decision", nil, "a decision already made (e.g. by the user); repeatable")
 	return c
+}
+
+// continueProject is pg start on a project that exists: it becomes current,
+// what the call brings is added (decisions, steps, a new goal into the log)
+// and the project is printed as pg resume prints it.
+func (a *app) continueProject(s *store, p, goal string, steps, decisions []string) error {
+	if err := a.setProject(s, p); err != nil {
+		return err
+	}
+	if _, err := a.noteForWrite(s); err != nil {
+		return err
+	}
+	// one section at a time, each on the freshly indexed note, so an
+	// insertion never shifts the lines of the next one
+	edit := func(fn func(n *note, f *index.File)) error {
+		return a.withLock(s, func() error {
+			f := projectNote(s, p)
+			if f == nil {
+				return fail(ExitInternal, "project %s has no note", p)
+			}
+			n, err := a.load(s, f)
+			if err != nil {
+				return err
+			}
+			fn(n, f)
+			return a.save(n)
+		})
+	}
+	added := 0
+	for _, d := range decisions {
+		if strings.TrimSpace(d) == "" {
+			continue
+		}
+		if err := edit(func(n *note, f *index.File) { a.appendToSection(n, f, "decisions")(decisionLine(d)) }); err != nil {
+			return err
+		}
+		added++
+	}
+	if len(steps) > 0 {
+		var items []taskItem
+		for _, st := range steps {
+			if text, state := stripMarker(strings.TrimSpace(st)); text != "" {
+				items = append(items, taskItem{text: text, state: state})
+			}
+		}
+		if err := edit(func(n *note, f *index.File) {
+			block, _ := taskLines(s, items, taskFlags{}, "", "-")
+			a.appendToSection(n, f, "plan")(block)
+		}); err != nil {
+			return err
+		}
+		added += len(items)
+	}
+	if g := strings.TrimSpace(goal); g != "" {
+		f := projectNote(s, p)
+		old := strings.TrimSpace(strings.Join(a.sectionBody(s, f, "goal"), " "))
+		switch {
+		case old == "" || textutil.Fold(old) == textutil.Fold(p):
+			err := edit(func(n *note, f *index.File) { a.appendToSection(n, f, "goal")(splitText(g)) })
+			if err != nil {
+				return err
+			}
+		case textutil.Fold(old) != textutil.Fold(g):
+			err := edit(func(n *note, f *index.File) {
+				a.appendToSection(n, f, "notes")([]string{"- " + today() + " " + clock() + " goal now: " + textutil.OneLine(g, 600)})
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	msg := fmt.Sprintf("%s continued (it exists; current project here)", p)
+	if added > 0 {
+		msg += fmt.Sprintf(", %d added", added)
+	}
+	a.ok(msg)
+	return a.printProject(s, p, true)
 }
 
 func (a *app) resumeCmd() *cobra.Command {
