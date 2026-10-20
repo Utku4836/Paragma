@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -171,6 +172,11 @@ is printed like pg resume.`,
 			}
 			if ex := a.similarProject(s, name); ex != "" {
 				return a.continueProject(s, ex, "~"+name, goal, steps, decisions)
+			}
+			// the work directory's name is a guess, not a name: the work is
+			// this directory's project
+			if s.project != "" && textutil.Fold(name) == textutil.Fold(filepath.Base(a.workDir())) {
+				return a.continueProject(s, s.project, "~"+name, goal, steps, decisions)
 			}
 			prev := s.project // this directory's project before this one
 			if title == "" {

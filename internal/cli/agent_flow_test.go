@@ -101,6 +101,11 @@ func TestStartRepeatsAndSimilarNames(t *testing.T) {
 	if strings.Count(body, "Percent and Fixed") != 1 || strings.Count(body, "At most 50%") != 1 || !strings.Contains(body, "Cart field") {
 		t.Fatalf("cart-discounts.md:\n%s", body)
 	}
+	// the work directory's name means this directory's project
+	wd, _ := os.Getwd()
+	if out := mustRun(t, v, "start", filepath.Base(wd), "--step", "README"); !strings.Contains(out, "cart-discounts continued") {
+		t.Fatalf("work directory name:\n%s", out)
+	}
 	// new work in a directory that was on another project says so
 	if out := mustRun(t, v, "start", "billing", "--goal", "Invoices"); !strings.Contains(out, "this directory was on project cart-discounts") {
 		t.Fatalf("new project:\n%s", out)
