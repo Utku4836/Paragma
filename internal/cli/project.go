@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -162,7 +163,11 @@ is printed like pg resume.`,
 				return err
 			}
 			if ex, err := a.findProject(s, name); err == nil {
-				return a.continueProject(s, ex, goal, steps, decisions)
+				return a.continueProject(s, ex, "", goal, steps, decisions)
+			}
+			// a note of that name inside a project: the work belongs there
+			if f := a.noteNamed(s, name); f != nil {
+				return a.continueProject(s, space.ProjectOf(f.Path), f.Addr(), goal, steps, decisions)
 			}
 			if title == "" {
 				title = name
@@ -219,7 +224,7 @@ is printed like pg resume.`,
 // continueProject is pg start on a project that exists: it becomes current,
 // what the call brings is added (decisions, steps, a new goal into the log)
 // and the project is printed as pg resume prints it.
-func (a *app) continueProject(s *store, p, goal string, steps, decisions []string) error {
+func (a *app) continueProject(s *store, p, viaNote, goal string, steps, decisions []string) error {
 	if err := a.setProject(s, p); err != nil {
 		return err
 	}
@@ -286,11 +291,30 @@ func (a *app) continueProject(s *store, p, goal string, steps, decisions []strin
 		}
 	}
 	msg := fmt.Sprintf("%s continued (it exists; current project here)", p)
+	if viaNote != "" {
+		msg = fmt.Sprintf("%s continued: a note of that name is in this project (pg read %s); current project here", p, viaNote)
+	}
 	if added > 0 {
 		msg += fmt.Sprintf(", %d added", added)
 	}
 	a.ok(msg)
 	return a.printProject(s, p, true)
+}
+
+// noteNamed finds a note inside a project whose file name or title is
+// name (the way pg start <name> is written), nil when there is none.
+func (a *app) noteNamed(s *store, name string) *index.File {
+	want, slugged := textutil.Fold(name), slug(name)
+	for _, f := range s.res.Files() {
+		if space.ProjectOf(f.Path) == "" || f.Inactive() {
+			continue
+		}
+		base := strings.TrimSuffix(path.Base(f.Path), ".md")
+		if base == slugged || textutil.Fold(base) == want || textutil.Fold(f.Title) == want {
+			return f
+		}
+	}
+	return nil
 }
 
 func (a *app) resumeCmd() *cobra.Command {

@@ -199,3 +199,46 @@ func TestRelatedFoldsSameFix(t *testing.T) {
 		t.Errorf("errors before the architecture note:\n%s", out)
 	}
 }
+
+// pg related without a path: the changed files with what binds them; with a
+// path: the notes, then the file's git history.
+func TestRelatedChangesAndHistory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	repo := t.TempDir()
+	t.Chdir(repo)
+	git := func(args ...string) {
+		c := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	os.MkdirAll(filepath.Join(repo, "internal", "db"), 0o755)
+	os.WriteFile(filepath.Join(repo, "internal", "db", "open.go"), []byte("package db\n"), 0o644)
+	git("add", "-A")
+	git("commit", "-qm", "add the database opener")
+	if out := mustRun(t, v, "related"); !strings.Contains(out, "no changed files") {
+		t.Fatalf("clean tree:\n%s", out)
+	}
+	mustRun(t, v, "resume", "demo")
+	mustRun(t, v, "rule", "add", "Open SQLite only through internal/db/open.go", "--section", "Database")
+	os.WriteFile(filepath.Join(repo, "internal", "db", "open.go"), []byte("package db\n\nfunc Open() {}\n"), 0o644)
+	out := mustRun(t, v, "related")
+	for _, want := range []string{"changed in the work tree (git status): 1 files", "M internal/db/open.go", "[rule]: Open SQLite only through internal/db/open.go", "before calling the work done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("related lacks %q:\n%s", want, out)
+		}
+	}
+	out = mustRun(t, v, "related", "internal/db/open.go")
+	if !strings.Contains(out, "history (git log):") || !strings.Contains(out, "add the database opener") {
+		t.Errorf("related lacks the git history:\n%s", out)
+	}
+	if i, j := strings.Index(out, "[rule]"), strings.Index(out, "[error"); i < 0 || (j >= 0 && j < i) {
+		t.Errorf("rules must come before errors:\n%s", out)
+	}
+}

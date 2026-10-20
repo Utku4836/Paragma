@@ -15,10 +15,10 @@ FIND
 RECORD (in the current project)
 - Step done: `pg done <id>`. New step: `pg plan "..."`. Finding: `pg log "..."`. New decision from the user: `pg decide "..."`. Rule from the user: `pg rule add "..."`.
 - Fixed a non-obvious error: `pg error record --from-last --cause "..." --fix "..."`.
-- Your own notes: `pg new note "<title>" --dir <folder>`; see the folder with `pg tree --notes`.
+- Your own notes: `pg new note "<title>" --dir <folder>`; see the folder with `pg tree --notes`, rename or move notes and folders with `pg mv`.
 - BEFORE your final answer, when anything is left or another conversation may continue: `pg checkpoint "<where it stands, what is next>"`.
 
 RULES
-- Exit code 1 means memory has nothing on it: solve it yourself; record it if it was not obvious.
+- Exit code 1: memory has nothing on it; solve it, and record it if it was not obvious.
 - Long text: `-` and stdin, or `--file PATH`. Anything else: `pg help`.
 <!-- paragma:end -->

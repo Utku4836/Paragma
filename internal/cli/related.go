@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -121,18 +122,26 @@ func (a *app) relatedNotes(s *store, paths []string, minScore float64, includeIn
 func (a *app) relatedCmd() *cobra.Command {
 	var loose, all bool
 	c := &cobra.Command{
-		Use:   "related <code path>...",
-		Short: "Rules, decisions and past errors about a source file, before you change it",
-		Long: `List the memory that mentions a code file: rules, decisions and recorded
-errors that name it, its directory or its package (payments.Refund counts
-for payments/...). Run it before editing a file. --loose also lists notes
-about files in the same directory.`,
-		Example: "pg related payments/refund.go\npg related internal/db/open.go cmd/migrate/main.go",
-		Args:    cobra.MinimumNArgs(1),
+		Use:   "related [code path]...",
+		Short: "Rules, decisions and past errors about a source file, and its git history; without a path: the files you changed",
+		Long: `List the memory that mentions a code file: rules and decisions first,
+then recorded errors (each with its fix; errors with the same fix folded)
+and notes, for the file, its directory or its package (payments.Refund
+counts for payments/...), followed by the file's last commits. Run it
+before editing a file. --loose also lists notes about files in the same
+directory.
+Without a path: every file changed in the work tree (git status, and since
+the current project started) with the rules and decisions about it; the
+check before calling the work done.`,
+		Example: "pg related payments/refund.go\npg related internal/db/open.go cmd/migrate/main.go\npg related",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.main()
 			if err != nil {
 				return err
+			}
+			if len(args) == 0 {
+				return a.relatedChanges(s)
 			}
 			var paths []string
 			for _, p := range args {
@@ -154,7 +163,8 @@ about files in the same directory.`,
 				return a.emitJSON(out)
 			}
 			if len(hits) == 0 {
-				a.println("no results")
+				a.println("no notes about it in memory")
+				a.printHistory(args)
 				return errNoResults
 			}
 			// errors that record the same fix (the same mistake in many places)
@@ -188,12 +198,107 @@ about files in the same directory.`,
 					break
 				}
 			}
+			a.printHistory(args)
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&loose, "loose", false, "also notes about other files in the same directory")
 	c.Flags().BoolVar(&all, "all", false, "include archived and superseded notes")
 	return c
+}
+
+// printHistory prints the last commits that touched the given files, the
+// way git log --oneline does (nothing outside a git work tree).
+func (a *app) printHistory(files []string) {
+	root := a.workDir()
+	var rels []string
+	for _, f := range files {
+		if abs, err := filepath.Abs(f); err == nil {
+			if rel, err := filepath.Rel(root, abs); err == nil && !strings.HasPrefix(rel, "..") {
+				rels = append(rels, filepath.ToSlash(rel))
+			}
+		}
+	}
+	if len(rels) == 0 {
+		return
+	}
+	out := strings.TrimSpace(a.gitOut(append([]string{"log", "-n", "5", "--date=short", "--format=%ad %h %s", "--"}, rels...)...))
+	if out == "" {
+		return
+	}
+	a.println("history (git log):")
+	for _, l := range strings.Split(out, "\n") {
+		a.println("  " + textutil.OneLine(l, 120))
+	}
+}
+
+// relatedChanges is pg related without a path: the files changed in the
+// work tree, each with the rules and decisions about it.
+func (a *app) relatedChanges(s *store) error {
+	if _, err := os.Stat(filepath.Join(a.workDir(), ".git")); err != nil {
+		return fail(ExitUsage, "not in a git work tree: give the files, pg related <path>...")
+	}
+	base := ""
+	if f := projectNote(s, s.project); f != nil {
+		if lines, err := fileLines(s, f); err == nil {
+			base = frontValue(lines, "base")
+		}
+	}
+	changed := a.changedSince(base)
+	if len(changed) == 0 {
+		a.println("no changed files (git status is clean); one file: pg related <path>")
+		return nil
+	}
+	label := "changed in the work tree (git status)"
+	if base != "" {
+		label = "changed since project " + s.project + " started (git)"
+	}
+	a.printf("%s: %d files\n", label, len(changed))
+	bw := a.newBudget(a.budgetOr(max(s.v.Cfg.Budget, 1200)))
+	bound := 0
+	printed := map[string]bool{}
+	for i, c := range changed {
+		if c.status == "D" {
+			if !bw.line(fmt.Sprintf("%s %s", c.status, c.path)) {
+				break
+			}
+			continue
+		}
+		var lines, again []string
+		for _, h := range a.relatedNotes(s, []string{a.codePath(c.path)}, 1.5, false) {
+			if h.f.Type != "rule" && h.f.Type != "decision" {
+				continue
+			}
+			if printed[h.addr] {
+				again = append(again, h.addr)
+				continue
+			}
+			printed[h.addr] = true
+			lines = append(lines, "  "+join(h.addr, meta(h.f.Type))+": "+strings.TrimPrefix(a.relatedText(s, h), "decision: "))
+			if len(lines) == 4 {
+				break
+			}
+		}
+		head := fmt.Sprintf("%s %s", c.status, c.path)
+		switch {
+		case len(lines) == 0 && len(again) == 0:
+			head += "  (no rules or decisions about it)"
+		case len(again) > 0:
+			head += "  (also " + strings.Join(again, ", ") + ", above)"
+		}
+		if !bw.line(head) {
+			a.printf("... %d more files; one file: pg related <path>\n", len(changed)-i)
+			break
+		}
+		for _, l := range lines {
+			bw.line(l)
+		}
+		bound += len(lines)
+	}
+	if bound > 0 {
+		a.println("check the changes against these before calling the work done")
+	}
+	return nil
 }
 
 // relatedText is what a related hit says, so it needs no pg read: an

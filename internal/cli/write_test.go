@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -312,5 +314,115 @@ func TestDryRunWritesNothing(t *testing.T) {
 	}
 	if readNote(t, v, "demo/stack.md") != before {
 		t.Fatal("dry-run wrote the file")
+	}
+}
+
+// One pg mv for notes, folders and projects: rename in place, move into a
+// folder, move out of one, rename a project; links keep finding their notes.
+func TestMoveFoldersAndProjects(t *testing.T) {
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	mustRun(t, v, "start", "billing", "--step", "Invoices")
+	mustRun(t, v, "new", "note", "Raw body", "--dir", "webhook")
+	mustRun(t, v, "new", "note", "Index", "--dir", "a")
+	mustRun(t, v, "append", "billing/a/index", "see [[billing/webhook/raw-body]] and [[raw-body#Raw body]]")
+
+	// a folder of the current project, renamed in place (and by its other name)
+	if out := mustRun(t, v, "rename", "webhook", "hooks"); !strings.Contains(out, "ok billing/hooks (1 notes)") {
+		t.Fatalf("rename folder:\n%s", out)
+	}
+	idx := readNote(t, v, "billing/a/index.md")
+	if !strings.Contains(idx, "[[raw-body]]") || strings.Contains(idx, "billing/webhook/") || !strings.Contains(idx, "[[raw-body#Raw body]]") {
+		t.Fatalf("links after folder rename:\n%s", idx)
+	}
+	// out of a folder, into the project's root; then into a new folder by a path
+	mustRun(t, v, "mv", "billing/hooks/raw-body", "billing/")
+	readNote(t, v, "billing/raw-body.md")
+	mustRun(t, v, "mv", "billing/raw-body", "notes/raw-body")
+	readNote(t, v, "billing/notes/raw-body.md")
+	// a folder into another folder
+	if out := mustRun(t, v, "mv", "billing/a", "billing/notes/"); !strings.Contains(out, "billing/notes/a") {
+		t.Fatalf("folder into folder:\n%s", out)
+	}
+	readNote(t, v, "billing/notes/a/index.md")
+	// the project itself
+	if out := mustRun(t, v, "mv", "billing", "invoicing"); !strings.Contains(out, "ok invoicing") {
+		t.Fatalf("rename project:\n%s", out)
+	}
+	body := readNote(t, v, "invoicing/invoicing.md")
+	if !strings.Contains(body, "title: Invoicing") || !strings.Contains(body, "# Invoicing") || !strings.Contains(body, "Invoices ^") {
+		t.Fatalf("project note after rename:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(v, "Spaces", "main", "billing")); err == nil {
+		t.Fatal("old project folder left behind")
+	}
+	if out := mustRun(t, v, "log", "after the rename"); !strings.Contains(out, "invoicing/invoicing#") {
+		t.Fatalf("the renamed project is not current:\n%s", out)
+	}
+	if out := mustRun(t, v, "read", "invoicing/notes/a/index"); !strings.Contains(out, "[[raw-body]]") {
+		t.Fatalf("index after all moves:\n%s", out)
+	}
+	if _, _, code := run(t, v, "mv", "invoicing", "auth-refactor"); code != ExitConflict {
+		t.Fatalf("rename onto an existing project: exit %d", code)
+	}
+}
+
+// pg start with the name of a note inside a project continues that project.
+func TestStartFindsNote(t *testing.T) {
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	mustRun(t, v, "start", "billing")
+	mustRun(t, v, "new", "note", "Webhook findings", "--dir", "webhook")
+	mustRun(t, v, "resume", "auth-refactor")
+	out := mustRun(t, v, "start", "Webhook findings", "--decision", "Verify signatures first")
+	if !strings.Contains(out, "billing continued: a note of that name is in this project (pg read billing/webhook/webhook-findings)") || !strings.Contains(out, "Verify signatures first") {
+		t.Fatalf("start by note name:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(v, "Spaces", "main", "webhook-findings")); err == nil {
+		t.Fatal("a second project was made")
+	}
+}
+
+// Writes to one note at the same time (agents run tools in parallel): each
+// lands, none is lost, and a task marked done is the task that was meant.
+func TestParallelWrites(t *testing.T) {
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	plan := ids(mustRun(t, v, "start", "busy", "--step", "one", "--step", "two", "--step", "three"))
+	t.Setenv("PARAGMA_PROJECT", "busy")
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var failed []string
+	call := func(args ...string) {
+		defer wg.Done()
+		if out, errs, code := run(t, v, args...); code != 0 {
+			mu.Lock()
+			failed = append(failed, fmt.Sprintf("%v: %d %s %s", args, code, out, errs))
+			mu.Unlock()
+		}
+	}
+	for i := range 8 {
+		wg.Add(1)
+		go call("log", fmt.Sprintf("parallel line %d", i))
+	}
+	wg.Add(4)
+	go call("plan", "four")
+	go call("decide", "parallel decision")
+	go call("done", plan[0])
+	go call("done", plan[2])
+	wg.Wait()
+	for _, f := range failed {
+		t.Error(f)
+	}
+	body := readNote(t, v, "busy/busy.md")
+	for i := range 8 {
+		if !strings.Contains(body, fmt.Sprintf("parallel line %d", i)) {
+			t.Errorf("log line %d lost", i)
+		}
+	}
+	for _, want := range []string{"- [x] one ^" + plan[0], "- [ ] two ^" + plan[1], "- [x] three ^" + plan[2], "- [ ] four ^", "parallel decision"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("busy.md lacks %q:\n%s", want, body)
+		}
 	}
 }

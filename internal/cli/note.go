@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,13 @@ func (a *app) load(s *store, f *index.File) (*note, error) {
 	if a.ifHash != "" && !strings.HasPrefix(index.HashBytes(b), strings.TrimPrefix(a.ifHash, "hash:")) {
 		return nil, fail(ExitConflict, "%s changed since you read it (hash is now %s); read it again", f.Addr(), index.HashBytes(b))
 	}
+	// the line numbers this command works with come from f: if another pg
+	// process changed the note since, they point at the wrong lines
+	if a.inLock && f.Hash != "" {
+		if h := index.HashBytes(b); h != f.Hash && a.written[f.Path] != h {
+			return nil, errStale
+		}
+	}
 	lines := md.SplitLines(b)
 	return &note{s: s, rel: f.Path, lines: lines, orig: append([]string(nil), lines...), crlf: bytes.Contains(b, []byte("\r\n"))}, nil
 }
@@ -70,6 +78,10 @@ func (a *app) save(n *note) error {
 	if err := space.WriteFileAtomic(p, []byte(data)); err != nil {
 		return fail(ExitInternal, "write %s: %v", n.rel, err)
 	}
+	if a.written == nil {
+		a.written = map[string]string{}
+	}
+	a.written[n.rel] = index.HashBytes([]byte(data))
 	return a.reindex(n.s, n.rel)
 }
 
@@ -128,14 +140,27 @@ func (a *app) printDiff(n *note) {
 // withLock runs fn while holding the space's .pg/lock, so concurrent agents
 // never interleave read-modify-write cycles on the same space.
 func (a *app) withLock(s *store, fn func() error) error {
-	p := s.v.Meta("lock")
-	deadline := time.Now().Add(5 * time.Second)
+	if a.heldLock == "" {
+		p := s.v.Meta("lock")
+		if err := acquireLock(p); err != nil {
+			return err
+		}
+		defer os.Remove(p)
+	}
+	a.inLock = true
+	defer func() { a.inLock = false }()
+	return fn()
+}
+
+// acquireLock takes the space's lock file, waiting for other pg processes.
+func acquireLock(p string) error {
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
 			fmt.Fprintf(f, "%d %s\n", os.Getpid(), time.Now().Format(time.RFC3339))
 			f.Close()
-			break
+			return nil
 		}
 		if st, serr := os.Stat(p); serr == nil && time.Since(st.ModTime()) > 30*time.Second {
 			os.Remove(p) // left behind by a crashed process
@@ -144,10 +169,8 @@ func (a *app) withLock(s *store, fn func() error) error {
 		if time.Now().After(deadline) {
 			return fail(ExitConflict, "space is locked by another pg process (%s); retry", filepath.ToSlash(p))
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(time.Duration(10+rand.IntN(20)) * time.Millisecond)
 	}
-	defer os.Remove(p)
-	return fn()
 }
 
 // fileLines reads a note from disk, split exactly like the parser splits it.

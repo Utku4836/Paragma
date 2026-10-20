@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Utku4836/Paragma/internal/space"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -19,17 +21,64 @@ var Version = "0.1.2-dev (Paragma)"
 
 // Execute runs pg and returns the process exit code.
 func Execute(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
+	in := &replay{src: stdin}
+	// a run that found its note changed under it runs again holding the
+	// space lock from the start, so nothing can change while it looks up
+	code, again := execute(args, stdout, stderr, in.reader(), false)
+	if again {
+		code, again = execute(args, stdout, stderr, in.reader(), true)
+	}
+	if again {
+		fmt.Fprintln(stderr, "error: "+errStale.Msg)
+	}
+	return code
+}
+
+// replay keeps what a command read from stdin, so a run that is repeated
+// (see errStale) reads the same text again.
+type replay struct {
+	src  io.Reader
+	seen bytes.Buffer
+}
+
+func (p *replay) Read(b []byte) (int, error) {
+	if p.src == nil {
+		return 0, io.EOF
+	}
+	n, err := p.src.Read(b)
+	p.seen.Write(b[:n])
+	return n, err
+}
+
+func (p *replay) reader() io.Reader {
+	return io.MultiReader(bytes.NewReader(append([]byte(nil), p.seen.Bytes()...)), p)
+}
+
+// execute runs pg once; again reports that a note changed under the
+// command before it wrote anything, so it can simply run again.
+func execute(args []string, stdout, stderr io.Writer, stdin io.Reader, holdLock bool) (code int, again bool) {
 	a := newApp(stdout, stdin)
 	a.rawErr = stderr
+	a.holdLock = holdLock
+	defer func() {
+		if a.heldLock != "" {
+			os.Remove(a.heldLock)
+		}
+	}()
 	root := a.rootCmd()
 	unprotect(root)
 	root.SetArgs(protectArgs(args))
 	root.SetOut(a.stdout)
 	root.SetErr(stderr)
 	err := root.Execute()
+	if errors.Is(err, errStale) && len(a.written) == 0 {
+		a.stdout.Reset(io.Discard) // nothing of this run is printed
+		a.close()
+		return ExitConflict, true
+	}
 	a.close()
 	if err == nil {
-		return ExitOK
+		return ExitOK, false
 	}
 	var e *Error
 	if errors.As(err, &e) {
@@ -41,7 +90,7 @@ func Execute(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 				fmt.Fprintf(stderr, "example: %s\n", strings.TrimSpace(strings.SplitN(cmd.Example, "\n", 2)[0]))
 			}
 		}
-		return e.Code
+		return e.Code, false
 	}
 	// cobra parse errors: unknown flag, wrong arg count, unknown command
 	msg := err.Error()
@@ -64,7 +113,7 @@ func Execute(args []string, stdout, stderr io.Writer, stdin io.Reader) int {
 	} else {
 		fmt.Fprintln(stderr, "see: pg help")
 	}
-	return ExitUsage
+	return ExitUsage, false
 }
 
 func (a *app) rootCmd() *cobra.Command {
@@ -76,6 +125,20 @@ func (a *app) rootCmd() *cobra.Command {
 		Version:       Version,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if !a.holdLock {
+			return nil
+		}
+		v, err := space.Find(a.home(), a.spaceFlag, a.workDir())
+		if err != nil {
+			return nil // reported by the command itself
+		}
+		if err := acquireLock(v.Meta("lock")); err != nil {
+			return err
+		}
+		a.heldLock = v.Meta("lock")
+		return nil
+	}
 	pf := root.PersistentFlags()
 	pf.BoolVar(&a.jsonOut, "json", false, "structured output")
 	pf.IntVar(&a.budget, "budget", 0, "cap output at N tokens")

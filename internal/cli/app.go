@@ -55,7 +55,17 @@ type app struct {
 	stdin  io.Reader
 
 	st *store // opened lazily
+
+	inLock   bool              // inside withLock
+	written  map[string]string // notes this process wrote: path -> hash
+	holdLock bool              // take the space lock before the command looks anything up
+	heldLock string            // the lock file held for the whole command
 }
+
+// errStale: a note changed on disk after this command looked it up (another
+// pg process wrote it before this one got the lock). Execute runs the
+// command again when nothing was written yet.
+var errStale = &Error{Code: ExitConflict, Msg: "a note changed while this command ran (another pg process wrote it); run the command again"}
 
 // store is the opened space with its synced index.
 type store struct {
