@@ -5,7 +5,7 @@ description: Use for work that spans steps or conversations with Paragma - start
 # Projects with Paragma
 
 ## Start or continue
-- `pg start <name> --goal "..." --step "..." --decision "..."`: a new project, or the existing one of that name (or the project that holds a note of that name) continued. Record every decision the user gives, in their words, before writing code: the next conversation only knows what was recorded.
+- `pg start <name> --goal "..." --step "..." --decision "..."`: a new project, or the existing one of that name (or the project that holds a note of that name) continued. Record every decision and every step of the user's plan (also the steps for later conversations), in their words with the names and signatures they gave, before writing code: the next conversation only knows what was recorded.
 - A new conversation on earlier work: `pg resume <name>`: goal, decisions, open steps, handoff, code changed since the start, and the brief.
 
 ## While working

@@ -175,44 +175,7 @@ check before calling the work done.`,
 				a.printHistory(args)
 				return errNoResults
 			}
-			// errors that record the same fix (the same mistake in many places)
-			// are one line: the first, with the others counted
-			sameFix := map[string]int{}
-			firstOf := map[string]string{}
-			var shown []relHit
-			for _, h := range hits {
-				if k := a.fixKey(s, h.f); k != "" {
-					if first, ok := firstOf[k]; ok && first != h.f.Addr() {
-						sameFix[first]++
-						continue
-					}
-					firstOf[k] = h.f.Addr()
-				}
-				shown = append(shown, h)
-			}
-			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
-			before := loadShown(s)
-			defer a.saveShown(s, before)
-			for i, h := range shown {
-				typ := h.f.Type
-				if typ == "note" {
-					typ = ""
-				}
-				head := join(h.addr, meta(typ, statusWord(h.f)), h.why)
-				if n := sameFix[h.f.Addr()]; n > 0 {
-					head += fmt.Sprintf("  (+%d notes with the same fix)", n)
-				}
-				text := a.relatedText(s, h)
-				if key := "rel:" + h.addr; !a.again && before.recent(key, shownWindow) {
-					head, text = head+"  (shown earlier in this conversation)", ""
-				} else {
-					before.mark(key)
-				}
-				if !bw.line(head) || (text != "" && !bw.line("  "+text)) {
-					a.printf("... %d more; pg related %s --json for all\n", len(shown)-i, strings.Join(args, " "))
-					break
-				}
-			}
+			a.printRelated(s, hits, a.budgetOr(s.v.Cfg.Budget), "pg related "+strings.Join(args, " ")+" --json for all")
 			a.printHistory(args)
 			return nil
 		},
@@ -220,6 +183,49 @@ check before calling the work done.`,
 	c.Flags().BoolVar(&loose, "loose", false, "also notes about other files in the same directory")
 	c.Flags().BoolVar(&all, "all", false, "include archived and superseded notes")
 	return c
+}
+
+// printRelated prints notes about code files, each with its gist; errors
+// that record the same fix (the same mistake in many places) are one line,
+// the first with the others counted, and a note shown earlier in this
+// conversation is its address only. more says how to see what did not fit.
+func (a *app) printRelated(s *store, hits []relHit, budget int, more string) {
+	sameFix := map[string]int{}
+	firstOf := map[string]string{}
+	var shown []relHit
+	for _, h := range hits {
+		if k := a.fixKey(s, h.f); k != "" {
+			if first, ok := firstOf[k]; ok && first != h.f.Addr() {
+				sameFix[first]++
+				continue
+			}
+			firstOf[k] = h.f.Addr()
+		}
+		shown = append(shown, h)
+	}
+	bw := a.newBudget(budget)
+	before := loadShown(s)
+	defer a.saveShown(s, before)
+	for i, h := range shown {
+		typ := h.f.Type
+		if typ == "note" {
+			typ = ""
+		}
+		head := join(h.addr, meta(typ, statusWord(h.f)), h.why)
+		if n := sameFix[h.f.Addr()]; n > 0 {
+			head += fmt.Sprintf("  (+%d notes with the same fix)", n)
+		}
+		text := a.relatedText(s, h)
+		if key := "rel:" + h.addr; !a.again && before.recent(key, shownWindow) {
+			head, text = head+"  (shown earlier in this conversation)", ""
+		} else {
+			before.mark(key)
+		}
+		if !bw.line(head) || (text != "" && !bw.line("  "+text)) {
+			a.printf("... %d more; %s\n", len(shown)-i, more)
+			break
+		}
+	}
 }
 
 // printHistory prints the last commits that touched the given files, the

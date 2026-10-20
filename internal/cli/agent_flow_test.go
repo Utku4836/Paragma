@@ -83,3 +83,26 @@ func TestRunHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStartRepeatsAndSimilarNames(t *testing.T) {
+	v := copyVault(t)
+	t.Setenv("PARAGMA_PROJECT", "")
+	mustRun(t, v, "start", "cart-discounts", "--goal", "Discounts", "--step", "Percent and Fixed", "--decision", "At most 50%")
+	// the same call again adds nothing
+	if out := mustRun(t, v, "start", "cart-discounts", "--step", "Percent and Fixed", "--decision", "At most 50%"); strings.Contains(out, "added") {
+		t.Fatalf("repeat added again:\n%s", out)
+	}
+	// a shorter name of the same work continues it
+	out := mustRun(t, v, "start", "discount", "--step", "Cart field")
+	if !strings.Contains(out, `cart-discounts continued: its name matches "discount"`) || !strings.Contains(out, "1 added") {
+		t.Fatalf("similar name:\n%s", out)
+	}
+	body := readNote(t, v, "cart-discounts/cart-discounts.md")
+	if strings.Count(body, "Percent and Fixed") != 1 || strings.Count(body, "At most 50%") != 1 || !strings.Contains(body, "Cart field") {
+		t.Fatalf("cart-discounts.md:\n%s", body)
+	}
+	// new work in a directory that was on another project says so
+	if out := mustRun(t, v, "start", "billing", "--goal", "Invoices"); !strings.Contains(out, "this directory was on project cart-discounts") {
+		t.Fatalf("new project:\n%s", out)
+	}
+}

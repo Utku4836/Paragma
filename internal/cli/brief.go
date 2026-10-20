@@ -28,6 +28,8 @@ func init() {
 		step steps done task tasks work fix fixes bug code test tests write read run file files function method
 		support implement change update create remove delete handle get set call return returns value values
 		first second last next before after above below other more most less some such like just way part
+		fail fails failed failing failure cause causes reproduce trace root properly suite full find end
+		pass passes passing green broken work works working issue problem check verify ensure sure make
 		ctx context func err error errors nil int int64 string bool byte return package type struct var const
 		import true false self none null void async await class interface public private static object
 		bir ve ile için olan olarak gibi daha çok`) {
@@ -36,19 +38,25 @@ func init() {
 }
 
 // taskKeywords picks the words a task is about: the first words of its
-// text that are not filler or code syntax and that memory knows at all.
-// A task says what it is about first ("refund support for payments").
+// text that are not filler or code syntax, nor the project's name, and that
+// memory knows, but not everywhere: a word in a tenth of memory says
+// nothing about where the task lives. A task says what it is about first
+// ("refund support for payments").
 func taskKeywords(s *store, text string, n int) []string {
 	seen := map[string]bool{}
+	for _, w := range strings.FieldsFunc(textutil.Fold(s.project), func(r rune) bool { return r == '-' || r == '_' || r == ' ' }) {
+		seen[w] = true
+	}
+	most := max(30, s.db.Count(`SELECT COUNT(*) FROM sections`)/10)
 	var out []string
 	for _, w := range strings.FieldsFunc(textutil.Fold(text), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r > 127)
 	}) {
-		if len(w) < 3 || briefStop[w] || seen[w] {
+		if len(w) < 3 || briefStop[w] || briefStop[strings.TrimSuffix(w, "s")] || seen[w] || strings.Trim(w, "0123456789") == "" {
 			continue
 		}
 		seen[w] = true
-		if s.db.Count(`SELECT COUNT(*) FROM sections_fts WHERE sections_fts MATCH ?`, `"`+w+`"*`) > 0 {
+		if c := s.db.Count(`SELECT COUNT(*) FROM sections_fts WHERE sections_fts MATCH ?`, `"`+w+`"*`); c > 0 && c <= most {
 			out = append(out, w)
 			if len(out) == n {
 				break
@@ -58,8 +66,9 @@ func taskKeywords(s *store, text string, n int) []string {
 	return out
 }
 
-// printBrief prints the brief for project p (its note is f).
-func (a *app) printBrief(s *store, p string, f *index.File) {
+// printBrief prints the brief for project p (its note is f); goal is a
+// goal given just now, which the index may not hold yet.
+func (a *app) printBrief(s *store, p string, f *index.File, goal string) {
 	if a.jsonOut || f == nil {
 		return
 	}
@@ -69,6 +78,7 @@ func (a *app) printBrief(s *store, p string, f *index.File) {
 			text = g + " " + text
 		}
 	}
+	text = goal + " " + text
 	if ts, err := s.db.Tasks(f.ID); err == nil {
 		for _, t := range ts {
 			if !t.Closed() {
@@ -198,6 +208,21 @@ func (a *app) printLikelyCode(s *store, text string, keys []string, noteIDs []in
 			ds = declsOf(filepath.Join(root, filepath.FromSlash(f)), 40)
 		}
 		a.println(join("  "+f, declNames(ds, 8), byFile[f].String()))
+	}
+	// what memory says about them, so the agent need not ask file by file
+	printed := map[int64]bool{}
+	for _, id := range noteIDs {
+		printed[id] = true
+	}
+	var hits []relHit
+	for _, h := range a.relatedNotes(s, pick[:min(len(pick), 3)], 1.5, false) {
+		if !printed[h.f.ID] {
+			hits = append(hits, h)
+		}
+	}
+	if len(hits) > 0 {
+		a.println("## memory about these files (another file: pg related <file>)")
+		a.printRelated(s, hits, 350, "pg related <file> for the rest")
 	}
 }
 

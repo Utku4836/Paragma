@@ -169,6 +169,10 @@ is printed like pg resume.`,
 			if f := a.noteNamed(s, name); f != nil {
 				return a.continueProject(s, space.ProjectOf(f.Path), f.Addr(), goal, steps, decisions)
 			}
+			if ex := a.similarProject(s, name); ex != "" {
+				return a.continueProject(s, ex, "~"+name, goal, steps, decisions)
+			}
+			prev := s.project // this directory's project before this one
 			if title == "" {
 				title = name
 				if title == p {
@@ -201,6 +205,11 @@ is printed like pg resume.`,
 					return err
 				}
 				a.ok(n.addr() + "  (current project here)")
+				if prev != "" && prev != p {
+					a.printf("note: this directory was on project %s; if this is the same work: pg resume %s\n", prev, prev)
+				} else if others := slices.DeleteFunc(s.v.Projects(), func(x string) bool { return x == p }); len(others) > 0 && len(others) <= 8 {
+					a.printf("other projects in this space: %s (same work: pg resume <project>)\n", strings.Join(others, ", "))
+				}
 				if !a.dryRun {
 					if f := projectNote(s, p); f != nil {
 						ts, _ := s.db.Tasks(f.ID)
@@ -209,9 +218,9 @@ is printed like pg resume.`,
 						}
 					}
 				}
-				a.println(`next: pg done <id> after each step | pg log "<finding>" | pg decide "<decision>" | your notes: pg new note "<title>" --dir <folder>`)
+				a.println(`next: the work; pg log "<finding>" | pg decide "<decision>" while working; at the end one call closes the steps: pg finish "..." --done <ids>`)
 				if !a.dryRun {
-					a.printBrief(s, p, projectNote(s, p))
+					a.printBrief(s, p, projectNote(s, p), goal)
 				}
 				return nil
 			})
@@ -250,9 +259,27 @@ func (a *app) continueProject(s *store, p, viaNote, goal string, steps, decision
 			return a.save(n)
 		})
 	}
-	added := 0
+	added, known := 0, map[string]bool{}
+	if f := projectNote(s, p); f != nil {
+		for _, l := range a.sectionBody(s, f, "decisions") {
+			known[textutil.Fold(l)] = true
+		}
+		ts, _ := s.db.Tasks(f.ID)
+		for _, t := range ts {
+			known["step "+textutil.Fold(t.Text)] = true
+		}
+	}
+	has := func(d string) bool {
+		d = textutil.Fold(strings.TrimSpace(d))
+		for k := range known {
+			if !strings.HasPrefix(k, "step ") && strings.HasSuffix(k, d) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, d := range decisions {
-		if strings.TrimSpace(d) == "" {
+		if strings.TrimSpace(d) == "" || has(d) {
 			continue
 		}
 		if err := edit(func(n *note, f *index.File) { a.appendToSection(n, f, "decisions")(decisionLine(d)) }); err != nil {
@@ -260,13 +287,14 @@ func (a *app) continueProject(s *store, p, viaNote, goal string, steps, decision
 		}
 		added++
 	}
-	if len(steps) > 0 {
-		var items []taskItem
-		for _, st := range steps {
-			if text, state := stripMarker(strings.TrimSpace(st)); text != "" {
-				items = append(items, taskItem{text: text, state: state})
-			}
+	var items []taskItem
+	for _, st := range steps {
+		if text, state := stripMarker(strings.TrimSpace(st)); text != "" && !known["step "+textutil.Fold(text)] {
+			known["step "+textutil.Fold(text)] = true
+			items = append(items, taskItem{text: text, state: state})
 		}
+	}
+	if len(items) > 0 {
 		if err := edit(func(n *note, f *index.File) {
 			block, _ := taskLines(s, items, taskFlags{}, "", "-")
 			a.appendToSection(n, f, "plan")(block)
@@ -294,7 +322,9 @@ func (a *app) continueProject(s *store, p, viaNote, goal string, steps, decision
 		}
 	}
 	msg := fmt.Sprintf("%s continued (it exists; current project here)", p)
-	if viaNote != "" {
+	if like, ok := strings.CutPrefix(viaNote, "~"); ok {
+		msg = fmt.Sprintf("%s continued: its name matches %q (current project here; a separate project needs another name)", p, like)
+	} else if viaNote != "" {
 		msg = fmt.Sprintf("%s continued: a note of that name is in this project (pg read %s); current project here", p, viaNote)
 	}
 	if added > 0 {
@@ -304,8 +334,45 @@ func (a *app) continueProject(s *store, p, viaNote, goal string, steps, decision
 	if err := a.printProject(s, p, true); err != nil {
 		return err
 	}
-	a.printBrief(s, p, projectNote(s, p))
+	a.printBrief(s, p, projectNote(s, p), goal)
 	return nil
+}
+
+// similarProject is the one open project whose name holds every word of
+// name ("discount" for cart-discounts, "payment" for payments), or "".
+func (a *app) similarProject(s *store, name string) string {
+	words := func(x string) []string {
+		var out []string
+		for _, w := range strings.FieldsFunc(textutil.Fold(x), func(r rune) bool { return r == '-' || r == '_' || r == ' ' || r == '/' }) {
+			if w = strings.TrimSuffix(w, "s"); len(w) >= 3 {
+				out = append(out, w)
+			}
+		}
+		return out
+	}
+	want := words(name)
+	if len(want) == 0 {
+		return ""
+	}
+	found := ""
+	for _, p := range s.v.Projects() {
+		f := projectNote(s, p)
+		if f == nil || f.Status == "closed" {
+			continue
+		}
+		have := words(p + " " + f.Title)
+		all := true
+		for _, w := range want {
+			all = all && slices.Contains(have, w)
+		}
+		if all {
+			if found != "" {
+				return "" // two projects match: let the agent pick
+			}
+			found = p
+		}
+	}
+	return found
 }
 
 // noteNamed finds a note inside a project whose file name or title is
@@ -339,6 +406,7 @@ list of projects.`,
 			if err != nil {
 				return err
 			}
+			a.forgetShown(s) // a new conversation on earlier work: print it all again
 			p := s.project
 			if len(args) > 0 {
 				if p, err = a.findProject(s, strings.Join(args, " ")); err != nil {
@@ -364,7 +432,7 @@ list of projects.`,
 			if err := a.printProject(s, p, true); err != nil {
 				return err
 			}
-			a.printBrief(s, p, projectNote(s, p))
+			a.printBrief(s, p, projectNote(s, p), "")
 			return nil
 		},
 	}
@@ -606,7 +674,7 @@ func (a *app) printProject(s *store, p string, full bool) error {
 	}
 	if f != nil {
 		if nt, _ := a.nextTask(s, f); nt != nil {
-			a.printf("next: ^%s %s  (pg done %s when finished)\n", nt.ID, textutil.OneLine(nt.Text, 100), nt.ID)
+			a.printf("next: ^%s %s  (when finished: pg done %s, or at the end pg finish --done)\n", nt.ID, textutil.OneLine(nt.Text, 100), nt.ID)
 		} else if tc.Total == 0 {
 			a.println(`next: pg plan "step 1" "step 2" ...`)
 		}
