@@ -19,16 +19,20 @@ func (a *app) outlineCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:     "outline [addr]",
 		Aliases: []string{"ls", "map", "toc"},
-		Short:   "Map of the space (notes by project), or the heading skeleton of one note",
+		Short:   "Map of the space (notes by project), the heading skeleton of one note, or the declarations of a source file",
 		Long: `Without an address: a map of every note by layer with its token cost.
 With an address: the heading skeleton of a note (or of one heading's
 subtree) with the cost of reading each heading. Use it before pg read on
-anything large.`,
+anything large. For a source file: its top-level declarations with their
+line ranges and cost, then pg read file#Name for one of them.`,
 		Example: "pg outline\npg outline architecture\npg outline architecture#Katmanlar --depth 3",
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return a.spaceMap()
+			}
+			if ct, ok := a.codeArg(strings.Join(args, " ")); ok {
+				return a.outlineCode(ct)
 			}
 			s, t, err := a.resolve(strings.Join(args, " ")) // an unquoted "note#Two words" arrives split
 			if err != nil {

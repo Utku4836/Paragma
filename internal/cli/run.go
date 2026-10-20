@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,22 +46,31 @@ func (t *tailBuffer) String() string {
 }
 
 func (a *app) runCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "run -- <command> [args...]",
-		Short: "Run a test/build command; on failure, print the known fix from memory",
-		Long: `Run a command with its output passed through unchanged and its exit code
-kept. If it fails and memory knows the error (exact or likely match), pg
-appends the recorded fix after the output. The failure is saved so that
-after fixing it you can record it with: pg error record --from-last ...
+	var full, affected bool
+	c := &cobra.Command{
+		Use:   "run [--full] [--affected] -- <command> [args...]",
+		Short: "Run tests or a build: short output, the known fix on failure, new vs old failures",
+		Long: `Run a command and keep its exit code. Long output is shortened: on
+success its start and end, on failure every error line with context and the
+end (--full prints everything as it comes). On failure pg prints the
+recorded fix when memory knows the error, and which failing tests are new
+since the last run of the same command, were failing before, or are known
+to be flaky (they failed and passed on the same code). When a failure is
+fixed, pg lists the files changed since, ready for pg error record
+--from-last. --affected runs a Go test command only for the packages with
+changed files (./... becomes ./payments ./cart).
 A single quoted argument is run through the shell (cmd /C on Windows,
 sh -c elsewhere), so pipes work there.`,
 		Example: `pg run -- go test ./...
+pg run --affected -- go test ./...
 pg run -- npm test
-pg run -- "make build 2>&1"`,
-		Args:               cobra.MinimumNArgs(1),
-		DisableFlagParsing: false,
+pg run --full -- "make build 2>&1"`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a.stdout.Flush()
+			if affected {
+				args = a.affectedArgs(args)
+			}
 			var c *exec.Cmd
 			if len(args) == 1 && strings.ContainsAny(args[0], " \t|&<>") {
 				if runtime.GOOS == "windows" {
@@ -71,10 +81,14 @@ pg run -- "make build 2>&1"`,
 			} else {
 				c = exec.Command(args[0], args[1:]...)
 			}
-			tail := &tailBuffer{max: 256 * 1024}
+			out := &tailBuffer{max: 4 << 20}
 			c.Stdin = a.stdin
-			c.Stdout = io.MultiWriter(a.rawOut, tail)
-			c.Stderr = io.MultiWriter(a.rawErr, tail)
+			if full {
+				c.Stdout = io.MultiWriter(a.rawOut, out)
+				c.Stderr = io.MultiWriter(a.rawErr, out)
+			} else {
+				c.Stdout, c.Stderr = out, out
+			}
 			err := c.Run()
 			code := 0
 			if err != nil {
@@ -85,14 +99,72 @@ pg run -- "make build 2>&1"`,
 					return fail(ExitUsage, "cannot run %s: %v", args[0], err)
 				}
 			}
+			output := out.String()
+			if !full {
+				text, cut := summarise(output, code != 0)
+				if text != "" {
+					a.println(text)
+				}
+				if cut {
+					a.printf("(output shortened; all of it: pg run --full -- %s)\n", strings.Join(args, " "))
+				}
+			}
+			command := strings.Join(args, " ")
+			a.recordRun(command, code, output)
 			if code == 0 {
 				a.afterSuccess()
 				return nil
 			}
-			a.afterFailure(strings.Join(args, " "), code, tail.String())
+			a.afterFailure(command, code, output)
 			return &Error{Code: code}
 		},
 	}
+	c.Flags().BoolVar(&full, "full", false, "print the whole output as it comes")
+	c.Flags().BoolVar(&affected, "affected", false, "Go: test only the packages with changed files")
+	return c
+}
+
+// recordRun keeps the run in the test history and says what it means
+// next to earlier runs: new, old and flaky failures, or what fixed one.
+func (a *app) recordRun(command string, code int, output string) {
+	s, err := a.main()
+	if err != nil || a.dryRun {
+		return
+	}
+	head, files := a.worktreeState()
+	run := testRun{Time: time.Now().Format(time.RFC3339), Exit: code, Failing: failingTests(output), Head: head, Files: files}
+	h := loadHistory(s)
+	prev := h.last(command)
+	if code != 0 && len(run.Failing) > 0 {
+		var parts []string
+		for _, t := range run.Failing[:min(len(run.Failing), 12)] {
+			switch {
+			case slices.Contains(h.Flaky[command], t):
+				parts = append(parts, t+" (known flaky: it failed and passed on the same code)")
+			case prev != nil && slices.Contains(prev.Failing, t):
+				parts = append(parts, t+" (failing in the last run too)")
+			case prev != nil:
+				parts = append(parts, t+" (new since the last run)")
+			default:
+				parts = append(parts, t)
+			}
+		}
+		a.println("--- paragma: failing: " + strings.Join(parts, "; "))
+	}
+	if code == 0 && prev != nil && prev.Exit != 0 {
+		if changed := changedBetween(prev.Files, files); len(changed) > 0 {
+			a.printf("--- paragma: fixed since the failure at %s; changed since then: %s\n", clockOf(prev.Time), strings.Join(changed[:min(len(changed), 8)], ", "))
+			if lr, err := loadLastRun(s); err == nil && lr.Cmd == command {
+				lr.Fixed = changed
+				if b, err := json.MarshalIndent(lr, "", " "); err == nil {
+					space.WriteFileAtomic(lastRunPath(s), b)
+				}
+				a.println(`if the cause was not obvious: pg error record --from-last --cause "..." --fix "..." (the files are filled in)`)
+			}
+		}
+	}
+	h.add(command, run)
+	h.save(s)
 }
 
 // afterFailure saves the failed run and prints the known fix, if any. It
@@ -209,7 +281,7 @@ func (a *app) progressReminder(s *store) {
 	if nt, _ := a.nextTask(s, f); nt != nil {
 		next = fmt.Sprintf(" (next: ^%s %s)", nt.ID, textutil.OneLine(nt.Text, 60))
 	}
-	a.printf("--- paragma: %s has %d open steps%s; finished one: pg done <id>; before you stop: pg checkpoint \"<where it stands>\"\n", s.project, open, next)
+	a.printf("--- paragma: %s has %d open steps%s; finished one: pg done <id>; before your final answer: pg finish \"<summary>\"\n", s.project, open, next)
 	sh.mark(key)
 	a.saveShown(s, sh)
 }

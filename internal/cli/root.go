@@ -149,10 +149,11 @@ func (a *app) rootCmd() *cobra.Command {
 	pf.StringVar(&a.ifHash, "if-hash", "", "write only if the note still has this hash (from pg read)")
 	pf.BoolVar(&a.dryRun, "dry-run", false, "show what a write would change, write nothing")
 	pf.StringVar(&a.textFile, "file", "", "read the text to write from this file (UTF-8 or UTF-16)")
+	pf.BoolVar(&a.again, "again", false, "print notes shown earlier in this conversation in full again")
 
 	root.AddCommand(
 		a.setupCmd(), a.primeCmd(), a.skillCmd(),
-		a.startCmd(), a.resumeCmd(), a.planCmd(), a.logCmd(), a.decideCmd(), a.checkpointCmd(), a.taskDoneCmd(),
+		a.startCmd(), a.resumeCmd(), a.planCmd(), a.logCmd(), a.decideCmd(), a.checkpointCmd(), a.taskDoneCmd(), a.finishCmd(),
 		a.projectCmd(), a.taskCmd(),
 		a.contextCmd(), a.treeCmd(), a.searchCmd(), a.findCmd(), a.grepCmd(), a.outlineCmd(), a.readCmd(),
 		a.relatedCmd(), a.linksCmd(), a.backlinksCmd(), a.neighborsCmd(), a.orphansCmd(),
@@ -173,7 +174,7 @@ func (a *app) rootCmd() *cobra.Command {
 var groups = []struct{ name, cmds string }{
 	{"read", "context tree search find grep outline read"},
 	{"write", "new append write insert edit section link keywords mv archive rm"},
-	{"project", "start resume plan done log decide checkpoint project list|status|close"},
+	{"project", "start resume plan done log decide checkpoint finish project list|status|close"},
 	{"task", "task add|list|show|start|done|block|cancel|ask|reopen|note|move|edit|next|claim"},
 	{"error", "run  error record|find|seen|reopen  decision record  journal"},
 	{"rule", "rule add|list  promote supersede"},
@@ -221,7 +222,7 @@ func (a *app) printHelp(c *cobra.Command) {
 		a.println(`projects: pg start <name> --goal "..." --step "..." --decision "..." (once) | pg resume <name> (new conversation, or switch) | pg done <id> prints the next task | pg log / pg decide`)
 		a.println("rule: read memory through pg, not by opening the files; cite a note by its address (pg read prints its lines as L10-24)")
 		a.println("text: as arguments, or - for stdin, or --file F (PowerShell 5.1 pipes drop non-ASCII); writes print ok <addr>")
-		a.println("flags: --json --budget N --space NAME")
+		a.println("flags: --json --budget N --space NAME --again (notes already shown in this conversation come as one line; --again prints them)")
 		a.println("exit: 0 ok, 1 no results, 2 usage, 3 not found, 4 conflict (exists, --if-hash, lock), 5 no such space, 6 refused (e.g. open subtasks), 7 internal")
 		return
 	}

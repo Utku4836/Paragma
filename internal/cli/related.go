@@ -183,6 +183,8 @@ check before calling the work done.`,
 				shown = append(shown, h)
 			}
 			bw := a.newBudget(a.budgetOr(s.v.Cfg.Budget))
+			before := loadShown(s)
+			defer a.saveShown(s, before)
 			for i, h := range shown {
 				typ := h.f.Type
 				if typ == "note" {
@@ -193,6 +195,11 @@ check before calling the work done.`,
 					head += fmt.Sprintf("  (+%d notes with the same fix)", n)
 				}
 				text := a.relatedText(s, h)
+				if key := "rel:" + h.addr; !a.again && before.recent(key, shownWindow) {
+					head, text = head+"  (shown earlier in this conversation)", ""
+				} else {
+					before.mark(key)
+				}
 				if !bw.line(head) || (text != "" && !bw.line("  "+text)) {
 					a.printf("... %d more; pg related %s --json for all\n", len(shown)-i, strings.Join(args, " "))
 					break

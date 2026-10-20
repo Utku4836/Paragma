@@ -18,17 +18,22 @@ func (a *app) readCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:     "read <addr>...",
 		Aliases: []string{"show", "cat", "view", "get", "open"},
-		Short:   "Print only the addressed notes, headings, blocks or lines",
+		Short:   "Print only the addressed notes, headings, blocks or lines; or one function of a source file",
 		Long: `Print the addressed part of a note. A heading includes its sub-headings.
 Several addresses can be read in one call; each gets its own header line
 (address, file:lines to cite, token cost, hash). If a target is bigger than
 read_limit (config, default 1500 tokens) pg shows its outline instead, or
-cuts it and prints the line range to continue with; --full disables that.`,
-		Example: "pg read architecture#Middleware\npg read rules^r003 jwt-exp-timezone#Çözüm\npg read stack:10-24\npg read rules --full",
+cuts it and prints the line range to continue with; --full disables that.
+A source file works too: file.go#Name prints one declaration (Cart.Total
+for a method, with the comment above it), file.go:10-30 a line range.`,
+		Example: "pg read architecture#Middleware\npg read rules^r003 jwt-exp-timezone#Çözüm\npg read stack:10-24\npg read payments/payments.go#Charge cart/cart.go#Cart.Total",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			args = a.regroupArgs(args)
 			if len(args) == 1 {
+				if ct, ok := a.codeArg(args[0]); ok {
+					return a.readCode(ct, numbers)
+				}
 				s, t, err := a.resolve(args[0])
 				if err != nil {
 					return err
@@ -42,9 +47,15 @@ cuts it and prints the line range to continue with; --full disables that.`,
 				if i > 0 && !a.jsonOut {
 					a.println("")
 				}
-				s, t, err := a.resolve(arg)
-				if err == nil {
-					err = a.read(s, t, full, withMeta, numbers)
+				var err error
+				if ct, ok := a.codeArg(arg); ok {
+					err = a.readCode(ct, numbers)
+				} else {
+					var s *store
+					var t *addr.Target
+					if s, t, err = a.resolve(arg); err == nil {
+						err = a.read(s, t, full, withMeta, numbers)
+					}
 				}
 				if err != nil {
 					a.println("error: " + err.Error())
@@ -165,6 +176,10 @@ func (a *app) regroupArgs(args []string) []string {
 	var out []string
 	for i := 0; i < len(args); i++ {
 		cur := args[i]
+		if _, ok := a.codeArg(cur); ok {
+			out = append(out, cur)
+			continue
+		}
 		if strings.Contains(cur, "#") && i+1 < len(args) {
 			if _, _, err := a.resolve(cur); err != nil {
 				for j := i + 1; j < len(args) && j <= i+6; j++ {

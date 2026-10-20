@@ -431,9 +431,18 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	shownRules := map[string]bool{} // rule addresses already printed
 	var notShown []string
 	counts := map[string]int{}
+	before := loadShown(s)
+	earlier := 0
 	for _, g := range groups {
 		if dup[g.f.ID] {
 			continue
+		}
+		if key := "ctx:" + g.f.Addr(); !a.again && before.recent(key, shownWindow) {
+			a.printf("## %s  (shown earlier in this conversation; pg read %s)\n", g.f.Addr(), g.f.Addr())
+			earlier++
+			continue
+		} else {
+			before.mark(key)
 		}
 		lines, err := fileLines(s, g.f)
 		if err != nil {
@@ -506,10 +515,11 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 	}
 
 	// the project's rules, which apply to every change
-	printed := map[int64]bool{}
+	printed := map[int64]bool{a.ctxSkip: true} // a note the caller printed itself
 	for _, g := range groups {
 		printed[g.f.ID] = true
 	}
+	a.saveShown(s, before) // before printProjectRules, which keeps its own marks
 	if id := a.printProjectRules(s, proj, shownRules); id != 0 {
 		printed[id] = true
 	}
@@ -577,6 +587,12 @@ func (a *app) printContext(s *store, q string, items []ctxItem, budget int) erro
 		}
 	}
 	line := "covered: " + strings.Join(parts, ", ")
+	if earlier > 0 {
+		if len(parts) > 0 {
+			line += "; "
+		}
+		line += fmt.Sprintf("%d notes shown earlier in this conversation (--again prints them)", earlier)
+	}
 	if len(notShown) > 0 {
 		line += "; over budget (pg read <addr>): " + strings.Join(notShown[:min(len(notShown), 6)], ", ")
 	}

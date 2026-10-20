@@ -130,6 +130,7 @@ type lastRun struct {
 	Time   string   `json:"time"`
 	Lines  []string `json:"error_lines"`
 	Output string   `json:"output_tail"`
+	Fixed  []string `json:"fixed_by,omitempty"` // files changed between the failure and the run that passed
 }
 
 func lastRunPath(s *store) string { return s.v.Meta("last-run.json") }
@@ -185,6 +186,9 @@ pg error record --sig "database is locked (5)" --cause "WAL off" --fix "PRAGMA j
 				}
 				if sig == "" && len(lr.Lines) > 0 {
 					sig = bestSigLine(lr.Lines)
+				}
+				if files == "" && len(lr.Fixed) > 0 {
+					files = strings.Join(lr.Fixed, ",")
 				}
 			}
 			if sig == "" {

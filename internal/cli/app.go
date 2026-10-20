@@ -60,6 +60,8 @@ type app struct {
 	written  map[string]string // notes this process wrote: path -> hash
 	holdLock bool              // take the space lock before the command looks anything up
 	heldLock string            // the lock file held for the whole command
+	ctxSkip  int64             // a note printContext leaves out (printed by the caller)
+	again    bool              // --again: print what this conversation was shown before
 }
 
 // errStale: a note changed on disk after this command looked it up (another

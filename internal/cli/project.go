@@ -210,6 +210,9 @@ is printed like pg resume.`,
 					}
 				}
 				a.println(`next: pg done <id> after each step | pg log "<finding>" | pg decide "<decision>" | your notes: pg new note "<title>" --dir <folder>`)
+				if !a.dryRun {
+					a.printBrief(s, p, projectNote(s, p))
+				}
 				return nil
 			})
 		},
@@ -298,7 +301,11 @@ func (a *app) continueProject(s *store, p, viaNote, goal string, steps, decision
 		msg += fmt.Sprintf(", %d added", added)
 	}
 	a.ok(msg)
-	return a.printProject(s, p, true)
+	if err := a.printProject(s, p, true); err != nil {
+		return err
+	}
+	a.printBrief(s, p, projectNote(s, p))
+	return nil
 }
 
 // noteNamed finds a note inside a project whose file name or title is
@@ -354,7 +361,11 @@ list of projects.`,
 					return err
 				}
 			}
-			return a.printProject(s, p, true)
+			if err := a.printProject(s, p, true); err != nil {
+				return err
+			}
+			a.printBrief(s, p, projectNote(s, p))
+			return nil
 		},
 	}
 }
@@ -397,12 +408,7 @@ func (a *app) logCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			parts := splitText(text)
-			block := []string{"- " + today() + " " + clock() + " " + parts[0]}
-			for _, p := range parts[1:] {
-				block = append(block, "  "+p)
-			}
-			return a.appendTo("notes", block)
+			return a.appendTo("notes", logBlock(text))
 		},
 	}
 }
@@ -452,27 +458,7 @@ tasks, last log line.`,
 			if text == "" {
 				text = a.mechanicalHandoff(s, f)
 			}
-			return a.withLock(s, func() error {
-				n, err := a.load(s, f)
-				if err != nil {
-					return err
-				}
-				block := append([]string{"Checkpoint " + stamp() + "."}, splitText(text)...)
-				sec := findSection(s, f, "handoff")
-				if sec == nil {
-					a.appendToSection(n, f, "handoff")(block)
-				} else {
-					if to := lastLine(n.lines, sec.Line+1, sec.BodyEnd); to > sec.Line {
-						n.lines = replaceRange(n.lines, sec.Line+1, to, nil)
-					}
-					n.lines, _ = place(n.lines, sec.Line, block)
-				}
-				if err := a.save(n); err != nil {
-					return err
-				}
-				a.ok(f.Addr() + "#" + a.sec(s, "handoff"))
-				return nil
-			})
+			return a.writeHandoff(s, f, text)
 		},
 	}
 }

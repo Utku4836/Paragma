@@ -80,7 +80,7 @@ func TestRelatedAndContext(t *testing.T) {
 	if n := textutil.Tokens(out); n > 1600 {
 		t.Errorf("context over budget: %d tokens", n)
 	}
-	small := mustRun(t, v, "context", "jwt timezone", "--budget", "120")
+	small := mustRun(t, v, "context", "jwt timezone", "--budget", "120", "--again")
 	if !strings.Contains(small, "over budget (pg read <addr>): ") {
 		t.Errorf("small budget should list what did not fit:\n%s", small)
 	}
@@ -240,5 +240,36 @@ func TestRelatedChangesAndHistory(t *testing.T) {
 	}
 	if i, j := strings.Index(out, "[rule]"), strings.Index(out, "[error"); i < 0 || (j >= 0 && j < i) {
 		t.Errorf("rules must come before errors:\n%s", out)
+	}
+}
+
+// Reading code by part: the declarations of a file, one declaration, a
+// method by Type.Method, a Python method inside its class, a line range.
+func TestReadCode(t *testing.T) {
+	v := copyVault(t)
+	repo := t.TempDir()
+	t.Chdir(repo)
+	goSrc := "package pay\n\nimport \"errors\"\n\nvar ErrNo = errors.New(\"no\")\n\n// Charge takes money.\nfunc Charge(n int) (int, error) {\n\tif n < 0 { // a { in a comment\n\t\treturn 0, ErrNo\n\t}\n\ts := \"}\"\n\t_ = s\n\treturn n, nil\n}\n\ntype Cart struct {\n\tN int\n}\n\nfunc (c *Cart) Total() int {\n\treturn c.N\n}\n"
+	pySrc := "class Cart:\n    def total(self):\n        return 1\n\n    def tax(self):\n        return 2\n\n\ndef helper():\n    pass\n"
+	os.WriteFile(filepath.Join(repo, "pay.go"), []byte(goSrc), 0o644)
+	os.WriteFile(filepath.Join(repo, "cart.py"), []byte(pySrc), 0o644)
+	out := mustRun(t, v, "outline", "pay.go")
+	for _, want := range []string{"pay.go#ErrNo  L5-5", "pay.go#Charge  L8-15", "pay.go#Cart  L17-19", "pay.go#Cart.Total  L21-23"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("outline lacks %q:\n%s", want, out)
+		}
+	}
+	out = mustRun(t, v, "read", "pay.go#Charge")
+	if !strings.Contains(out, "pay.go#Charge  L7-15") || !strings.Contains(out, "// Charge takes money.") || strings.Contains(out, "type Cart") {
+		t.Errorf("read Charge:\n%s", out)
+	}
+	if out := mustRun(t, v, "read", "pay.go#Total", "cart.py#Cart.tax"); !strings.Contains(out, "return c.N") || !strings.Contains(out, "return 2") || strings.Contains(out, "return 1") {
+		t.Errorf("read methods:\n%s", out)
+	}
+	if out := mustRun(t, v, "read", "pay.go:5-5"); !strings.Contains(out, "var ErrNo") || strings.Contains(out, "Charge") {
+		t.Errorf("read range:\n%s", out)
+	}
+	if _, errs, code := run(t, v, "read", "pay.go#Nope"); code != ExitNotFound || !strings.Contains(errs, "pg outline pay.go") {
+		t.Errorf("missing declaration: %d %s", code, errs)
 	}
 }

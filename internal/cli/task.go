@@ -251,6 +251,12 @@ func (a *app) changeTasks(ids []string, fn func(s *store, n *note, t *addr.Targe
 				tc := index.CountTasks(ts, 1, 1<<30)
 				if tc.Open == 0 {
 					a.printf("all %d tasks in %s are done\n", tc.Total, f.Addr())
+					if f.Type == "project" && lastState != '-' && !a.recentHandoff(s, f) {
+						// the work is over: leave the handoff now, the agent may stop here
+						if err := a.writeHandoff(s, f, a.mechanicalHandoff(s, f)); err != nil {
+							return err
+						}
+					}
 				}
 			}
 		}
@@ -303,19 +309,28 @@ func (a *app) taskStateCmd(use, short, state string, extra func(c *cobra.Command
 // taskDoneCmd builds "done" (both pg task done and pg done).
 func (a *app) taskDoneCmd() *cobra.Command {
 	var force bool
-	done := a.taskStateCmd("done", "Mark tasks done [x] with today's date; prints the next task in full", "x", func(c *cobra.Command) func(*md.TaskLine, *note, *addr.Target) error {
-		c.Flags().BoolVar(&force, "force", false, "close even with open subtasks")
-		return func(tl *md.TaskLine, n *note, t *addr.Target) error {
-			if open := openChildren(n, t); len(open) > 0 && !force {
-				return fail(ExitValidation, "%s has open subtasks: %s; finish them or add --force", t.Addr(), strings.Join(open, ", "))
+	var logText string
+	c := &cobra.Command{
+		Use:   "done <id>... [--log TEXT]",
+		Short: "Mark tasks done [x] with today's date, optionally logging what was found; prints the next task in full",
+		Long: `Mark tasks done. --log adds a line to the current project's Log in the
+same call. When the last open step of a project is done, its handoff is
+written for the next conversation.`,
+		Example: "pg done t3f4\npg done t3f4 t3f5 --log \"refund window uses clock.Now\"",
+		Args:    cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := a.changeTasks(args, markDone(force)); err != nil {
+				return err
 			}
-			tl.Set("done", today())
-			tl.Set("blocked", "")
+			if logText != "" {
+				return a.appendTo("notes", logBlock(logText))
+			}
 			return nil
-		}
-	})
-	done.Example = "pg done t3f4\npg done t3f4 t3f5"
-	return done
+		},
+	}
+	c.Flags().BoolVar(&force, "force", false, "close even with open subtasks")
+	c.Flags().StringVar(&logText, "log", "", "a finding to add to the project's Log")
+	return c
 }
 
 func (a *app) taskCmd() *cobra.Command {
