@@ -1,6 +1,6 @@
 # Results
 
-## OpenCode with free models (2026-10-20, v0.1.3)
+## OpenCode with DeepSeek V4.1 Flash and GLM-5.3 Flash (2026-10-20, v0.1.3)
 
 Agents: OpenCode 2.0 with DeepSeek V4.1 Flash and GLM-5.3 Flash, both at the `max` reasoning variant. Every run starts from a fresh copy of `fixture/shopkit` in a temporary folder, with a fresh OpenCode profile (no history, no global instructions) and a clean environment: `pg` is on the PATH only in the Paragma condition. Memory: the large one (1,539 notes). Plain notes get `agents/files.AGENTS.md`; Paragma gets the section written by `pg setup opencode`. One run per task, model and condition.
 
@@ -19,7 +19,7 @@ What changed against the previous run of the same tests:
 - `pg start` on the existing project used to fail, and agents fell back to many `pg decide` calls or opened a second project. It now continues the project.
 - `pg related` shows each error's fix and folds errors with the same fix, so agents stopped opening them one by one.
 
-## Antigravity with Gemini (2026-10)
+## Antigravity with Gemini 3.8 Flash (2026-10)
 
 Agent: Antigravity CLI with Gemini 3.8 Flash High. One run per cell. Setup, scenarios and hidden checks are described in [README.md](README.md). Raw logs are not committed; `evaluate.py` and `why_flagged.py` reproduce the tables from a runs directory.
 

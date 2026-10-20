@@ -23,7 +23,7 @@ Paragma answers in one step:
 
 ## Results
 
-The same knowledge reached two ways: as plain Markdown notes the agent reads with its own tools, or through Paragma. Real agents, OpenCode with two free models (DeepSeek V4.1 Flash and GLM-5.3 Flash, both at their highest reasoning effort), each run in a fresh copy of a small Go project with a memory of 1,539 notes:
+The same knowledge reached two ways: as plain Markdown notes the agent reads with its own tools, or through Paragma. Real agents, OpenCode with DeepSeek V4.1 Flash and GLM-5.3 Flash (both at their highest reasoning effort), each run in a fresh copy of a small Go project with a memory of 1,539 notes:
 
 | Tasks | Access | Result | Tool calls | Tokens processed | Time |
 | --- | --- | --- | --- | --- | --- |
@@ -34,7 +34,7 @@ The same knowledge reached two ways: as plain Markdown notes the agent reads wit
 
 Both ways were equally correct. With Paragma the agents processed about a third of the tokens on questions and half on coding tasks, with fewer tool calls; Paragma was the cheaper of the two in 15 of 16 paired runs.
 
-The coding tasks are a recurring error whose obvious fix is wrong, a feature finished in a second conversation that only knows what the first one recorded, and a change governed by project rules. Without memory, agents failed parts of each in earlier runs. Each task ran once per model and condition, so read the ratios as a trend. Earlier runs, including Antigravity with Gemini, are in [bench/RESULTS.md](bench/RESULTS.md).
+The coding tasks are a recurring error whose obvious fix is wrong, a feature finished in a second conversation that only knows what the first one recorded, and a change governed by project rules. Without memory, agents failed parts of each in earlier runs. Each task ran once per model and condition, so read the ratios as a trend. Earlier runs, including Antigravity with Gemini 3.8 Flash, are in [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Install
 
