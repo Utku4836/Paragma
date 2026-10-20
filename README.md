@@ -23,18 +23,18 @@ Paragma answers in one step:
 
 ## Results
 
-The same knowledge reached two ways: as plain Markdown notes the agent reads with its own tools, or through Paragma. Five questions answered from memory by the same agent (Antigravity CLI, Gemini 3.8 Flash High):
+The same knowledge reached two ways: as plain Markdown notes the agent reads with its own tools, or through Paragma. Real agents, OpenCode with two free models (DeepSeek V4.1 Flash and GLM-5.3 Flash, both at their highest reasoning effort), each run in a fresh copy of a small Go project with a memory of 1,539 notes:
 
-| Memory | Access | Correct facts | Tool calls | Tokens processed | Time |
+| Tasks | Access | Result | Tool calls | Tokens processed | Time |
 | --- | --- | --- | --- | --- | --- |
-| 149 notes | plain notes | 17/17 | 42 | 1.14M | 281 s |
-| 149 notes | **Paragma** | 17/17 | **19** | **0.40M** | **173 s** |
-| 1,539 notes | plain notes | 17/17 | 60 | 2.17M | 591 s |
-| 1,539 notes | **Paragma** | 17/17 | **12** | **0.32M** | **163 s** |
+| 5 questions from memory, 2 models | plain notes | 33/34 facts | 85 | 0.79M | 684 s |
+| | **Paragma** | 33/34 facts | **24** | **0.27M** | 772 s |
+| 3 coding tasks, 2 models | plain notes | 28/28 hidden tests | 267 | 4.94M | 2,673 s |
+| | **Paragma** | 28/28 hidden tests | **213** | **2.40M** | **2,115 s** |
 
-Both always answered correctly. With Paragma the agent made 2 to 5 times fewer tool calls and processed 3 to 7 times fewer tokens, and its cost did not grow with the memory.
+Both ways were equally correct. With Paragma the agents processed about a third of the tokens on questions and half on coding tasks, with fewer tool calls; Paragma was the cheaper of the two in 15 of 16 paired runs.
 
-In full coding tasks, memory decides correctness: without it the agent fixed a recurring error the wrong way and missed a project rule it could not know; with the same knowledge, as notes or through Paragma, every task passed its hidden tests. Setup, scenarios and limits are in [bench/](bench/README.md) and [bench/RESULTS.md](bench/RESULTS.md).
+The coding tasks are a recurring error whose obvious fix is wrong, a feature finished in a second conversation that only knows what the first one recorded, and a change governed by project rules. Without memory, agents failed parts of each in earlier runs. Each task ran once per model and condition, so read the ratios as a trend. Earlier runs, including Antigravity with Gemini, are in [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Install
 
@@ -65,7 +65,7 @@ pg setup
 | Antigravity | CLI, IDE | `~/.gemini/AGENTS.md` | `AGENTS.md` in its folder |
 | OpenCode | CLI | `~/.config/opencode/AGENTS.md` | `AGENTS.md` in its folder |
 
-The benchmarks above were run with Antigravity. In scripts: `pg setup codex --global` or `pg setup claude --dir .`
+The results above were measured with OpenCode, earlier ones with Antigravity. In scripts: `pg setup codex --global` or `pg setup claude --dir .`
 
 ## What the agent does with it
 
@@ -73,18 +73,23 @@ The agent learns these commands from the section `pg setup` writes; `pg help` li
 
 ```bash
 pg prime                         # start of a conversation: what memory holds
+pg start payments --goal "Card payments" --step "Webhook" --step "Tests" --decision "Discount before VAT"
+pg tree                          # the code: files, their declarations, the rules and errors about each
+pg related payments/refund.go    # before changing a file: its rules, decisions, past fixes, last commits
 pg context "refund"              # rules, decisions and fixes on a topic, in one call
 pg run -- go test ./...          # on failure: the known fix; on success: rules for the files you changed
-pg start payments --goal "Card payments" --step "Webhook" --step "Tests" --decision "Discount before VAT"
 pg done t2f4                     # mark a step done; prints the next one in full
+pg checkpoint "where it stands"  # before stopping: a handoff for the next conversation
 pg resume payments               # in a new conversation: goal, decisions, open steps, changed code
 pg error record --from-last --cause "CRLF checkout" --fix "Normalise line endings before hashing"
 ```
 
+`pg start` on a project that exists continues it. `pg related` without a path lists the files you changed with the rules that apply to them. Notes, folders and whole projects are renamed or moved with `pg mv`, and many `pg` calls can run at once.
+
 ## How it works
 
 - **Spaces and projects.** Notes are plain Markdown in `~/.paragma/Spaces/<space>/<project>/`. A space works like an Obsidian vault: search and links stay inside it. Open the folder in any editor.
-- **One index.** A SQLite full-text index next to the notes is updated on every call and can be deleted at any time.
+- **One index.** A SQLite full-text index next to the notes is updated on every call and can be deleted at any time. Parallel calls wait for each other's writes instead of failing.
 - **Addresses.** Every result starts with an address the agent can pass back: `shopkit/rules^r003`, `payments/payments#Decisions`, `shopkit/errors/catalog-checksum-crlf`.
 - **Local.** Paragma never opens a network connection. Memory stays on your computer and out of git.
 

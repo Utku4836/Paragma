@@ -1,5 +1,26 @@
 # Results
 
+## OpenCode with free models (2026-10-20, v0.1.3)
+
+Agents: OpenCode 2.0 with DeepSeek V4.1 Flash and GLM-5.3 Flash, both at the `max` reasoning variant. Every run starts from a fresh copy of `fixture/shopkit` in a temporary folder, with a fresh OpenCode profile (no history, no global instructions) and a clean environment: `pg` is on the PATH only in the Paragma condition. Memory: the large one (1,539 notes). Plain notes get `agents/files.AGENTS.md`; Paragma gets the section written by `pg setup opencode`. One run per task, model and condition.
+
+| Tasks | Model | Plain notes: result, calls, tokens | Paragma: result, calls, tokens |
+| --- | --- | --- | --- |
+| 5 questions | DeepSeek | 17/17 facts, 58 calls, 0.48M | 17/17 facts, **17** calls, **0.16M** |
+| 5 questions | GLM | 16/17 facts, 27 calls, 0.30M | 16/17 facts, **7** calls, **0.10M** |
+| 3 coding tasks | DeepSeek | 3/3 full, 154 calls, 3.10M | 3/3 full, **117** calls, **1.08M** |
+| 3 coding tasks | GLM | 3/3 full, 113 calls, 1.84M | 3/3 full, **96** calls, **1.32M** |
+
+Paired by task, model and condition, plain notes processed 2.14 times the tokens of Paragma (95% bootstrap interval 1.45 to 3.29) and made 1.49 times the tool calls (1.22 to 2.06); Paragma was cheaper in 15 of 16 pairs (sign test p = 0.001). The one missed fact (a past duplicate migration number) was left out by GLM in both conditions.
+
+What changed against the previous run of the same tests:
+
+- The continuation task (two conversations) failed with Paragma before (38%): the first conversation never recorded the user's decisions. The instructions now say to record them with `pg start` before writing code and to leave `pg checkpoint` before the final answer; both models then passed it.
+- `pg start` on the existing project used to fail, and agents fell back to many `pg decide` calls or opened a second project. It now continues the project.
+- `pg related` shows each error's fix and folds errors with the same fix, so agents stopped opening them one by one.
+
+## Antigravity with Gemini (2026-10)
+
 Agent: Antigravity CLI with Gemini 3.8 Flash High. One run per cell. Setup, scenarios and hidden checks are described in [README.md](README.md). Raw logs are not committed; `evaluate.py` and `why_flagged.py` reproduce the tables from a runs directory.
 
 Three conditions:
