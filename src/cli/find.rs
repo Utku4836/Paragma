@@ -63,7 +63,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let rest = &hits[shown..];
     for (project, h) in rest.iter().take(ONE_LINERS) {
         let id = if several { format!("{project}:{}", h.id) } else { h.id.clone() };
-        b.add(&format!("{id} {} {}: {}", h.kind.as_str(), where_(h), one_line(&h.text, 90)));
+        b.add(&format!("{id} {} {}{}: {}", h.kind.as_str(), where_(h), similar(h), one_line(&h.text, 90)));
     }
     if rest.len() > ONE_LINERS {
         b.add(&format!("+{} more: pg find \"{query}\" --budget {}", rest.len() - ONE_LINERS, cx.budget * 2));
@@ -78,5 +78,10 @@ fn where_(h: &Hit) -> String {
 }
 
 fn full(id: &str, h: &Hit) -> String {
-    format!("[{id} {}] {}\n{}\n", h.kind.as_str(), where_(h), h.text.trim())
+    format!("[{id} {}] {}{}\n{}\n", h.kind.as_str(), where_(h), similar(h), h.text.trim())
+}
+
+/// "  (+3 similar)" when near duplicates were folded into the result.
+fn similar(h: &Hit) -> String {
+    if h.similar == 0 { String::new() } else { format!("  (+{} similar)", h.similar) }
 }
