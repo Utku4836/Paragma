@@ -1,0 +1,13 @@
+[package]
+name = "build-model"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Builds the embedding model pg ships: Latin-script Model2Vec, compiled for fast loading"
+
+[dependencies]
+anyhow = "1"
+fst = "0.4"
+half = "2"
+safetensors = "0.8"
+serde_json = "1"

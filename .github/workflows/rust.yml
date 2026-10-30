@@ -1,0 +1,35 @@
+name: Rust
+
+on:
+  push:
+    branches: [main, v2-rust]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal -c clippy,rustfmt && rustup default stable
+        shell: bash
+      # the embedding model's source files (about 500 MB), downloaded once
+      - uses: actions/cache@v4
+        with:
+          path: target/model-src
+          key: model-src-potion-multilingual-128M
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/release
+          key: cargo-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: bash tools/build-model/fetch.sh
+        shell: bash
+      - run: cargo fmt --check
+      - run: cargo clippy --release --all-targets -- -D warnings
+      - run: cargo test --release

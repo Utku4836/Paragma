@@ -1,0 +1,34 @@
+[package]
+name = "paragma"
+version = "0.2.0-dev"
+edition = "2024"
+description = "Agent-first memory: project notes as Markdown files, found by hybrid search"
+license = "MIT"
+repository = "https://github.com/Utku4836/Paragma"
+default-run = "pg"
+
+[[bin]]
+name = "pg"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+fst = "0.4"
+half = "2"
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde_json = "1"
+unicode-normalization = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+
+[workspace]
+members = [".", "tools/build-model"]

@@ -5,3 +5,5 @@
 /bench/memory-big/
 /bench/quick-runs*/
 __pycache__/
+/target/
+/model/
