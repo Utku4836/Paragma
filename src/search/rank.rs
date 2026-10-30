@@ -1,7 +1,7 @@
 //! The two rankings hybrid search merges: by words (BM25) and by meaning
 //! (vector similarity).
 
-use super::query;
+use super::{glossary, query};
 use crate::embed;
 use crate::index::Index;
 use anyhow::Result;
@@ -13,12 +13,15 @@ const COMMON_WORD: f64 = 0.35;
 /// Pieces less similar than this in meaning are not candidates.
 const MIN_SIMILARITY: f32 = 0.15;
 
-/// Pieces by BM25 over the query's words (prefix matched), title weighed
-/// over heading over text. Words most pieces contain are left out.
+/// Pieces by BM25 over the query's words (prefix matched) and the words of
+/// the glossary concepts it mentions, title weighed over heading over text.
+/// Words most pieces contain are left out.
 pub fn by_words(index: &Index, query: &str) -> Result<Vec<i64>> {
     let total = index.count("SELECT COUNT(*) FROM chunks").max(1) as f64;
     let mut df = index.db.prepare_cached("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH ?1")?;
-    let words: Vec<String> = query::words(query)
+    let mut candidates = query::words(query);
+    candidates.extend(glossary::related_words(query, &candidates));
+    let words: Vec<String> = candidates
         .into_iter()
         .filter(|w| {
             df.query_row([format!("\"{w}\"*")], |r| r.get::<_, i64>(0)).unwrap_or(0) as f64 / total <= COMMON_WORD

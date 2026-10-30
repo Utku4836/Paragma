@@ -4,6 +4,7 @@
 //! duplicates fold into one result.
 
 mod dedup;
+mod glossary;
 mod query;
 mod rank;
 

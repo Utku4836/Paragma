@@ -1,0 +1,134 @@
+# Software and business terms across Latin-script languages.
+# One concept per line: the English term first, then its words in Turkish,
+# Spanish, German, French, Portuguese and Italian (and common abbreviations).
+# A query word found here is also searched as the concept's other words that
+# memory uses. General vocabulary only: nothing here is written for a test.
+#
+# A query word matches a word here when they are equal, or when one starts
+# with the other and the rest is a short ending (iade -> iadesi, redondear ->
+# redondea); words of three letters or fewer only match whole.
+
+vat | tax | kdv | vergi | iva | impuesto | mwst | mehrwertsteuer | umsatzsteuer | steuer | tva | taxe | impôt | imposto | tributo | imposta
+refund | iade | geri ödeme | reembolso | devolución | rückerstattung | erstattung | remboursement | rembourser | estorno | devolução | rimborso
+payment | ödeme | pago | zahlung | paiement | pagamento
+invoice | fatura | factura | rechnung | facture | nota fiscal | fattura
+discount | coupon | indirim | kupon | descuento | cupón | rabatt | gutschein | réduction | remise | desconto | cupom | sconto
+price | fiyat | precio | preis | prix | preço | prezzo
+amount | tutar | miktar | importe | cantidad | betrag | montant | valor | quantia | importo
+money | para | dinero | geld | argent | dinheiro | denaro | soldi
+currency | para birimi | döviz | moneda | divisa | währung | devise | monnaie | moeda | valuta
+cart | sepet | carrito | warenkorb | panier | carrinho | carrello
+order | sipariş | pedido | orden | bestellung | auftrag | commande | encomenda | ordine
+customer | müşteri | cliente | kunde | client
+account | hesap | cuenta | konto | compte | conta | conto
+user | kullanıcı | usuario | benutzer | nutzer | utilisateur | usuário | utente
+password | şifre | parola | contraseña | passwort | kennwort | mot de passe | senha | password
+secret | gizli | sır | secreto | geheimnis | secret | segredo | segreto
+key | anahtar | clave | llave | schlüssel | clé | chave | chiave
+token | jeton | ficha | jeton
+login | giriş | oturum açma | inicio de sesión | anmeldung | connexion | entrar | accesso
+authentication | auth | kimlik doğrulama | autenticación | authentifizierung | authentification | autenticação | autenticazione
+permission | yetki | izin | permiso | berechtigung | autorisation | permissão | permesso
+role | rol | rolle | rôle | papel | ruolo
+database | db | veritabanı | base de datos | datenbank | base de données | banco de dados | base di dati | database
+table | tablo | tabla | tabelle | tableau | table | tabela | tabella
+schema | şema | esquema | schéma | schema
+migration | taşıma | migración | migrierung | migration | migração | migrazione
+query | sorgu | consulta | abfrage | requête | consulta | query
+index | dizin | indeks | índice | indice
+transaction | işlem | transacción | transaktion | transaction | transação | transazione
+lock | locked | kilit | kilitli | bloqueo | bloqueado | sperre | gesperrt | verrou | verrouillé | bloqueio | bloqueado | blocco | bloccato
+cache | önbellek | caché | zwischenspeicher | cache
+queue | kuyruk | cola | warteschlange | file d'attente | fila | coda
+worker | işçi | trabajador | arbeiter | travailleur | trabalhador | lavoratore
+job | görev | iş | trabajo | tarea | auftrag | tâche | travail | tarefa | lavoro
+schedule | zamanlama | programación | horario | zeitplan | planification | agendamento | pianificazione
+log | logs | günlük | kayıt | registro | protokoll | journal | registo
+error | hata | error | fehler | erreur | erro | errore
+exception | istisna | excepción | ausnahme | exception | exceção | eccezione
+bug | böcek | hata | fallo | defecto | bogue | defeito | difetto
+fix | düzeltme | düzelt | arreglo | corrección | korrektur | behebung | correction | correctif | correção | correzione
+test | testing | sınama | prueba | pruebas | prüfung | essai | teste | prova
+fake | mock | sahte | taklit | falso | simulado | attrappe | gefälscht | factice | simulé | falso | simulado | finto
+fixture | fikstür | dato de prueba | testdaten | données de test | dados de teste
+regression | gerileme | regresión | regression | régression | regressão | regressione
+release | sürüm | yayın | versión | lanzamiento | veröffentlichung | version | lancement | lançamento | rilascio
+version | sürüm | versiyon | versión | version | versão | versione
+tag | etiket | etiqueta | markierung | étiquette | tag
+deploy | deployment | dağıtım | yayına alma | despliegue | bereitstellung | déploiement | implantação | distribuzione
+build | derleme | compilación | kompilierung | compilation | compilação | compilazione
+pipeline | boru hattı | canalización | flujo | pipeline
+ci | sürekli entegrasyon | integración continua | kontinuierliche integration | intégration continue | integração contínua | integrazione continua
+config | configuration | yapılandırma | ayar | ayarlar | configuración | konfiguration | einstellung | einstellungen | configuração | configurazione | impostazione
+environment | ortam | entorno | umgebung | environnement | ambiente
+feature flag | flag | özellik bayrağı | bayrak | indicador | interruptor | schalter | drapeau | sinalizador
+timeout | zaman aşımı | tiempo de espera | zeitüberschreitung | délai | expiration | tempo limite | timeout
+retry | yeniden deneme | reintento | wiederholung | nouvelle tentative | tentativa | riprova
+rate limit | hız sınırı | límite de tasa | ratenbegrenzung | limitation de débit | limite de taxa | limite di frequenza
+request | istek | solicitud | petición | anfrage | requête | requisição | pedido | richiesta
+response | yanıt | cevap | respuesta | antwort | réponse | resposta | risposta
+endpoint | uç nokta | punto final | endpunkt | point de terminaison | ponto de extremidade
+api | arayüz | interfaz | schnittstelle | interface
+webhook | web kancası | gancho web
+event | olay | evento | ereignis | événement
+message | mesaj | mensaje | nachricht | message | mensagem | messaggio
+email | e-posta | correo | e-mail | courriel | email
+notification | bildirim | notificación | benachrichtigung | notification | notificação | notifica
+file | dosya | archivo | fichero | datei | fichier | arquivo | ficheiro | file
+folder | directory | klasör | dizin | carpeta | directorio | ordner | verzeichnis | dossier | répertoire | pasta | diretório | cartella
+upload | yükleme | subida | carga | hochladen | téléversement | envoi | carregamento | caricamento
+download | indirme | descarga | herunterladen | téléchargement | baixar | scaricamento
+image | resim | görsel | imagen | bild | image | imagem | immagine
+report | rapor | informe | reporte | bericht | rapport | relatório | rapporto
+export | dışa aktarma | exportación | exportieren | exportation | exportação | esportazione
+import | içe aktarma | importación | importieren | importation | importação | importazione
+search | arama | búsqueda | suche | recherche | busca | pesquisa | ricerca
+date | tarih | fecha | datum | date | data
+time | zaman | saat | tiempo | hora | zeit | uhrzeit | temps | heure | tempo | ora
+timezone | time zone | saat dilimi | zaman dilimi | zona horaria | zeitzone | fuseau horaire | fuso horário | fuso orario
+clock | saat | reloj | uhr | horloge | relógio | orologio
+duration | süre | duración | dauer | durée | duração | durata
+day | gün | día | tag | jour | dia | giorno
+round | rounding | yuvarlama | yuvarla | redondeo | redondear | rundung | runden | arrondi | arrondir | arredondamento | arredondar | arrotondamento
+decimal | ondalık | decimal | dezimal | décimal | decimale
+integer | int | tamsayı | entero | ganzzahl | entier | inteiro | intero
+float | kayan nokta | coma flotante | gleitkomma | virgule flottante | ponto flutuante | virgola mobile
+string | dize | metin | cadena | zeichenkette | chaîne | sequência | stringa
+id | identifier | kimlik | tanımlayıcı | identificador | kennung | identifiant | identificatore
+name | ad | isim | nombre | name | nom | nome
+package | paket | paquete | paket | paquet | pacote | pacchetto
+module | modül | módulo | modul | module | modulo
+function | fonksiyon | işlev | función | funktion | fonction | função | funzione
+method | metot | yöntem | método | methode | méthode | metodo
+class | sınıf | clase | klasse | classe
+type | tip | tür | tipo | typ | type
+field | alan | campo | feld | champ
+column | sütun | kolon | columna | spalte | colonne | coluna | colonna
+row | satır | fila | zeile | ligne | linha | riga
+rule | kural | regla | regel | règle | regra | regola
+decision | karar | decisión | entscheidung | décision | decisão | decisione
+convention | kural | gelenek | convención | konvention | convention | convenção | convenzione
+review | inceleme | revisión | überprüfung | review | revue | revisão | revisione
+commit | işleme | confirmación | übertragung | validation | confirmação
+branch | dal | rama | zweig | branche | ramo
+merge | birleştirme | fusión | zusammenführen | fusion | mesclagem | unione
+backup | yedek | yedekleme | copia de seguridad | sicherung | sauvegarde | cópia de segurança | backup
+delete | silme | sil | eliminar | borrar | löschen | supprimer | excluir | apagar | eliminare
+update | güncelleme | güncelle | actualización | aktualisierung | mise à jour | atualização | aggiornamento
+security | güvenlik | seguridad | sicherheit | sécurité | segurança | sicurezza
+encryption | şifreleme | cifrado | verschlüsselung | chiffrement | criptografia | crittografia
+hash | özet | karma | hash | empreinte
+checksum | sağlama toplamı | suma de verificación | prüfsumme | somme de contrôle | soma de verificação | checksum
+certificate | sertifika | certificado | zertifikat | certificat | certificato
+server | sunucu | servidor | server | serveur
+client | istemci | cliente | client
+browser | tarayıcı | navegador | browser | navigateur
+connection | bağlantı | conexión | verbindung | connexion | conexão | connessione
+line ending | satır sonu | fin de línea | zeilenende | fin de ligne | fim de linha | fine riga
+encoding | kodlama | codificación | kodierung | encodage | codificação | codifica
+parallel | concurrent | paralel | eşzamanlı | paralelo | concurrente | parallel | gleichzeitig | parallèle | simultané | paralelo | parallelo
+provider | sağlayıcı | proveedor | anbieter | fournisseur | prestataire | provedor | fornecedor | fornitore
+service | hizmet | servis | servicio | dienst | service | serviço | servizio
+validation | doğrulama | validación | validierung | prüfung | validation | validação | convalida
+window | pencere | ventana | fenster | fenêtre | janela | finestra
+limit | sınır | límite | grenze | limite

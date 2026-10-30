@@ -149,6 +149,17 @@ QUESTIONS = [
     ("held-other", "golden", "dónde viven los archivos golden", None),
     ("held-other", "logs", "wie werden Logzeilen formatiert", None),
     ("held-other", "releases", "comment les versions sont-elles étiquetées", None),
+    # written after the glossary (src/search/glossary.txt): kept apart in the report
+    ("held-late", "ids", "API'de kimlikler hangi biçimde", None),
+    ("held-late", "flags", "dónde se configuran las banderas de funciones", None),
+    ("held-late", "durations", "wie schreibt man Zeitdauern in der Konfiguration", None),
+    ("held-late", "init", "peut-on utiliser des fonctions init", None),
+    ("held-late", "ci", "o que roda na integração contínua", None),
+    ("held-late", "database", "quale database usa il servizio API", None),
+    ("held-late", "sentinel", "sentinel hataları nasıl adlandırılır", None),
+    ("held-late", "logreturn", "debo registrar un error antes de devolverlo", None),
+    ("held-late", "secrets", "woher kommen die Geheimnisse", None),
+    ("held-late", "golden", "où vivent les fichiers golden", None),
     ("held-absent", None, "best pizza dough hydration", None),
     ("held-absent", None, "react native navigation stack", None),
     ("held-absent", None, "docker compose volume mounts", None),
@@ -162,7 +173,7 @@ QUESTIONS = [
 
 
 LANG_SETS = ("topic", "paraphrase", "turkish", "spanish", "german", "french", "portuguese")
-HELD_SETS = ("held-en", "held-other")
+HELD_SETS = ("held-en", "held-other", "held-late")
 
 
 def tokens(s):

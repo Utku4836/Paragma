@@ -1,9 +1,10 @@
 //! Text to meaning vectors with the embedded Model2Vec model.
 //!
 //! A static model: every token has a fixed vector and a text's vector is the
-//! normalised mean of its tokens' vectors. The model files (built by
-//! tools/build-model) are compiled into the binary and read in place, so
-//! loading costs a few milliseconds.
+//! mean of its tokens' vectors, each weighted by how much information it
+//! carries (frequent pieces like "the" or "de" count little), normalised. The model files
+//! (built by tools/build-model) are compiled into the binary and read in
+//! place, so loading costs a few milliseconds.
 
 mod tokenize;
 
@@ -14,6 +15,11 @@ static SCORES: &[u8] = include_bytes!("../../model/scores.f32");
 static TABLE: &[u8] = include_bytes!("../../model/table.bin");
 static SCALES: &[u8] = include_bytes!("../../model/scales.f32");
 static META: &str = include_str!("../../model/meta.json");
+
+/// SIF weighting (Arora et al. 2017): a token counts a / (a + p), p its
+/// probability. Measured with bench/quality.py: 0.001 beats no weighting
+/// and 0.0001.
+const SIF_A: f32 = 0.001;
 
 pub struct Encoder {
     vocab: fst::Map<&'static [u8]>,
@@ -36,11 +42,11 @@ enum Dtype {
 pub fn fingerprint() -> String {
     let m: serde_json::Value = serde_json::from_str(META).unwrap_or_default();
     format!(
-        "{}-{}x{}-{}",
+        "{}-{}x{}-{}-sif{SIF_A}",
         m["source"].as_str().unwrap_or(""),
         m["rows"],
         m["dim"],
-        m["dtype"].as_str().unwrap_or("f16")
+        m["dtype"].as_str().unwrap_or("f16"),
     )
 }
 
@@ -68,25 +74,37 @@ impl Encoder {
     /// The text's vector, unit length (all zeros for a text with no known token).
     pub fn encode(&self, text: &str) -> Vec<f32> {
         let mut v = vec![0f32; self.dim];
-        let mut n = 0;
+        let mut total = 0f32;
         for id in tokenize::ids(self, text) {
             if id <= self.unk {
                 continue; // padding and unknown tokens carry no meaning
             }
-            self.add_row(id as usize, &mut v);
-            n += 1;
+            let w = self.weight(id);
+            self.add_row(id as usize, w, &mut v);
+            total += w;
+        }
+        if total == 0.0 {
+            return vec![0f32; self.dim];
         }
         normalize(&mut v);
-        if n == 0 { vec![0f32; self.dim] } else { v }
+        v
     }
 
-    fn add_row(&self, id: usize, v: &mut [f32]) {
+    /// How much a token counts: a / (a + p), p its probability. Rare tokens
+    /// carry more information (-log p) and count nearly fully; the most
+    /// frequent ones count little.
+    fn weight(&self, id: u32) -> f32 {
+        let p = score_at(id).exp();
+        SIF_A / (SIF_A + p)
+    }
+
+    fn add_row(&self, id: usize, w: f32, v: &mut [f32]) {
         let d = self.dim;
-        let scale = || f32::from_le_bytes(SCALES[id * 4..id * 4 + 4].try_into().expect("4 bytes"));
+        let scale = || w * f32::from_le_bytes(SCALES[id * 4..id * 4 + 4].try_into().expect("4 bytes"));
         match self.dtype {
             Dtype::F16 => {
                 for (x, b) in v.iter_mut().zip(TABLE[id * d * 2..(id + 1) * d * 2].as_chunks::<2>().0) {
-                    *x += half::f16::from_le_bytes(*b).to_f32();
+                    *x += w * half::f16::from_le_bytes(*b).to_f32();
                 }
             }
             Dtype::I8 => {
