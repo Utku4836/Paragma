@@ -97,7 +97,7 @@ pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
 /// Rules and decisions bind the work; errors carry fixes; plain notes last.
 fn kind_weight(k: Kind) -> f64 {
     match k {
-        Kind::Rule | Kind::Decision => 1.25,
+        Kind::Rule | Kind::Decision => 1.5,
         Kind::Error => 1.1,
         Kind::Project => 1.0,
         Kind::Note => 0.9,

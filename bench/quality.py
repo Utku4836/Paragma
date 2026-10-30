@@ -7,6 +7,7 @@ Question sets:
   paraphrase  the same needs in other words
   turkish     the same needs in Turkish (also spanish, german, french, portuguese)
   absent      things memory does not hold: the right answer is nothing
+  held-*      a held-out set no tuning looks at: a change must not make it worse
 
     python bench/quality.py [--budget N] [--go]   (--go also runs the Go version)
 """
@@ -28,6 +29,21 @@ PG_GO = os.path.join(ROOT, "bin", "pg" + EXE)
 sys.path.insert(0, HERE)
 
 FACTS = {
+    # the held-out set: facts no tuning looked at
+    "wrap": [r"(?i)fmt\.Errorf|operation name"],
+    "logreturn": [r"(?i)do not log and return|caller logs"],
+    "ids": [r"ULID"],
+    "secrets": [r"(?i)environment only|\.env"],
+    "logs": [r"(?i)JSON lines", r"(?i)request bodies|PII"],
+    "flags": [r"flags\.yaml"],
+    "releases": [r"vMAJOR"],
+    "durations": [r"(?i)duration strings|\"30s\""],
+    "packages": [r"(?i)singular"],
+    "init": [r"init\(\)"],
+    "golden": [r"testdata", r"(?i)line endings"],
+    "database": [r"(?i)postgres"],
+    "sentinel": [r"ErrXxx"],
+    "ci": [r"golangci-lint|go vet"],
     "refund": [r"30 days", r"ErrRefundWindow", r"audit\.Record", r"ErrInvalidAmount|exceed the paid amount"],
     "checksum": [r"(?i)line endings|\\r\\n", r"gitattributes", r"(?i)do not change ExpectedChecksum"],
     "locked": [r"WAL", r"busy_timeout"],
@@ -113,6 +129,30 @@ QUESTIONS = [
     ("portuguese", "provider", "qual provedor de pagamento usamos e como ele é simulado nos testes", None),
     ("portuguese", "time", "como lidar com fusos horários e a hora atual", None),
     ("portuguese", "migrations", "regras para alterar o esquema do banco de dados", None),
+    ("held-en", "wrap", "how should errors be wrapped", None),
+    ("held-en", "logreturn", "should I log an error before returning it", None),
+    ("held-en", "ids", "what format do public IDs use in the API", None),
+    ("held-en", "secrets", "where do secrets come from", None),
+    ("held-en", "logs", "how are log lines formatted", None),
+    ("held-en", "flags", "where are feature flags configured", None),
+    ("held-en", "releases", "how are releases tagged", None),
+    ("held-en", "durations", "how to write durations in the config", None),
+    ("held-en", "packages", "naming rules for Go packages", None),
+    ("held-en", "init", "can I use init functions", None),
+    ("held-en", "golden", "where do golden files live", None),
+    ("held-en", "database", "which database does the API service use", None),
+    ("held-en", "sentinel", "how are sentinel errors named", None),
+    ("held-en", "ci", "what runs in CI", None),
+    ("held-other", "wrap", "hatalar nasıl sarmalanmalı", None),
+    ("held-other", "secrets", "gizli anahtarlar nereden okunur", None),
+    ("held-other", "packages", "cómo se nombran los paquetes", None),
+    ("held-other", "golden", "dónde viven los archivos golden", None),
+    ("held-other", "logs", "wie werden Logzeilen formatiert", None),
+    ("held-other", "releases", "comment les versions sont-elles étiquetées", None),
+    ("held-absent", None, "best pizza dough hydration", None),
+    ("held-absent", None, "react native navigation stack", None),
+    ("held-absent", None, "docker compose volume mounts", None),
+    ("held-absent", None, "ışık hızı saniyede kaç kilometre", None),
     ("absent", None, "how do I bake sourdough bread", None),
     ("absent", None, "kubernetes horizontal pod autoscaler settings", None),
     ("absent", None, "ekmek hamuru nasıl mayalanır", None),
@@ -122,6 +162,7 @@ QUESTIONS = [
 
 
 LANG_SETS = ("topic", "paraphrase", "turkish", "spanish", "german", "french", "portuguese")
+HELD_SETS = ("held-en", "held-other")
 
 
 def tokens(s):
@@ -178,12 +219,19 @@ def main():
         r = [x for x in rows if x[0] == name and x[1] == "absent"]
         quiet = sum(1 for x in r if x[7] == 1)
         print(f"| {name} | absent | nothing found in {quiet}/{len(r)} | | {statistics.mean(x[5] for x in r):,.0f} | |")
-        r = [x for x in rows if x[0] == name and x[1] != "absent"]
+        r = [x for x in rows if x[0] == name and x[1] in LANG_SETS]
         print(f"| {name} | **all** | **{sum(x[3] for x in r)}/{sum(x[4] for x in r)}** | {sum(1 for x in r if x[3] == x[4])}/{len(r)} | "
               f"{statistics.mean(x[5] for x in r):,.0f} | |")
+        for st in HELD_SETS:
+            r = [x for x in rows if x[0] == name and x[1] == st]
+            print(f"| {name} | {st} | {sum(x[3] for x in r)}/{sum(x[4] for x in r)} | {sum(1 for x in r if x[3] == x[4])}/{len(r)} | "
+                  f"{statistics.mean(x[5] for x in r):,.0f} | {statistics.median(x[6] for x in r):,.0f} |")
+        r = [x for x in rows if x[0] == name and x[1] == "held-absent"]
+        quiet = sum(1 for x in r if x[7] == 1)
+        print(f"| {name} | held-absent | nothing found in {quiet}/{len(r)} | | {statistics.mean(x[5] for x in r):,.0f} | |")
     print("\nmissed:")
     for x in rows:
-        if x[1] != "absent" and x[3] < x[4]:
+        if "absent" not in x[1] and x[3] < x[4]:
             print(f"  {x[0]:6} {x[1]:10} {x[2]:10} {x[3]}/{x[4]}")
 
 
