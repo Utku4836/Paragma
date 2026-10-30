@@ -9,4 +9,4 @@ mkdir -p "$src"
 for f in config.json tokenizer.json model.safetensors; do
 	[ -s "$src/$f" ] || curl -sSfL -o "$src/$f" "https://huggingface.co/minishlab/$name/resolve/main/$f"
 done
-cargo run --release -q -p build-model -- "$src" "$root/model"
+cargo run --release -q -p build-model -- "$src" "$root/model" --keep latin --dtype i4

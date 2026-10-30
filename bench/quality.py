@@ -5,7 +5,7 @@ as bench/quick.py.
 Question sets:
   topic       the topics agents ask about (quick.py's questions)
   paraphrase  the same needs in other words
-  turkish     the same needs in Turkish
+  turkish     the same needs in Turkish (also spanish, german, french, portuguese)
   absent      things memory does not hold: the right answer is nothing
 
     python bench/quality.py [--budget N] [--go]   (--go also runs the Go version)
@@ -73,12 +73,55 @@ QUESTIONS = [
     ("turkish", "provider", "ödeme sağlayıcısı hangisi ve testlerde nasıl taklit edilir", None),
     ("turkish", "time", "saat dilimi ve zaman kuralları", None),
     ("turkish", "migrations", "veritabanı şema değişikliği kuralları", None),
+    ("spanish", "refund", "cuántos días después del pago puede un cliente pedir un reembolso", None),
+    ("spanish", "checksum", "la prueba del catálogo falla en Windows con un checksum distinto", None),
+    ("spanish", "locked", "la base de datos está bloqueada cuando las pruebas corren en paralelo", None),
+    ("spanish", "tests", "qué reglas siguen las pruebas unitarias en este proyecto", None),
+    ("spanish", "vat", "cómo se redondea el IVA", None),
+    ("spanish", "money", "qué tipo se usa para los importes de dinero en el código", None),
+    ("spanish", "discount", "dónde se validan los códigos de descuento", None),
+    ("spanish", "provider", "qué proveedor de pagos usamos y cómo se simula en las pruebas", None),
+    ("spanish", "time", "cómo se manejan las zonas horarias y la hora actual", None),
+    ("spanish", "migrations", "reglas para cambiar el esquema de la base de datos", None),
+    ("german", "refund", "wie viele Tage nach der Zahlung ist eine Rückerstattung erlaubt", None),
+    ("german", "checksum", "der Katalogtest schlägt unter Windows mit falscher Prüfsumme fehl", None),
+    ("german", "locked", "Datenbank ist gesperrt wenn Tests parallel laufen", None),
+    ("german", "tests", "welche Regeln gelten für Unit-Tests in diesem Projekt", None),
+    ("german", "vat", "wie wird die Mehrwertsteuer gerundet", None),
+    ("german", "money", "welcher Typ wird für Geldbeträge im Code verwendet", None),
+    ("german", "discount", "wo werden Rabattcodes geprüft", None),
+    ("german", "provider", "welcher Zahlungsanbieter wird genutzt und wie wird er in Tests ersetzt", None),
+    ("german", "time", "wie werden Zeitzonen und die aktuelle Uhrzeit behandelt", None),
+    ("german", "migrations", "Regeln für Änderungen am Datenbankschema", None),
+    ("french", "refund", "combien de jours après le paiement un client peut-il être remboursé", None),
+    ("french", "checksum", "le test du catalogue échoue sous Windows avec une somme de contrôle différente", None),
+    ("french", "locked", "la base de données est verrouillée quand les tests tournent en parallèle", None),
+    ("french", "tests", "quelles règles suivent les tests unitaires de ce projet", None),
+    ("french", "vat", "comment la TVA est-elle arrondie", None),
+    ("french", "money", "quel type sert pour les montants d'argent dans le code", None),
+    ("french", "discount", "où les codes de réduction sont-ils validés", None),
+    ("french", "provider", "quel prestataire de paiement utilisons-nous et comment est-il simulé dans les tests", None),
+    ("french", "time", "comment gérer les fuseaux horaires et l'heure actuelle", None),
+    ("french", "migrations", "règles pour modifier le schéma de la base de données", None),
+    ("portuguese", "refund", "quantos dias depois do pagamento um cliente pode pedir reembolso", None),
+    ("portuguese", "checksum", "o teste do catálogo falha no Windows com checksum diferente", None),
+    ("portuguese", "locked", "o banco de dados fica bloqueado quando os testes rodam em paralelo", None),
+    ("portuguese", "tests", "quais regras os testes unitários deste projeto seguem", None),
+    ("portuguese", "vat", "como o imposto sobre valor agregado é arredondado", None),
+    ("portuguese", "money", "que tipo é usado para valores em dinheiro no código", None),
+    ("portuguese", "discount", "onde os códigos de desconto são validados", None),
+    ("portuguese", "provider", "qual provedor de pagamento usamos e como ele é simulado nos testes", None),
+    ("portuguese", "time", "como lidar com fusos horários e a hora atual", None),
+    ("portuguese", "migrations", "regras para alterar o esquema do banco de dados", None),
     ("absent", None, "how do I bake sourdough bread", None),
     ("absent", None, "kubernetes horizontal pod autoscaler settings", None),
     ("absent", None, "ekmek hamuru nasıl mayalanır", None),
     ("absent", None, "unity shader graph render pipeline", None),
     ("absent", None, "zzkq vrwx", None),
 ]
+
+
+LANG_SETS = ("topic", "paraphrase", "turkish", "spanish", "german", "french", "portuguese")
 
 
 def tokens(s):
@@ -128,13 +171,16 @@ def main():
     print("| system | set | facts found | full answers | tokens (mean) | ms (median) |")
     print("|---|---|---|---|---|---|")
     for name, _ in systems:
-        for st in ("topic", "paraphrase", "turkish"):
+        for st in LANG_SETS:
             r = [x for x in rows if x[0] == name and x[1] == st]
             print(f"| {name} | {st} | {sum(x[3] for x in r)}/{sum(x[4] for x in r)} | {sum(1 for x in r if x[3] == x[4])}/{len(r)} | "
                   f"{statistics.mean(x[5] for x in r):,.0f} | {statistics.median(x[6] for x in r):,.0f} |")
         r = [x for x in rows if x[0] == name and x[1] == "absent"]
         quiet = sum(1 for x in r if x[7] == 1)
         print(f"| {name} | absent | nothing found in {quiet}/{len(r)} | | {statistics.mean(x[5] for x in r):,.0f} | |")
+        r = [x for x in rows if x[0] == name and x[1] != "absent"]
+        print(f"| {name} | **all** | **{sum(x[3] for x in r)}/{sum(x[4] for x in r)}** | {sum(1 for x in r if x[3] == x[4])}/{len(r)} | "
+              f"{statistics.mean(x[5] for x in r):,.0f} | |")
     print("\nmissed:")
     for x in rows:
         if x[1] != "absent" and x[3] < x[4]:

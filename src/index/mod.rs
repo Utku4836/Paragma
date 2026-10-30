@@ -10,7 +10,8 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::time::Duration;
 
-/// Bumped whenever the tables change; an index of another version is rebuilt.
+/// Bumped whenever the tables change; an index of another version, or
+/// built with another model, is rebuilt.
 const SCHEMA_VERSION: &str = "1";
 
 const SCHEMA: &str = "
@@ -70,17 +71,18 @@ impl Index {
         let version = |db: &Connection| -> Option<String> {
             db.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| r.get(0)).ok()
         };
-        if version(&self.db).as_deref() == Some(SCHEMA_VERSION) {
+        let wanted = format!("{SCHEMA_VERSION}/{}", crate::embed::fingerprint());
+        if version(&self.db).as_deref() == Some(wanted.as_str()) {
             return Ok(());
         }
         // one process builds it; the others wait for the write lock and find it done
         let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        if version(&tx).as_deref() != Some(SCHEMA_VERSION) {
+        if version(&tx).as_deref() != Some(wanted.as_str()) {
             tx.execute_batch(
                 "DROP TABLE IF EXISTS meta; DROP TABLE IF EXISTS notes; DROP TABLE IF EXISTS chunks; DROP TABLE IF EXISTS chunks_fts;",
             )?;
             tx.execute_batch(SCHEMA)?;
-            tx.execute("INSERT INTO meta(key, value) VALUES ('schema', ?1)", [SCHEMA_VERSION])?;
+            tx.execute("INSERT INTO meta(key, value) VALUES ('schema', ?1)", [&wanted])?;
         }
         tx.commit()?;
         Ok(())
