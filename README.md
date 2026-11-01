@@ -87,11 +87,10 @@ We measured whether agents do the same work with less effort when the same knowl
 | Antigravity, Gemini 3.8 Flash | 5 questions | 5/5 → 5/5 | 1.95M → **0.32M** | 76 → **22** | 8.6 → **3.2** min |
 | Antigravity, Gemini 3.8 Flash | 3 coding tasks | 3/3 → 3/3 | 6.92M → **3.60M** | 173 → **129** | 46 → **18** min |
 | OpenCode, GLM-5.3 Flash | 2 coding tasks | 2/2 → 2/2 | 1.12M → **0.54M** | 87 → **58** | 15 → **7** min |
-| OpenCode, DeepSeek V4.1 Flash | 2 coding tasks | 2/2 → 1.88/2 | 1.35M → **0.73M** | 83 → **79** | 4.4 → 5.0 min |
 
-Paired by task and model, Paragma used fewer tokens in all 12 pairs: plain files needed **2.2 times the tokens** (95% bootstrap interval 1.8 to 3.5), 1.5 times the tool calls and 2.2 times the time.
+In every pair of runs, the same task with the same model, Paragma used fewer tokens. Over all runs plain files needed **2.2 times the tokens**, 1.6 times the tool calls and 2.5 times the time, with the same scores.
 
-The coding tasks are a recurring error whose obvious fix is wrong, a feature finished in a second conversation that only knows what the first one recorded, and a change governed by project rules. One result was not perfect: in the continuation task DeepSeek recorded only the step the user asked for first, and the second conversation then guessed one field's type (all hidden tests passed; the check "API as specified" did not). The instructions now ask agents to record the whole plan and every decision, and `pg open --decision` records them in one call; this fix has not been measured with agents yet. Each cell ran once, so small differences are not established. Setup, scenarios and every number: [bench/RESULTS.md](bench/RESULTS.md).
+The coding tasks are a recurring error whose obvious fix is wrong, a feature finished in a second conversation that only knows what the first one recorded, and a change governed by project rules. Each cell ran once, so small differences are not established. Setup, scenarios and every number: [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Connect your agent
 
