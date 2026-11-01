@@ -1,4 +1,8 @@
 <p align="center">
+  <img src=".github/assets/icon.png" width="96" alt="Paragma logo">
+</p>
+
+<p align="center">
   <img src=".github/assets/banner.png" width="100%" alt="Paragma">
 </p>
 
