@@ -1,6 +1,26 @@
 # Results
 
-## OpenCode with DeepSeek V4.1 Flash and GLM-5.3 Flash (2026-10-20, v0.1.3)
+## Paragma 0.2 with Gemini 3.8 Flash, GLM-5.3 Flash and DeepSeek V4.1 Flash (2026-11-01)
+
+Agents: Antigravity CLI with Gemini 3.8 Flash High; OpenCode 2.1 with GLM-5.3 Flash and DeepSeek V4.1 Flash at the `max` reasoning variant. Every run starts from a fresh copy of `fixture/shopkit` in a temporary folder, with a fresh agent profile and a clean environment: `pg` is on the PATH only in the Paragma condition. Memory: the large one (1,539 notes, about 186k tokens). Plain notes get `agents/files.AGENTS.md`; Paragma gets the section `pg setup` writes, exactly as a user gets it. One run per task, model and condition.
+
+| Tasks | Model | Plain notes: score, calls, tokens, time | Paragma: score, calls, tokens, time |
+| --- | --- | --- | --- |
+| 5 questions | Gemini | 5/5, 76 calls, 1.95M, 8.6 min | 5/5, **22** calls, **0.32M**, **3.2** min |
+| S1 recurring error | Gemini | 100%, 36 calls, 0.93M | 100%, **17** calls, **0.26M** |
+| S2 continuation | Gemini | 100%, 76 calls, 3.23M | 100%, **70** calls, **2.09M** |
+| S3 project rules | Gemini | 100%, 61 calls, 2.77M | 100%, **42** calls, **1.25M** |
+| S1 recurring error | GLM | 100%, 33 calls, 0.40M | 100%, **18** calls, **0.15M** |
+| S2 continuation | GLM | 100%, 54 calls, 0.73M | 100%, **40** calls, **0.39M** |
+| S1 recurring error | DeepSeek | 100%, 30 calls, 0.56M | 100%, **28** calls, **0.21M** |
+| S2 continuation | DeepSeek | 100%, 53 calls, 0.80M | 88%, **51** calls, **0.52M** |
+
+Paired by task and model, plain notes processed 2.18 times the tokens of Paragma (95% bootstrap interval 1.78 to 3.45), made 1.45 times the tool calls (1.23 to 1.96) and took 2.22 times as long (1.29 to 4.82). Paragma was cheaper in all 12 pairs (sign test p < 0.001). Mean score: 100% with plain notes, 99% with Paragma.
+
+- **The one incomplete result.** In S2 the user gives four decisions and a four-step plan and asks for step (a) only. DeepSeek recorded only step (a); the second conversation then chose another type for the discount field. All four hidden tests passed, the check "API as specified" did not. The core instructions now ask for every step and decision in the user's words, and `pg open --decision` records decisions in one call. Not measured with agents yet.
+- **Not run.** The five questions and S3 with GLM and DeepSeek stopped at the provider's usage limit and were not repeated.
+
+## Paragma 0.1: OpenCode with DeepSeek V4.1 Flash and GLM-5.3 Flash (2026-10-20, v0.1.3)
 
 Agents: OpenCode 2.0 with DeepSeek V4.1 Flash and GLM-5.3 Flash, both at the `max` reasoning variant. Every run starts from a fresh copy of `fixture/shopkit` in a temporary folder, with a fresh OpenCode profile (no history, no global instructions) and a clean environment: `pg` is on the PATH only in the Paragma condition. Memory: the large one (1,539 notes). Plain notes get `agents/files.AGENTS.md`; Paragma gets the section written by `pg setup opencode`. One run per task, model and condition.
 
@@ -19,7 +39,7 @@ What changed against the previous run of the same tests:
 - `pg start` on the existing project used to fail, and agents fell back to many `pg decide` calls or opened a second project. It now continues the project.
 - `pg related` shows each error's fix and folds errors with the same fix, so agents stopped opening them one by one.
 
-## Antigravity with Gemini 3.8 Flash (2026-10)
+## Paragma 0.1: Antigravity with Gemini 3.8 Flash (2026-10)
 
 Agent: Antigravity CLI with Gemini 3.8 Flash High. One run per cell. Setup, scenarios and hidden checks are described in [README.md](README.md). Raw logs are not committed; `evaluate.py` and `why_flagged.py` reproduce the tables from a runs directory.
 
