@@ -77,13 +77,25 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     let mut shown = 0;
     let mut in_full = Vec::new();
+    let mut stale: Vec<(String, crate::code::stale::Staleness)> =
+        projects.iter().map(|p| (p.name.clone(), crate::code::stale::Staleness::new(&cx.home, p))).collect();
+    let indexes: Vec<(String, Index)> =
+        projects.iter().map(|p| Ok((p.name.clone(), Index::open(p)?))).collect::<Result<_>>()?;
     for (project, h) in &hits {
         let id = if several { format!("{project}:{}", h.id) } else { h.id.clone() };
         let block = if seen.contains(&(project.clone(), h.id.clone())) {
             format!("{id} {} {}: {} (shown above; pg read {id})", h.kind.as_str(), where_(h), one_line(&h.text, 70))
         } else {
             in_full.push((project.clone(), h.id.clone()));
-            full(&id, h)
+            let props = indexes.iter().find(|i| i.0 == *project).map(|i| i.1.props_at(&h.path)).unwrap_or_default();
+            let warning = match stale.iter_mut().find(|s| s.0 == *project) {
+                Some((_, s)) => s.check(&props)?,
+                None => None,
+            };
+            match warning {
+                Some(w) => full(&id, h).replacen('\n', &format!("\n({w})\n"), 1),
+                None => full(&id, h),
+            }
         };
         if b.add(&block) {
             shown += 1;

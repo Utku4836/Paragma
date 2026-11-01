@@ -192,13 +192,20 @@ fn write_record(cx: &Context, a: &Args) -> Result<()> {
             why: a.why.as_deref(),
             alternatives: a.alternatives.as_deref(),
             supersedes: a.supersedes.as_deref(),
+            commit: crate::code::head_commit(&cx.home, project),
         };
         ("decision", record::decision(project, &d).map_err(usage)?)
     } else {
         let line = a.error.as_deref().unwrap_or_default();
         let (files, symbols) =
             if a.files.is_empty() { code_of(cx, project, line)? } else { (a.files.clone(), Vec::new()) };
-        let e = ErrorInput { line, cause: a.cause.as_deref(), fix: a.fix.as_deref(), files, symbols };
+        let commit = crate::code::head_commit(&cx.home, project);
+        let code_state = match crate::code::notes::open(&cx.home, project)? {
+            Some(code) => crate::code::stale::state_of(&code, &files, &symbols)?,
+            None => None,
+        };
+        let e =
+            ErrorInput { line, cause: a.cause.as_deref(), fix: a.fix.as_deref(), files, symbols, commit, code_state };
         ("error", record::error(project, &e).map_err(usage)?)
     };
     let state = State::open(project)?;

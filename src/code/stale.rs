@@ -1,8 +1,12 @@
-//! Notes about code that changed since they were written. A note written
-//! with the code's commit (`commit:`) and the code it is about (`files:`,
-//! `symbols:`) is checked against the code now: when the lines of its
-//! functions changed (or many lines of its files), output says so, because
-//! a note that was right then may be wrong now.
+//! Notes about code that changed since they were written: a note that was
+//! right then may be wrong now, so output says so.
+//!
+//! A record written about code keeps the state of that code as it was:
+//! `code_state: payments/refund.go#Refund=9f3a1c2b` (the hash of the
+//! function's body, or of a whole file), taken after the fix the record
+//! describes, so a fix does not make its own note stale. Notes with only a
+//! `commit:` are checked with git: did the lines of their functions change
+//! since that commit?
 
 use super::{CodeIndex, git};
 use crate::project::{Home, Project};
@@ -29,6 +33,9 @@ impl<'a> Staleness<'a> {
     /// "code changed since it was written: payments/refund.go#Refund", or
     /// None when it did not (or there is nothing to check).
     pub fn check(&mut self, props: &Value) -> Result<Option<String>> {
+        if let Some(state) = props["code_state"].as_str() {
+            return self.against_state(state);
+        }
         let Some(commit) = props["commit"].as_str() else { return Ok(None) };
         let list = |key: &str| -> Vec<String> {
             props[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect()
@@ -37,10 +44,7 @@ impl<'a> Staleness<'a> {
         if files.is_empty() && symbols.is_empty() {
             return Ok(None);
         }
-        if self.code.is_none() {
-            self.code = Some(super::notes::open(self.home, self.project)?);
-        }
-        let Some(Some(code)) = &self.code else { return Ok(None) };
+        let Some(code) = self.code()? else { return Ok(None) };
 
         // the files to look at, with the functions named in each
         let mut places: Vec<(String, String, Vec<String>)> = Vec::new();
@@ -82,12 +86,78 @@ impl<'a> Staleness<'a> {
                 continue;
             }
             for s in code.symbols_of(&folder, &path)? {
-                let named = names.iter().any(|n| s.qualified == *n || s.name == *n || s.qualified.ends_with(&format!(".{n}")));
+                let named =
+                    names.iter().any(|n| s.qualified == *n || s.name == *n || s.qualified.ends_with(&format!(".{n}")));
                 if named && hunks.iter().any(|(a, b)| s.start <= *b && s.end >= *a) {
                     changed.push(format!("{shown}#{}", s.qualified));
                 }
             }
         }
-        Ok((!changed.is_empty()).then(|| format!("code changed since it was written: {}", changed.join(", "))))
+        Ok(said(changed))
     }
+
+    fn code(&mut self) -> Result<Option<&CodeIndex>> {
+        if self.code.is_none() {
+            self.code = Some(super::notes::open(self.home, self.project)?);
+        }
+        Ok(self.code.as_ref().and_then(|c| c.as_ref()))
+    }
+
+    /// Each "place=hash" of a code_state compared with the code now.
+    fn against_state(&mut self, state: &str) -> Result<Option<String>> {
+        let Some(code) = self.code()? else { return Ok(None) };
+        let mut changed = Vec::new();
+        for entry in state.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            let Some((place, then)) = entry.rsplit_once('=') else { continue };
+            if now(code, place)?.is_some_and(|h| format!("{h:08x}").get(..8) != Some(then)) {
+                changed.push(place.to_string());
+            }
+        }
+        Ok(said(changed))
+    }
+}
+
+fn said(changed: Vec<String>) -> Option<String> {
+    (!changed.is_empty()).then(|| format!("code changed since it was written: {}", changed.join(", ")))
+}
+
+/// The hash of a place now: "file#Symbol" (its body) or "file" (all of it).
+/// None when the place is gone (a rename the notes follow, or a deletion).
+fn now(code: &CodeIndex, place: &str) -> Result<Option<u64>> {
+    let (file, symbol) = match place.split_once('#') {
+        Some((f, s)) => (f, Some(s)),
+        None => (place, None),
+    };
+    let Some((folder, path)) = code.locate(file)? else { return Ok(None) };
+    Ok(match symbol {
+        Some(s) => code.symbols_of(&folder, &path)?.into_iter().find(|x| x.qualified == s).map(|x| x.body_hash),
+        None => {
+            let dir = code.folders.iter().find(|f| f.key == folder).map(|f| f.dir.clone()).unwrap_or_default();
+            std::fs::read_to_string(dir.join(&path)).ok().map(|t| super::parse::hash(&t))
+        }
+    })
+}
+
+/// The state of some code now, to keep with a record about it: each named
+/// function's body hash, and the hash of each file with no function named.
+pub fn state_of(code: &CodeIndex, files: &[String], symbols: &[String]) -> Result<Option<String>> {
+    let mut entries: Vec<String> = Vec::new();
+    let mut covered: Vec<String> = Vec::new();
+    for s in symbols {
+        for x in code.named(s.rsplit('#').next().unwrap_or(s))? {
+            let place = format!("{}#{}", code.display(&x.folder, &x.path), x.qualified);
+            entries.push(format!("{place}={:08x}", x.body_hash).chars().take(place.len() + 9).collect());
+            covered.push(code.display(&x.folder, &x.path));
+        }
+    }
+    for f in files.iter().filter(|f| !f.ends_with('/')) {
+        if let Some((folder, path)) = code.locate(f)?
+            && !covered.contains(&code.display(&folder, &path))
+            && let Some(h) = now(code, &code.display(&folder, &path))?
+        {
+            let place = code.display(&folder, &path);
+            entries.push(format!("{place}={}", &format!("{h:08x}")[..8]));
+        }
+    }
+    Ok((!entries.is_empty()).then(|| entries.join(", ")))
 }

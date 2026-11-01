@@ -57,6 +57,38 @@ fn hunk(h: &str) -> Option<(usize, usize)> {
     Some((start.max(1), (start + len.max(1) - 1).max(1)))
 }
 
+/// The commit checked out (its first 12 characters).
+pub fn head(dir: &Path) -> Option<String> {
+    let h = git(dir, &["rev-parse", "HEAD"])?;
+    Some(h.trim().chars().take(12).collect())
+}
+
+/// The lines of a file (as it is now) changed since a commit, committed or
+/// not; None when git does not know the commit or the file.
+pub fn changed_since(dir: &Path, commit: &str, path: &str) -> Option<Vec<(usize, usize)>> {
+    let diff = git(dir, &["diff", "-U0", "--no-color", "--no-ext-diff", commit, "--", path])?;
+    Some(diff.lines().filter_map(|l| l.strip_prefix("@@ ")).filter_map(hunk).collect())
+}
+
+/// Commits since a time (seconds since the epoch): their subjects, newest
+/// first, and the files they changed.
+pub fn since(dir: &Path, time: i64) -> (Vec<String>, Vec<String>) {
+    let Some(log) = git(dir, &["log", &format!("--since=@{time}"), "--name-only", "--format=%x00%s"]) else {
+        return (Vec::new(), Vec::new());
+    };
+    let (mut subjects, mut files) = (Vec::new(), Vec::new());
+    for commit in log.split('\0').filter(|c| !c.trim().is_empty()) {
+        let mut lines = commit.lines();
+        subjects.push(lines.next().unwrap_or("").trim().to_string());
+        for f in lines.map(str::trim).filter(|l| !l.is_empty()) {
+            if !files.iter().any(|x: &String| x == f) {
+                files.push(f.to_string());
+            }
+        }
+    }
+    (subjects, files)
+}
+
 /// How often each other file changed in the same commit as each file, over
 /// the last commits.
 pub fn changed_together(dir: &Path, commits: usize) -> HashMap<String, Vec<(String, usize)>> {

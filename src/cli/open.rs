@@ -213,6 +213,9 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
         b.add(&format!("earlier ({}): {}", h.heading, one_line(&h.text, 90)));
     }
     let now = now();
+    if let Some(line) = since_last(cx, project, state, now)? {
+        b.add(&line);
+    }
     let working: Vec<String> = state
         .other_sessions(now - RECENT)?
         .iter()
@@ -238,10 +241,13 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
             .collect();
         if !hits.is_empty() {
             b.add("matching the goal and steps:");
+            let mut stale = crate::code::stale::Staleness::new(&cx.home, project);
             for h in &hits {
+                let changed =
+                    if stale.check(&index.props_at(&h.path))?.is_some() { " (its code changed since)" } else { "" };
                 let place =
                     if h.heading.is_empty() { h.path.trim_end_matches(".md").to_string() } else { h.heading.clone() };
-                b.add(&format!("{} {} {place}: {}", h.id, h.kind.as_str(), one_line(&h.text, 100)));
+                b.add(&format!("{} {} {place}: {}{changed}", h.id, h.kind.as_str(), one_line(&h.text, 100)));
             }
             state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(), false)?;
         }
@@ -267,8 +273,51 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
 /// Code lines of the brief: how the tests run (or how they last went),
 /// what is changed and not committed, and the code the goal and steps are
 /// likely about, with the tests that broke before when it changed.
+/// "since the last handoff (2 h ago): 3 commits (fix refund window; ...),
+/// files: a, b (+4); new in memory: r7, e12": what moved while no
+/// conversation was here.
+fn since_last(cx: &Context, project: &Project, state: &State, now: i64) -> Result<Option<String>> {
+    let Some(at) = state.last_finish() else { return Ok(None) };
+    let mut parts = Vec::new();
+    let (mut subjects, mut files) = (Vec::new(), Vec::new());
+    for f in Links::load(&cx.home).folders_of(&project.name) {
+        let (s, fs) = git::since(Path::new(&f), at);
+        subjects.extend(s);
+        files.extend(fs);
+    }
+    if !subjects.is_empty() {
+        let shown: Vec<String> = subjects.iter().take(3).map(|s| one_line(s, 50)).collect();
+        let more = if subjects.len() > 3 { "; ..." } else { "" };
+        parts.push(format!("{} ({}{more})", count(subjects.len() as i64, "commit"), shown.join("; ")));
+    }
+    if !files.is_empty() {
+        let more = files.len().saturating_sub(5);
+        let shown = files.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+        parts.push(format!("files: {shown}{}", if more > 0 { format!(" (+{more})") } else { String::new() }));
+    }
+    let written = state.written_since(at)?;
+    if !written.is_empty() {
+        parts.push(format!("new in memory: {}", written.iter().take(8).cloned().collect::<Vec<_>>().join(", ")));
+    }
+    Ok((!parts.is_empty()).then(|| format!("since the last handoff ({}): {}", ago(at, now), parts.join("; "))))
+}
+
 fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Result<()> {
-    match state.runs(None, 1)?.pop() {
+    let stack: Vec<String> = code.folders.iter().flat_map(|f| work::stack(&f.dir)).collect();
+    if !stack.is_empty() {
+        b.add(&format!("stack: {}", stack.join("; ")));
+    }
+    let used = state.commands(4)?;
+    if !used.is_empty() {
+        let list: Vec<String> = used
+            .iter()
+            .map(|(c, n, exit)| format!("{c} ({n}x, last {})", if *exit == 0 { "passed" } else { "failed" }))
+            .collect();
+        b.add(&format!("run here before: {}", list.join(", ")));
+    }
+    // the last run that ran tests (not a script or an API call)
+    let last_tests = state.runs(None, 30)?.into_iter().find(|r| r.passed > 0 || !r.failing.is_empty());
+    match last_tests {
         Some(r) => b.add(&format!("tests: {} (again: pg run -- {})", testrun::describe(&r), r.command)),
         None => match code.folders.iter().find_map(|f| work::test_command(&f.dir)) {
             Some(cmd) => b.add(&format!("tests: pg run -- {cmd}")),

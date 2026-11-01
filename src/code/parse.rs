@@ -242,7 +242,7 @@ fn calls_in(node: Node, src: &str) -> Vec<String> {
 }
 
 /// FNV-1a over the text without spacing: stable across versions of pg.
-fn hash(text: &str) -> u64 {
+pub fn hash(text: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in text.bytes().filter(|b| !b.is_ascii_whitespace()) {
         h ^= b as u64;

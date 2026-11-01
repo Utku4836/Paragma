@@ -172,6 +172,15 @@ impl Index {
         Ok(rows)
     }
 
+    /// A note's properties as JSON (Null when it has none).
+    pub fn props_at(&self, path: &str) -> serde_json::Value {
+        self.db
+            .query_row("SELECT props FROM notes WHERE path = ?1", [path], |r| r.get::<_, String>(0))
+            .ok()
+            .and_then(|p| serde_json::from_str(&p).ok())
+            .unwrap_or_default()
+    }
+
     /// The next free id of a kind: n1, n2, ...
     pub fn next_id(&self, kind: Kind) -> Result<String> {
         let prefix = kind.id_prefix();

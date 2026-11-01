@@ -83,6 +83,76 @@ pub fn narrow_test(cmd: &str, dir: &Path, file: &str) -> Option<String> {
     }
 }
 
+/// The package manager of a Node project, from its lock file.
+fn node_manager(dir: &Path) -> &'static str {
+    let has = |f: &str| dir.join(f).exists();
+    if has("pnpm-lock.yaml") {
+        "pnpm"
+    } else if has("yarn.lock") {
+        "yarn"
+    } else if has("bun.lockb") || has("bun.lock") {
+        "bun"
+    } else {
+        "npm"
+    }
+}
+
+/// What a project is built with, from the files at its root: "go 1.22",
+/// "node (pnpm; scripts: dev, build, test)", "make: build, test", ...
+pub fn stack(dir: &Path) -> Vec<String> {
+    let has = |f: &str| dir.join(f).exists();
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
+    let mut out = Vec::new();
+    if has("go.mod") {
+        let version = read("go.mod").lines().find_map(|l| l.strip_prefix("go ").map(|v| v.trim().to_string()));
+        out.push(format!("go{}", version.map(|v| format!(" {v}")).unwrap_or_default()));
+    }
+    if has("Cargo.toml") {
+        out.push("rust (cargo)".to_string());
+    }
+    if has("package.json") {
+        let v: serde_json::Value = serde_json::from_str(&read("package.json")).unwrap_or_default();
+        let scripts: Vec<String> =
+            v["scripts"].as_object().map(|m| m.keys().take(6).cloned().collect()).unwrap_or_default();
+        let scripts = if scripts.is_empty() { String::new() } else { format!("; scripts: {}", scripts.join(", ")) };
+        out.push(format!("node ({}{scripts})", node_manager(dir)));
+    }
+    let python = if has("uv.lock") {
+        Some("uv")
+    } else if has("poetry.lock") {
+        Some("poetry")
+    } else if has("requirements.txt") {
+        Some("pip")
+    } else if has("pyproject.toml") || has("setup.py") {
+        Some("pyproject")
+    } else {
+        None
+    };
+    if let Some(p) = python {
+        out.push(format!("python ({p})"));
+    }
+    if has("Makefile") {
+        let targets: Vec<String> = read("Makefile")
+            .lines()
+            .filter_map(|l| l.split_once(':').map(|(t, _)| t))
+            .filter(|t| {
+                !t.is_empty()
+                    && !t.starts_with(['.', '\t', ' ', '#'])
+                    && t.chars().all(|c| c.is_alphanumeric() || "-_/".contains(c))
+            })
+            .take(8)
+            .map(str::to_string)
+            .collect();
+        out.push(if targets.is_empty() { "make".to_string() } else { format!("make: {}", targets.join(", ")) });
+    }
+    if has("docker-compose.yml") || has("docker-compose.yaml") || has("compose.yaml") || has("compose.yml") {
+        out.push("docker compose".to_string());
+    } else if has("Dockerfile") {
+        out.push("docker".to_string());
+    }
+    out
+}
+
 /// How a project runs its tests, from the files at its root.
 pub fn test_command(dir: &Path) -> Option<&'static str> {
     let has = |f: &str| dir.join(f).exists();
@@ -95,7 +165,13 @@ pub fn test_command(dir: &Path) -> Option<&'static str> {
     if has("package.json") {
         let pkg = std::fs::read_to_string(dir.join("package.json")).unwrap_or_default();
         let v: serde_json::Value = serde_json::from_str(&pkg).unwrap_or_default();
-        return v["scripts"]["test"].is_string().then_some("npm test");
+        let test = match node_manager(dir) {
+            "pnpm" => "pnpm test",
+            "yarn" => "yarn test",
+            "bun" => "bun test",
+            _ => "npm test",
+        };
+        return v["scripts"]["test"].is_string().then_some(test);
     }
     if has("pytest.ini")
         || has("pyproject.toml")

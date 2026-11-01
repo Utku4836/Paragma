@@ -59,6 +59,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         row.kind.as_str(),
         row.path.trim_end_matches(".md")
     ));
+    let props = Index::open(&project)?.props_at(&row.path);
+    if let Some(w) = crate::code::stale::Staleness::new(&cx.home, &project).check(&props)? {
+        b.add(&format!("({w})"));
+    }
     for (k, v) in note.props.iter() {
         if matches!(k.as_str(), "id" | "type" | "title") {
             continue;

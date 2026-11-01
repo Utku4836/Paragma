@@ -59,6 +59,8 @@ pub struct DecisionInput<'a> {
     pub why: Option<&'a str>,
     pub alternatives: Option<&'a str>,
     pub supersedes: Option<&'a str>,
+    /// The code's commit now: what the decision was made against.
+    pub commit: Option<String>,
 }
 
 pub struct ErrorInput<'a> {
@@ -69,6 +71,10 @@ pub struct ErrorInput<'a> {
     pub files: Vec<String>,
     /// The functions it is about ("Refund", "Cart.Total").
     pub symbols: Vec<String>,
+    /// The code's commit now: what it was last seen with.
+    pub commit: Option<String>,
+    /// The state of its code now (code/stale.rs).
+    pub code_state: Option<String>,
 }
 
 pub fn rule(project: &Project, text: &str, group: Option<&str>) -> Result<Written> {
@@ -127,6 +133,9 @@ pub fn decision(project: &Project, d: &DecisionInput) -> Result<Written> {
     let title = d.title.map(str::to_string).unwrap_or_else(|| title_of(d.text));
     let near = nearest(&index, Kind::Decision, d.text)?;
     let fill = |n: &mut Note| {
+        if let Some(c) = &d.commit {
+            n.props.set_text("commit", c.clone());
+        }
         n.set_section("Decision", d.text);
         if let Some(why) = d.why {
             n.set_section("Why", why);
@@ -215,6 +224,12 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
         }
     };
     let fill = |n: &mut Note| {
+        if let Some(c) = &e.commit {
+            n.props.set_text("commit", c.clone());
+        }
+        if let Some(c) = &e.code_state {
+            n.props.set_text("code_state", c.clone());
+        }
         if let Some(c) = e.cause {
             n.set_section("Cause", c);
         }

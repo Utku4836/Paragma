@@ -126,7 +126,11 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                     }
                 }
             }
-            match known(&index, project, line)? {
+            let known = match known(&index, project, line)? {
+                Some(k) => Some(k),
+                None => known_elsewhere(cx, project, line)?,
+            };
+            match known {
                 Some(k) => {
                     b.add(&format!("  known: {k}"));
                 }
@@ -186,6 +190,23 @@ fn known(index: &Index, project: &crate::project::Project, line: &str) -> Result
         note.props.text("seen").and_then(|s| s.parse::<i64>().ok()).map(|n| format!(" (seen {})", count(n, "time")));
     let fix = note.section("Fix").map(|f| one_line(&f, 100)).unwrap_or_else(|| one_line(&note.body, 100));
     Ok(Some(format!("{id}{}: fix: {fix} (pg read {id})", seen.unwrap_or_default())))
+}
+
+/// The fix another project's memory has for an error line: environment
+/// errors (a locked database, line endings, a busy port) repeat across
+/// projects.
+fn known_elsewhere(cx: &Context, here: &crate::project::Project, line: &str) -> Result<Option<String>> {
+    for p in cx.home.projects().iter().filter(|p| p.name != here.name) {
+        let index = Index::open(p)?;
+        if let Some(k) = known(&index, p, line)? {
+            return Ok(Some(format!(
+                "in project {}: {}",
+                p.name,
+                k.replace("(pg read ", &format!("(pg read {}:", p.name))
+            )));
+        }
+    }
+    Ok(None)
 }
 
 /// Files changed (by git) in the project's code folders, as output shows them.

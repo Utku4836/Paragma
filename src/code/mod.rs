@@ -8,6 +8,7 @@ pub mod git;
 pub mod lang;
 pub mod notes;
 pub mod parse;
+pub mod stale;
 pub mod work;
 
 use crate::embed;
@@ -79,6 +80,7 @@ pub struct Sym {
     pub signature: String,
     pub doc: String,
     pub calls: Vec<String>,
+    pub body_hash: u64,
 }
 
 /// A symbol that moved or was renamed: the same body under another name or
@@ -89,6 +91,12 @@ pub struct Rename {
     pub old: String,
     pub new_path: String,
     pub new: String,
+}
+
+/// The commit the project's code is at (its first git folder), to keep
+/// with what is written about it.
+pub fn head_commit(home: &Home, project: &Project) -> Option<String> {
+    Links::load(home).folders_of(&project.name).iter().find_map(|f| git::head(std::path::Path::new(f)))
 }
 
 impl CodeIndex {
@@ -344,6 +352,7 @@ impl CodeIndex {
                     signature: r.get(7)?,
                     doc: r.get(8)?,
                     calls: r.get::<_, String>(9)?.split(' ').filter(|s| !s.is_empty()).map(str::to_string).collect(),
+                    body_hash: r.get::<_, i64>(10)? as u64,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -355,7 +364,8 @@ impl CodeIndex {
 /// (None: it is gone).
 type Stale = (String, String, Option<(i64, u64)>);
 
-const SELECT: &str = "SELECT folder, path, name, qualified, kind, start, end, signature, doc, calls FROM symbols";
+const SELECT: &str =
+    "SELECT folder, path, name, qualified, kind, start, end, signature, doc, calls, body_hash FROM symbols";
 
 /// Parses changed files on every core, each symbol with its meaning vector
 /// (its name's words, its comment, its file); gone files get none.

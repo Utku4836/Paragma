@@ -237,6 +237,38 @@ impl State {
         }
     }
 
+    /// When the last `pg finish` of any conversation was.
+    pub fn last_finish(&self) -> Option<i64> {
+        self.db.query_row("SELECT MAX(at) FROM events WHERE action = 'finish'", [], |r| r.get(0)).ok().flatten()
+    }
+
+    /// The ids written to memory since a time, by any conversation.
+    pub fn written_since(&self, time: i64) -> Result<Vec<String>> {
+        let mut st =
+            self.db.prepare_cached("SELECT detail FROM events WHERE action = 'write' AND at > ?1 ORDER BY rowid")?;
+        let mut ids: Vec<String> = Vec::new();
+        for d in st.query_map([time], |r| r.get::<_, String>(0))? {
+            let d = d?;
+            let id = d.split(' ').next().unwrap_or("").to_string();
+            if !id.is_empty() && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
+    /// The commands run here, most run first: (command, runs, last exit).
+    pub fn commands(&self, limit: usize) -> Result<Vec<(String, i64, i32)>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT command, COUNT(*), (SELECT exit FROM runs r2 WHERE r2.command = r.command ORDER BY rowid DESC LIMIT 1)
+             FROM runs r GROUP BY command ORDER BY COUNT(*) DESC, MAX(at) DESC LIMIT ?1",
+        )?;
+        let rows = st
+            .query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn get(&self, key: &str) -> Option<String> {
         self.db.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).ok()
     }

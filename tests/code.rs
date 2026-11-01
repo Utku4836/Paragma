@@ -124,3 +124,45 @@ fn finish_names_the_changed_code_and_its_rules_and_notes_follow_renames() {
     let d1 = std::fs::read_to_string(&d1).unwrap();
     assert!(d1.contains("symbols: [refundWindow]"), "{d1}");
 }
+
+#[test]
+fn stale_notes_known_fixes_elsewhere_and_what_moved_since() {
+    let (_d, home, code) = shop();
+    // the fix is in the code when the error is written: not stale
+    let fixed = REFUND.replace("days > window()", "days >= window()+1");
+    std::fs::write(code.join("payments/refund.go"), &fixed).unwrap();
+    ok(&home, &code, &["write", "--error", "refund.go:5: refund window exceeded", "--fix", "compare with >="]);
+    let found = ok(&home, &code, &["read", "e1"]);
+    assert!(!found.contains("code changed since"), "{found}");
+    // the function changes later: the note says so
+    std::fs::write(code.join("payments/refund.go"), fixed.replace("return ErrWindow", "return nil")).unwrap();
+    let found = ok(&home, &code, &["read", "e1"]);
+    assert!(found.contains("(code changed since it was written: payments/refund.go#Refund)"), "{found}");
+
+    // another project knows the fix for an error this one has never seen
+    let other = code.parent().unwrap().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    ok(&home, &other, &["open", "other"]);
+    ok(&home, &other, &["write", "--error", "database is locked (5)", "--fix", "WAL and busy_timeout"]);
+    std::fs::write(code.join("fail.cmd"), "@echo store.go:12: database is locked (5)\r\n@exit /b 1\r\n").unwrap();
+    std::fs::write(code.join("fail.sh"), "echo 'store.go:12: database is locked (5)'; exit 1\n").unwrap();
+    let (c, out) = pg(&home, &code, &["run", "--", if cfg!(windows) { r".\fail.cmd" } else { "sh fail.sh" }]);
+    assert_eq!(c, 1, "{out}");
+    assert!(
+        out.contains("known: in project other: e1 (seen 1 time): fix: WAL and busy_timeout (pg read other:e1)"),
+        "{out}"
+    );
+
+    // a new conversation hears what moved since the last handoff, and the stack
+    ok(&home, &code, &["finish", "Looked around."]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    git(&code, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "Refunds on the last day"]);
+    let brief = ok(&home, &code, &["open"]);
+    assert!(
+        brief.contains(
+            "since the last handoff (just now): 1 commit (Refunds on the last day); files: payments/refund.go"
+        ),
+        "{brief}"
+    );
+    assert!(brief.contains("stack: go\n"), "{brief}");
+}
