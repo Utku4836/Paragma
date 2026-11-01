@@ -198,19 +198,25 @@ fn join(args: &[String]) -> String {
         .join(" ")
 }
 
+/// cmd /C, passing the line as it is (cmd has its own quoting).
+#[cfg(windows)]
+fn shell(command: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("cmd");
+    std::os::windows::process::CommandExt::raw_arg(&mut c, format!("/C {command}"));
+    c
+}
+
+#[cfg(not(windows))]
+fn shell(command: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("sh");
+    c.args(["-c", command]);
+    c
+}
+
 /// Runs a command line in the shell; its exit code and its output (stdout
 /// and stderr as they came).
 fn execute(command: &str, cwd: &std::path::Path) -> Result<(i32, String)> {
-    let mut c = if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        #[cfg(windows)]
-        std::os::windows::process::CommandExt::raw_arg(&mut c, format!("/C {command}"));
-        c
-    } else {
-        let mut c = std::process::Command::new("sh");
-        c.args(["-c", command]);
-        c
-    };
+    let mut c = shell(command);
     let mut child = c
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
