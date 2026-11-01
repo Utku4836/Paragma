@@ -168,8 +168,8 @@ pg run -- npm publish --token '$NPM_PUBLISH_TOKEN'
 
 ## How it is tested
 
-- **Unit and end-to-end tests** on Windows, macOS and Linux for every change.
-- **Stress and robustness:** every command from three conversations at once; notes in CRLF, BOM, UTF-16 and Latin-1, empty and very large files, binary files, symlink loops; the first code index built by twelve processes at the same time.
+- **Unit tests** on Windows, macOS and Linux for every change; **end-to-end tests** of every command before each release.
+- **Stress and robustness**, also before each release: every command from three conversations at once; notes in CRLF, BOM, UTF-16 and Latin-1, empty and very large files, binary files, symlink loops; the first code index built by twelve processes at the same time.
 - **Search quality:** 70 questions in English, Turkish, Spanish, German, French and Portuguese against a memory of 1,335 notes (`bench/quality.py`), run before every change to ranking: 153 of the 168 expected facts are found, and nothing is returned for questions memory cannot answer.
 - **Rehearsal:** the agent test tasks replayed step by step without a model (`bench/rehearsal.py`), to catch mistakes before spending a model's time.
 - **Agent tests:** the results above. The project, the memory, the questions, the scenarios and their hidden tests are in [bench/](bench/).

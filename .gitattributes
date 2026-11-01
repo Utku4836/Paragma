@@ -1,2 +1,5 @@
 * text=auto eol=lf
 *.png binary
+
+# the benchmark (Go test project, Python and shell scripts) is not part of the program
+bench/** linguist-vendored

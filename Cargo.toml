@@ -52,4 +52,4 @@ lto = "thin"
 codegen-units = 4
 
 [workspace]
-members = [".", "tools/build-model", "tools/tune-model"]
+members = [".", "tools/build-model"]
