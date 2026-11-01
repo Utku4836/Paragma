@@ -14,6 +14,7 @@ mod skills;
 mod state;
 mod terminal;
 mod testrun;
+mod upgrade;
 
 fn main() -> std::process::ExitCode {
     cli::run()

@@ -14,6 +14,7 @@
 use super::setup_screen as screen;
 use super::{Context, USAGE, fail};
 use crate::agents::{self, Agent};
+use crate::project::Home;
 use crate::skills;
 use crate::terminal;
 use anyhow::Result;
@@ -77,14 +78,15 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             Some(f) => f.join(agent.folder_file),
             None => agent.global.clone(),
         };
-        println!("{}", connect(&style, agent, &path)?);
+        println!("{}", connect(&cx.home, &style, agent, &path)?);
     }
     Ok(())
 }
 
 /// Writes the section for an agent into `path`; the line saying how it went.
-pub(super) fn connect(style: &Style, agent: &Agent, path: &std::path::Path) -> Result<String> {
+pub(super) fn connect(home: &Home, style: &Style, agent: &Agent, path: &std::path::Path) -> Result<String> {
     let what = if skills::install(path)? { "written" } else { "already up to date" };
+    crate::upgrade::remember_setup(home, path);
     Ok(format!("  {} {:<12} {}  {}", style.ok("✓"), agent.name, style.dim(&agents::short(path)), style.dim(what)))
 }
 

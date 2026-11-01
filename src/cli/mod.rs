@@ -129,6 +129,7 @@ pub fn run() -> ExitCode {
 }
 
 fn dispatch(cli: Cli) -> Result<()> {
+    crate::upgrade::run(&Home::locate());
     let cx = context(cli.project.as_deref(), cli.budget)?;
     match cli.command {
         Command::Open(a) => open::run(&cx, a),

@@ -32,6 +32,7 @@ enum Screen {
 }
 
 struct Setup<'a> {
+    home: &'a crate::project::Home,
     style: &'a Style,
     cwd: PathBuf,
     agents: Vec<Agent>,
@@ -59,6 +60,7 @@ struct Setup<'a> {
 pub fn run(cx: &Context, style: &Style) -> Result<bool> {
     let agents: Vec<Agent> = agents::known().into_iter().filter(|a| a.installed).collect();
     let mut s = Setup {
+        home: &cx.home,
         style,
         cwd: cx.cwd.clone(),
         agents,
@@ -405,7 +407,7 @@ impl Setup<'_> {
 
     fn install(&mut self) {
         let a = &self.agents[self.agent];
-        self.message = Some(match connect(self.style, a, &self.target) {
+        self.message = Some(match connect(self.home, self.style, a, &self.target) {
             Ok(line) => {
                 self.done.push(line.clone());
                 line.trim_start().to_string()
