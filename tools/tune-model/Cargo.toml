@@ -1,0 +1,13 @@
+[package]
+name = "tune-model"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Fine-tunes the Model2Vec table on translated sentence pairs so other languages land where English is"
+
+[dependencies]
+anyhow = "1"
+half = "2"
+safetensors = "0.8"
+serde_json = "1"
+unicode-normalization = "0.1"
