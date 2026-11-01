@@ -27,6 +27,13 @@ pub fn section() -> String {
 /// Writes (or replaces) Paragma's section in an instructions file, keeping
 /// the rest of it. Returns whether the file changed.
 pub fn install(path: &std::path::Path) -> Result<bool> {
+    let Some(text) = installed_text(path)? else { return Ok(false) };
+    files::write_atomic(path, text.as_bytes())?;
+    Ok(true)
+}
+
+/// The file with Paragma's section in it; None when it is there already.
+fn installed_text(path: &std::path::Path) -> Result<Option<String>> {
     let old = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -40,15 +47,14 @@ pub fn install(path: &std::path::Path) -> Result<bool> {
                 end += 1;
             }
             if old[i..end] == section {
-                return Ok(false);
+                return Ok(None);
             }
             format!("{}{section}{}", &old[..i], &old[end..])
         }
         _ if old.trim().is_empty() => section,
         _ => format!("{}\n\n{section}", old.trim_end()),
     };
-    files::write_atomic(path, text.as_bytes())?;
-    Ok(true)
+    Ok(Some(text))
 }
 
 /// Whether an instructions file has Paragma's section (any version).

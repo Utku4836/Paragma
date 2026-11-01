@@ -12,6 +12,7 @@ mod record;
 mod search;
 mod skills;
 mod state;
+mod terminal;
 mod testrun;
 
 fn main() -> std::process::ExitCode {

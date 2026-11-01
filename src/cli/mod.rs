@@ -11,6 +11,7 @@ mod read;
 mod rm;
 mod run;
 mod setup;
+mod setup_screen;
 mod skill;
 mod target;
 mod tree;
