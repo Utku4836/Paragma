@@ -13,6 +13,18 @@ pub fn normalize(text: &str) -> String {
     line.split_whitespace().map(word).collect::<Vec<_>>().join(" ")
 }
 
+/// What a signature says, without where (file:line) and without the
+/// marks: what two errors are compared by.
+pub fn message(signature: &str) -> String {
+    signature
+        .split_whitespace()
+        .filter(|w| !(w.contains(':') && w.contains('.') && w.contains("<n>")))
+        .map(|w| w.replace("<n>", "").replace("<hex>", "").replace("<id>", ""))
+        .filter(|w| !w.trim_matches(|c: char| !c.is_alphanumeric()).is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn word(w: &str) -> String {
     // a path: only the file name says something about the error
     let w = if w.matches(['/', '\\']).count() >= 2 { w.rsplit(['/', '\\']).next().unwrap_or(w) } else { w };
@@ -65,5 +77,6 @@ mod tests {
         assert_eq!(normalize("\n  database is locked (5)\nmore"), "database is locked (<n>)");
         assert_eq!(normalize("order 01JBX3K9Q8ZJ4N6V2T7R5M1C0D not found"), "order <id> not found");
         assert_eq!(normalize("utf8 decode failed in main.rs"), "utf8 decode failed in main.rs");
+        assert_eq!(super::message("refund_test.go:<n>: window: got <n>"), "window: got");
     }
 }

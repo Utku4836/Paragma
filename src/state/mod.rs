@@ -6,6 +6,7 @@ pub mod links;
 
 use crate::output::now;
 use crate::project::Project;
+use crate::testrun::Run;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::time::Duration;
@@ -32,6 +33,18 @@ CREATE TABLE IF NOT EXISTS shown(
     PRIMARY KEY(conversation, ref)
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS runs(
+    at INTEGER,
+    conversation TEXT,
+    command TEXT,
+    exit INTEGER,
+    seconds REAL,
+    failing TEXT,
+    passed INTEGER,
+    errors TEXT,
+    changed TEXT
+);
+CREATE INDEX IF NOT EXISTS runs_command ON runs(command, at);
 ";
 
 pub struct State {
@@ -144,6 +157,73 @@ impl State {
     /// When the first conversation worked on the project.
     pub fn first_session(&self) -> Result<Option<i64>> {
         Ok(self.db.query_row("SELECT MIN(started) FROM sessions", [], |r| r.get(0)).optional()?.flatten())
+    }
+
+    pub fn record_run(&self, r: &Run) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO runs(at, conversation, command, exit, seconds, failing, passed, errors, changed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                r.at,
+                conversation::key(),
+                r.command,
+                r.exit,
+                r.seconds,
+                r.failing.join("\n"),
+                r.passed as i64,
+                r.errors.join("\n"),
+                r.changed.join("\n")
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Earlier runs, newest first: of one command, or of any.
+    pub fn runs(&self, command: Option<&str>, limit: usize) -> Result<Vec<Run>> {
+        let sql = "SELECT at, command, exit, seconds, failing, passed, errors, changed FROM runs
+                   WHERE ?1 IS NULL OR command = ?1 ORDER BY rowid DESC LIMIT ?2";
+        let mut st = self.db.prepare_cached(sql)?;
+        let lines = |s: String| -> Vec<String> { s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect() };
+        let rows = st
+            .query_map(params![command, limit as i64], |r| {
+                Ok(Run {
+                    at: r.get(0)?,
+                    command: r.get(1)?,
+                    exit: r.get(2)?,
+                    seconds: r.get(3)?,
+                    failing: lines(r.get(4)?),
+                    passed: r.get::<_, i64>(5)? as usize,
+                    errors: lines(r.get(6)?),
+                    changed: lines(r.get(7)?),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// This conversation's last run since its last `pg finish`.
+    pub fn my_last_run(&self) -> Result<Option<Run>> {
+        let me = conversation::key();
+        let since: i64 = self
+            .db
+            .query_row(
+                "SELECT COALESCE(MAX(at), 0) FROM events WHERE conversation = ?1 AND action = 'finish'",
+                [me],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let command: Option<String> = self
+            .db
+            .query_row(
+                "SELECT command FROM runs WHERE conversation = ?1 AND at >= ?2 ORDER BY rowid DESC LIMIT 1",
+                params![me, since],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match command {
+            Some(c) => Ok(self.runs(Some(&c), 1)?.pop()),
+            None => Ok(None),
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<String> {

@@ -46,8 +46,16 @@ pub struct Encoder {
 }
 
 impl Encoder {
-    fn piece(&self, s: &str) -> Option<(u32, f32)> {
-        self.pieces.get(s).copied()
+    /// The pieces the text starts with: (length in characters, id, score).
+    fn prefixes(&self, chars: &[char], out: &mut Vec<(usize, u32, f32)>) {
+        out.clear();
+        let mut piece = String::new();
+        for (k, c) in chars.iter().enumerate() {
+            piece.push(*c);
+            if let Some(&(id, score)) = self.pieces.get(&piece) {
+                out.push((k + 1, id, score));
+            }
+        }
     }
 }
 

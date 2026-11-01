@@ -13,6 +13,7 @@
 //! the goal and the steps.
 
 use super::{Context, USAGE, fail};
+use crate::code::{CodeIndex, git, work};
 use crate::index::{Index, update_note};
 use crate::note::{Kind, Note};
 use crate::output::{Budget, ago, count, now, one_line};
@@ -21,6 +22,7 @@ use crate::project::{Project, files, plan};
 use crate::search;
 use crate::state::State;
 use crate::state::links::Links;
+use crate::testrun;
 use anyhow::Result;
 use std::path::Path;
 
@@ -57,6 +59,10 @@ const RECENT: i64 = 14 * 86_400;
 const STEPS_SHOWN: usize = 10;
 /// Handoffs before the last one, listed as one line each.
 const EARLIER_HANDOFFS: usize = 2;
+/// Files listed as likely to be touched, or as changed.
+const LIKELY: usize = 5;
+/// How close in meaning (plus name) code must be to the goal to be listed.
+const LIKELY_MIN: f32 = 0.35;
 /// Rules, decisions and errors listed as matching the goal and the steps.
 const RELEVANT: usize = 8;
 
@@ -236,6 +242,9 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
             state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>())?;
         }
     }
+    if let Some(code) = crate::code::notes::open(&cx.home, project)? {
+        code_part(&mut b, &code, state, &query)?;
+    }
     let rules = index.count("SELECT COUNT(*) FROM chunks WHERE kind = 'rule'");
     let of = |k: &str| index.count(&format!("SELECT COUNT(*) FROM notes WHERE kind = '{k}'"));
     b.add(&format!(
@@ -246,6 +255,75 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
         count(of("note"), "note")
     ));
     Ok(b.out)
+}
+
+/// Code lines of the brief: how the tests run (or how they last went),
+/// what is changed and not committed, and the code the goal and steps are
+/// likely about, with the tests that broke before when it changed.
+fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Result<()> {
+    match state.runs(None, 1)?.pop() {
+        Some(r) => b.add(&format!("tests: {} (again: pg run -- {})", testrun::describe(&r), r.command)),
+        None => match code.folders.iter().find_map(|f| work::test_command(&f.dir)) {
+            Some(cmd) => b.add(&format!("tests: pg run -- {cmd}")),
+            None => true,
+        },
+    };
+    let changes = work::changed(code)?;
+    if !changes.is_empty() {
+        let more = changes.len().saturating_sub(LIKELY);
+        let shown: Vec<String> = changes.iter().take(LIKELY).map(|c| c.show(code)).collect();
+        b.add(&format!(
+            "not committed: {}{}",
+            shown.join(", "),
+            if more > 0 { format!(" (+{more})") } else { String::new() }
+        ));
+    }
+    if query.trim().is_empty() {
+        return Ok(());
+    }
+    // by meaning, by name, and a little for what is being changed now
+    let words: Vec<String> = crate::search::words_of(query).into_iter().filter(|w| w.chars().count() >= 4).collect();
+    let mut best: Vec<(String, String, String, f32)> = Vec::new(); // folder, path, symbol, score
+    for (s, sim) in code.nearest(query, 40)? {
+        let name = s.name.to_lowercase();
+        let by_name = if words.iter().any(|w| name.contains(w.as_str())) { 0.25 } else { 0.0 };
+        let changing = if changes.iter().any(|c| c.path == s.path) { 0.1 } else { 0.0 };
+        let score = sim + by_name + changing;
+        match best.iter_mut().find(|e| e.0 == s.folder && e.1 == s.path) {
+            Some(e) if e.3 >= score => {}
+            Some(e) => *e = (s.folder.clone(), s.path.clone(), s.qualified.clone(), score),
+            None => best.push((s.folder.clone(), s.path.clone(), s.qualified.clone(), score)),
+        }
+    }
+    best.sort_by(|a, b| b.3.total_cmp(&a.3));
+    let top = best.first().map(|e| e.3).unwrap_or(0.0);
+    best.retain(|e| e.3 >= LIKELY_MIN && e.3 >= top * 0.8);
+    if best.is_empty() {
+        return Ok(());
+    }
+    let shown: Vec<String> =
+        best.iter().take(LIKELY).map(|(f, p, s, _)| format!("{}#{s}", code.display(f, p))).collect();
+    b.add(&format!("likely code: {}", shown.join(", ")));
+    let first = best.first().map(|(f, p, _, _)| (code.folders.iter().find(|x| x.key == *f), p.as_str()));
+    if let Some((Some(folder), path)) = first
+        && let Some(cmd) = work::test_command(&folder.dir)
+        && let Some(narrow) = work::narrow_test(cmd, &folder.dir, path)
+    {
+        b.add(&format!("its tests first: pg run -- {narrow}"));
+    }
+    let files: Vec<String> = best.iter().take(LIKELY).map(|(f, p, _, _)| code.display(f, p)).collect();
+    let broke = testrun::broken_by(&state.runs(None, 100)?, &files);
+    if !broke.is_empty() {
+        b.add(&format!("tests that broke before when it changed: {}", broke.join(", ")));
+    }
+    if let Some((folder, path, _, _)) = best.first()
+        && let Some(f) = code.folders.iter().find(|f| f.key == *folder)
+        && let Some(with) = git::changed_together(&f.dir, 300).remove(path)
+    {
+        let with: Vec<String> = with.into_iter().take(3).map(|(p, _)| p).collect();
+        b.add(&format!("{} usually changes with: {}", code.display(folder, path), with.join(", ")));
+    }
+    Ok(())
 }
 
 /// Where the project's code is: the linked folder at or above this one,

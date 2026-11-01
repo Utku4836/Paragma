@@ -9,7 +9,9 @@ mod mv;
 mod open;
 mod read;
 mod rm;
+mod run;
 mod target;
+mod tree;
 mod write;
 
 use crate::project::{Home, Project};
@@ -50,6 +52,10 @@ enum Command {
     Read(read::Args),
     /// Create or update a note; a path ending in '/' creates a folder
     Write(Box<write::Args>),
+    /// Run the tests or a build: what fails, what is new, flaky or fixed, and the known fix
+    Run(run::Args),
+    /// The map of the project's code: files and their symbols, with the notes about them marked
+    Tree(tree::Args),
     /// Projects, or the folders and notes of a project
     Ls(ls::Args),
     /// Rename or move a note, a folder or a project
@@ -123,6 +129,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Find(a) => find::run(&cx, a),
         Command::Read(a) => read::run(&cx, a),
         Command::Write(a) => write::run(&cx, *a),
+        Command::Run(a) => run::run(&cx, a),
+        Command::Tree(a) => tree::run(&cx, a),
         Command::Ls(a) => ls::run(&cx, a),
         Command::Mv(a) => mv::run(&cx, a),
         Command::Rm(a) => rm::run(&cx, a),

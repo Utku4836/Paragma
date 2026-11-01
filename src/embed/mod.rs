@@ -126,8 +126,27 @@ impl Encoder {
         }
     }
 
-    fn piece(&self, s: &str) -> Option<(u32, f32)> {
-        self.vocab.get(s).map(|id| (id as u32, score_at(id as u32)))
+    /// The vocabulary's pieces the text starts with, as (length in
+    /// characters, id, score): one walk down the vocabulary's automaton,
+    /// which stops as soon as no piece starts that way.
+    fn prefixes(&self, chars: &[char], out: &mut Vec<(usize, u32, f32)>) {
+        out.clear();
+        let fst = self.vocab.as_fst();
+        let mut node = fst.root();
+        let mut output = fst::raw::Output::zero();
+        let mut utf8 = [0u8; 4];
+        for (k, c) in chars.iter().enumerate() {
+            for b in c.encode_utf8(&mut utf8).bytes() {
+                let Some(i) = node.find_input(b) else { return };
+                let t = node.transition(i);
+                output = output.cat(t.out);
+                node = fst.node(t.addr);
+            }
+            if node.is_final() {
+                let id = output.cat(node.final_output()).value() as u32;
+                out.push((k + 1, id, score_at(id)));
+            }
+        }
     }
 }
 

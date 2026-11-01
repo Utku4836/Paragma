@@ -1,10 +1,14 @@
-//! pg find: one search for everything memory holds.
+//! pg find: one search for everything memory holds. A code name or a
+//! file of the project's code also finds the code itself, first, with the
+//! notes about it.
 
 use super::{Context, NOTHING_FOUND, fail};
+use crate::code::lang::Lang;
+use crate::code::notes::{CodeNotes, marks};
 use crate::index::Index;
 use crate::output::{Budget, count, one_line};
 use crate::project::Project;
-use crate::search::{self, Hit};
+use crate::search::{self, Hit, QueryKind};
 use crate::state::State;
 use anyhow::Result;
 
@@ -44,14 +48,19 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         hits.extend(search::find(&index, &query)?.into_iter().map(|h| (p.name.clone(), h)));
     }
     hits.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
-    let Some(top) = hits.first().map(|h| h.1.score) else {
+    let code = if several { Vec::new() } else { code_lines(cx, &projects[0], &query)? };
+    if hits.is_empty() && code.is_empty() {
         return Err(fail(NOTHING_FOUND, format!("no results for {query:?}")));
-    };
+    }
+    let top = hits.first().map(|h| h.1.score).unwrap_or(0.0);
     hits.retain(|h| h.1.score >= top * KEEP_RATIO);
 
     let scope = if several { "all projects".to_string() } else { format!("project {}", projects[0].name) };
     let mut b = Budget::new(cx.budget);
-    b.add(&format!("ok {} ({scope})", count(hits.len() as i64, "result")));
+    b.add(&format!("ok {} ({scope})", count((hits.len() + code.len()) as i64, "result")));
+    for line in &code {
+        b.add(line);
+    }
     let mut shown = 0;
     for (project, h) in &hits {
         let id = if several { format!("{project}:{}", h.id) } else { h.id.clone() };
@@ -84,6 +93,64 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The project's code a query names: a file, file#Symbol, or a symbol
+/// ("Refund", "Cart.Total"), each with the notes about it.
+fn code_lines(cx: &Context, project: &Project, query: &str) -> Result<Vec<String>> {
+    let q = query.trim();
+    let single_name = !q.contains(' ')
+        && q.chars().next().is_some_and(char::is_uppercase)
+        && q.chars().all(|c| c.is_alphanumeric() || c == '.');
+    let codey = search::classify(q) == QueryKind::Code || Lang::of(q).is_some() || single_name;
+    if !codey || q.split_whitespace().count() > 2 {
+        return Ok(Vec::new());
+    }
+    let Some(code) = crate::code::notes::open(&cx.home, project)? else { return Ok(Vec::new()) };
+    let notes = CodeNotes::load(&Index::open(project)?)?;
+    let (file, symbol) = match q.split_once('#') {
+        Some((f, s)) => (Some(f), Some(s)),
+        None if q.contains('/') || Lang::of(q).is_some() => (Some(q), None),
+        None => (None, Some(q)),
+    };
+    let mut symbols = Vec::new();
+    if let Some(f) = file {
+        let Some((folder, path)) = code.file(f)? else { return Ok(Vec::new()) };
+        match symbol {
+            Some(s) => {
+                symbols.extend(code.symbols_of(&folder, &path)?.into_iter().filter(|x| x.qualified == s || x.name == s))
+            }
+            None => {
+                let n = code.symbols_of(&folder, &path)?.len();
+                let mark = marks(&notes.about(&path, None));
+                return Ok(vec![
+                    format!("[code] {}: {}  {mark}", code.display(&folder, &path), count(n as i64, "symbol"))
+                        .trim_end()
+                        .to_string(),
+                ]);
+            }
+        }
+    } else if let Some(s) = symbol {
+        symbols = code.named(s)?;
+    }
+    Ok(symbols
+        .iter()
+        .take(3)
+        .map(|s| {
+            let mark = marks(&notes.about(&s.path, Some(&s.qualified)));
+            format!(
+                "[code] {}#{} {} {}-{}: {}  {mark}",
+                code.display(&s.folder, &s.path),
+                s.qualified,
+                s.kind,
+                s.start,
+                s.end,
+                if s.doc.is_empty() { &s.signature } else { &s.doc }
+            )
+            .trim_end()
+            .to_string()
+        })
+        .collect())
 }
 
 fn where_(h: &Hit) -> String {

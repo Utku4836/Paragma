@@ -8,6 +8,7 @@ mod glossary;
 mod query;
 mod rank;
 
+pub use query::words as words_of;
 pub use query::{QueryKind, classify};
 
 use crate::embed;

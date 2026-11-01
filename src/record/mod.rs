@@ -66,6 +66,8 @@ pub struct ErrorInput<'a> {
     pub cause: Option<&'a str>,
     pub fix: Option<&'a str>,
     pub files: Vec<String>,
+    /// The functions it is about ("Refund", "Cart.Total").
+    pub symbols: Vec<String>,
 }
 
 pub fn rule(project: &Project, text: &str, group: Option<&str>) -> Result<Written> {
@@ -185,7 +187,7 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
         bail!("give the error line: pg write --error \"<the error as printed>\" --cause \"...\" --fix \"...\"");
     }
     let index = Index::open(project)?;
-    let near = nearest(&index, Kind::Error, &signature)?;
+    let near = nearest(&index, Kind::Error, &signature::message(&signature))?;
     let same = match index.error_with_signature(&signature)? {
         Some(row) => Some(row.path),
         None => near.as_ref().filter(|p| p.1 >= SAME_ERROR).map(|p| p.0.path.clone()),
@@ -200,6 +202,15 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
         }
         if !files.is_empty() {
             n.props.set("files", Value::List(files));
+        }
+        let mut symbols = n.props.list("symbols");
+        for s in &e.symbols {
+            if !symbols.contains(s) {
+                symbols.push(s.clone());
+            }
+        }
+        if !symbols.is_empty() {
+            n.props.set("symbols", Value::List(symbols));
         }
     };
     let fill = |n: &mut Note| {
@@ -260,6 +271,17 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
         notes.extend(promote);
     }
     Ok(Written { id, what: "created".into(), notes })
+}
+
+/// The error note an error line is about: the same signature, else the
+/// closest error at least as close as `write --error` links them. Its path.
+pub fn known_error(index: &Index, line: &str) -> Result<Option<String>> {
+    let signature = signature::normalize(line);
+    if let Some(row) = index.error_with_signature(&signature)? {
+        return Ok(Some(row.path));
+    }
+    let near = nearest(index, Kind::Error, &signature::message(&signature))?;
+    Ok(near.filter(|p| p.1 >= RELATED_ERROR).map(|p| p.0.path))
 }
 
 /// "e45 and similar errors were seen 9 times in 4 files: make it a rule?"
@@ -326,7 +348,7 @@ fn what_it_says(kind: Kind, text: &str) -> String {
     let note = Note::parse(text);
     let section = match kind {
         Kind::Decision => note.section("Decision"),
-        Kind::Error => note.section("Symptom").map(|s| signature::normalize(&s)),
+        Kind::Error => note.section("Symptom").map(|s| signature::message(&signature::normalize(&s))),
         _ => None,
     };
     section.unwrap_or_else(|| text.lines().filter(|l| !l.trim_start().starts_with('#')).collect::<Vec<_>>().join(" "))

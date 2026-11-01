@@ -139,7 +139,9 @@ fn write_record(cx: &Context, a: &Args) -> Result<()> {
         ("decision", record::decision(project, &d).map_err(usage)?)
     } else {
         let line = a.error.as_deref().unwrap_or_default();
-        let e = ErrorInput { line, cause: a.cause.as_deref(), fix: a.fix.as_deref(), files: a.files.clone() };
+        let (files, symbols) =
+            if a.files.is_empty() { code_of(cx, project, line)? } else { (a.files.clone(), Vec::new()) };
+        let e = ErrorInput { line, cause: a.cause.as_deref(), fix: a.fix.as_deref(), files, symbols };
         ("error", record::error(project, &e).map_err(usage)?)
     };
     let state = State::open(project)?;
@@ -150,6 +152,26 @@ fn write_record(cx: &Context, a: &Args) -> Result<()> {
         println!("{n}");
     }
     Ok(())
+}
+
+/// The files and functions of the project's code an error line points at
+/// (file:line), for an error written without --files.
+fn code_of(cx: &Context, project: &Project, line: &str) -> Result<(Vec<String>, Vec<String>)> {
+    let (mut files, mut symbols) = (Vec::new(), Vec::new());
+    let places = crate::testrun::parse::locations(line);
+    if places.is_empty() {
+        return Ok((files, symbols));
+    }
+    let Some(code) = crate::code::notes::open(&cx.home, project)? else { return Ok((files, symbols)) };
+    for (file, n) in places {
+        if let Some((folder, path)) = code.locate(&file)? {
+            if let Some(s) = code.at(&folder, &path, n)? {
+                symbols.push(s.qualified);
+            }
+            files.push(code.display(&folder, &path));
+        }
+    }
+    Ok((files, symbols))
 }
 
 /// Writes a plain note (replacing its body, or appending to it).

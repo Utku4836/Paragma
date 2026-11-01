@@ -1,0 +1,100 @@
+//! What git knows about a code folder: what changed since the last commit
+//! (by line), and which files usually change together.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::Command;
+
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    let o = Command::new("git").args(["-c", "core.quotepath=off"]).args(args).current_dir(dir).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+pub fn is_repo(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
+/// The changed line ranges of a file; None for a new file (all of it).
+pub type Lines = Option<Vec<(usize, usize)>>;
+
+/// Files changed since the last commit, with their changed lines.
+pub fn changed(dir: &Path) -> Vec<(String, Lines)> {
+    if !is_repo(dir) {
+        return Vec::new();
+    }
+    let mut out: Vec<(String, Lines)> = Vec::new();
+    if let Some(diff) = git(dir, &["diff", "HEAD", "-U0", "--no-color", "--no-ext-diff"]) {
+        let mut file: Option<String> = None;
+        for line in diff.lines() {
+            if let Some(f) = line.strip_prefix("+++ b/") {
+                file = Some(f.to_string());
+                out.push((f.to_string(), Some(Vec::new())));
+            } else if line.starts_with("+++ /dev/null") {
+                file = None; // deleted
+            } else if let Some(h) = line.strip_prefix("@@ ")
+                && file.is_some()
+                && let Some(range) = hunk(h)
+                && let Some((_, Some(ranges))) = out.last_mut()
+            {
+                ranges.push(range);
+            }
+        }
+    }
+    if let Some(untracked) = git(dir, &["ls-files", "--others", "--exclude-standard"]) {
+        out.extend(untracked.lines().filter(|l| !l.is_empty()).map(|l| (l.to_string(), None)));
+    }
+    out
+}
+
+/// "@@ -10,2 +12,3 @@" -> lines 12 to 14 of the new file.
+fn hunk(h: &str) -> Option<(usize, usize)> {
+    let new = h.split_whitespace().find(|p| p.starts_with('+'))?.trim_start_matches('+');
+    let (start, len): (usize, usize) = match new.split_once(',') {
+        Some((s, l)) => (s.parse().ok()?, l.parse().ok()?),
+        None => (new.parse().ok()?, 1),
+    };
+    // a pure deletion still touches the line it happened at
+    Some((start.max(1), (start + len.max(1) - 1).max(1)))
+}
+
+/// How often each other file changed in the same commit as each file, over
+/// the last commits.
+pub fn changed_together(dir: &Path, commits: usize) -> HashMap<String, Vec<(String, usize)>> {
+    let mut pairs: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let Some(log) = git(dir, &["log", "--name-only", "--format=%x00", "-n", &commits.to_string()]) else {
+        return HashMap::new();
+    };
+    for commit in log.split('\0') {
+        let files: Vec<&str> = commit.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        if files.len() < 2 || files.len() > 30 {
+            continue; // one file says nothing; a huge commit is a refactor or an import
+        }
+        for a in &files {
+            for b in &files {
+                if a != b {
+                    *pairs.entry(a.to_string()).or_default().entry(b.to_string()).or_default() += 1;
+                }
+            }
+        }
+    }
+    pairs
+        .into_iter()
+        .map(|(f, others)| {
+            let mut v: Vec<(String, usize)> = others.into_iter().filter(|(_, n)| *n >= 2).collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            v.truncate(5);
+            (f, v)
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn hunks() {
+        assert_eq!(super::hunk("-10,2 +12,3 @@ fn x"), Some((12, 14)));
+        assert_eq!(super::hunk("-5 +5 @@"), Some((5, 5)));
+        assert_eq!(super::hunk("-5,2 +4,0 @@"), Some((4, 4)));
+    }
+}

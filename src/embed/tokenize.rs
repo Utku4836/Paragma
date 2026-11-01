@@ -19,21 +19,19 @@ pub fn ids(enc: &Encoder, text: &str) -> Vec<u32> {
     // best[i] = (score, start of the last piece, its id) of the best path to i
     let mut best: Vec<(f32, usize, u32)> = vec![(f32::NEG_INFINITY, 0, 0); n + 1];
     best[0].0 = 0.0;
-    let mut piece = String::new();
+    let mut found = Vec::new();
     for i in 0..n {
         if best[i].0 == f32::NEG_INFINITY {
             continue;
         }
-        piece.clear();
         let mut single = false;
-        for j in i..(i + MAX_PIECE).min(n) {
-            piece.push(chars[j]);
-            if let Some((id, score)) = enc.piece(&piece) {
-                single |= j == i;
-                let s = best[i].0 + score;
-                if s > best[j + 1].0 {
-                    best[j + 1] = (s, i, id);
-                }
+        enc.prefixes(&chars[i..(i + MAX_PIECE).min(n)], &mut found);
+        for &(len, id, score) in &found {
+            let j = i + len - 1;
+            single |= len == 1;
+            let s = best[i].0 + score;
+            if s > best[j + 1].0 {
+                best[j + 1] = (s, i, id);
             }
         }
         if !single {
