@@ -42,6 +42,19 @@ impl Props {
         self.set(key, Value::Text(value.into()));
     }
 
+    /// A list property's items (a text property as one item).
+    pub fn list(&self, key: &str) -> Vec<String> {
+        match self.get(key) {
+            Some(Value::List(l)) => l.clone(),
+            Some(Value::Text(s)) if !s.is_empty() => vec![s.clone()],
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn remove(&mut self, key: &str) {
+        self.entries.retain(|(k, _)| k != key);
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &(String, Value)> {
         self.entries.iter()
     }

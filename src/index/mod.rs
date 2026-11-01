@@ -2,7 +2,10 @@
 //! with full-text and meaning vectors. Everything in it comes from the
 //! note files, so it can be deleted at any time and is rebuilt.
 
+mod edit;
 mod sync;
+
+pub use edit::update_note;
 
 use crate::note::Kind;
 use crate::project::Project;
@@ -51,6 +54,24 @@ pub struct NoteRow {
     pub path: String,
     pub id: String,
     pub kind: Kind,
+}
+
+/// A note's properties as the index keeps them (JSON).
+#[derive(Clone, Debug)]
+pub struct NoteProps {
+    pub id: String,
+    pub path: String,
+    pub props: serde_json::Value,
+    /// When the file last changed, seconds since the epoch.
+    pub changed: i64,
+}
+
+/// A piece of a note: a whole short note, a section, or a rule.
+#[derive(Clone, Debug)]
+pub struct Piece {
+    pub id: String,
+    pub path: String,
+    pub text: String,
 }
 
 impl Index {
@@ -112,6 +133,43 @@ impl Index {
             Some(p) => self.note_by_path(&p),
             None => Ok(None),
         }
+    }
+
+    /// Every piece of a kind: what a new record is compared with.
+    pub fn pieces_of(&self, kind: Kind) -> Result<Vec<Piece>> {
+        let mut st = self.db.prepare("SELECT ref, path, text FROM chunks WHERE kind = ?1")?;
+        let rows = st
+            .query_map([kind.as_str()], |r| Ok(Piece { id: r.get(0)?, path: r.get(1)?, text: r.get(2)? }))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The error note with this signature.
+    pub fn error_with_signature(&self, signature: &str) -> Result<Option<NoteRow>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT path, id, kind FROM notes WHERE kind = 'error' AND json_extract(props, '$.signature') = ?1",
+                [signature],
+                row_to_note,
+            )
+            .optional()?)
+    }
+
+    /// Every note of a kind that has an id, with its properties.
+    pub fn notes_of(&self, kind: Kind) -> Result<Vec<NoteProps>> {
+        let mut st = self.db.prepare("SELECT id, path, props, mtime FROM notes WHERE kind = ?1 AND id IS NOT NULL")?;
+        let rows = st
+            .query_map([kind.as_str()], |r| {
+                Ok(NoteProps {
+                    id: r.get(0)?,
+                    path: r.get(1)?,
+                    props: serde_json::from_str(&r.get::<_, String>(2)?).unwrap_or_default(),
+                    changed: r.get::<_, i64>(3)? / 1_000_000_000,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// The next free id of a kind: n1, n2, ...

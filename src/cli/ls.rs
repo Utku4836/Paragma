@@ -6,8 +6,9 @@
 use super::{Context, NOT_FOUND, fail};
 use crate::index::Index;
 use crate::note::Note;
-use crate::output::{Budget, count, one_line};
+use crate::output::{Budget, count, date, one_line};
 use crate::project::{Project, files, scan};
+use crate::state::links::Links;
 use anyhow::Result;
 
 #[derive(clap::Args)]
@@ -40,14 +41,14 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 fn list_projects(cx: &Context) -> Result<()> {
     let projects = cx.home.projects();
     if projects.is_empty() {
-        println!("no projects yet: pg write <project>/ creates one");
+        println!("no projects yet: pg open <name> starts one");
         return Ok(());
     }
     let mut b = Budget::new(cx.budget);
     b.add(&format!("ok {}", count(projects.len() as i64, "project")));
     for p in projects {
         let notes = scan::notes(&p.dir);
-        let last = notes.iter().map(|n| n.mtime).max().map(day).unwrap_or_default();
+        let last = notes.iter().map(|n| n.mtime).max().map(|ns| date(ns / 1_000_000_000)).unwrap_or_default();
         b.add(&format!(
             "{}  {}{}",
             p.name,
@@ -69,6 +70,12 @@ fn list_folder(cx: &Context, project: &Project, folder: &str) -> Result<()> {
     let mut b = Budget::new(cx.budget);
     let here = if folder.is_empty() { project.name.clone() } else { format!("{}/{folder}", project.name) };
     b.add(&format!("ok {here}"));
+    if folder.is_empty() {
+        let code = Links::load(&cx.home).folders_of(&project.name);
+        if !code.is_empty() {
+            b.add(&format!("code: {}", code.join(", ")));
+        }
+    }
     for sub in scan::folders(&dir) {
         if !sub.contains('/') {
             let n = scan::notes(&dir.join(&sub)).len();
@@ -90,30 +97,4 @@ fn list_folder(cx: &Context, project: &Project, folder: &str) -> Result<()> {
     }
     print!("{}", b.out);
     Ok(())
-}
-
-/// A file time as a date.
-fn day(nanos: i64) -> String {
-    let secs = nanos / 1_000_000_000;
-    let days = secs.div_euclid(86_400);
-    // civil date from days since 1970-01-01 (Howard Hinnant's algorithm)
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    format!("{}-{m:02}-{d:02}", if m <= 2 { y + 1 } else { y })
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn days() {
-        assert_eq!(super::day(0), "1970-01-01");
-        assert_eq!(super::day(1_792_000_000 * 1_000_000_000), "2026-10-14");
-    }
 }

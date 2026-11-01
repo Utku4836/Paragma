@@ -6,6 +6,7 @@ mod index;
 mod note;
 mod output;
 mod project;
+mod record;
 mod search;
 mod state;
 

@@ -14,7 +14,7 @@
 mod chunk;
 mod props;
 
-pub use chunk::{Chunk, chunks};
+pub use chunk::{Chunk, chunks, rule_line};
 pub use props::{Props, Value};
 
 /// What a note is; the `type` property says it (not the folder it is in).
@@ -84,6 +84,44 @@ impl Note {
         self.props.text("id")
     }
 
+    /// The text of the "## name" section, without its heading.
+    pub fn section(&self, name: &str) -> Option<String> {
+        let mut lines = self.body.lines().skip_while(|l| !is_heading(l, name));
+        lines.next()?;
+        let text: Vec<&str> = lines.take_while(|l| !l.starts_with("## ")).collect();
+        Some(text.join("\n").trim().to_string())
+    }
+
+    /// Replaces the "## name" section's text, adding the section at the end
+    /// when the note has none.
+    pub fn set_section(&mut self, name: &str, text: &str) {
+        let text = text.trim();
+        let mut out = String::new();
+        let mut lines = self.body.lines().peekable();
+        let mut found = false;
+        while let Some(l) = lines.next() {
+            if !found && is_heading(l, name) {
+                found = true;
+                out.push_str(&format!("{l}\n{text}\n")); // the heading as it was written
+                while lines.peek().is_some_and(|l| !l.starts_with("## ")) {
+                    lines.next();
+                }
+                if lines.peek().is_some() {
+                    out.push('\n');
+                }
+            } else {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+        if !found {
+            let kept = out.trim_end();
+            out = if kept.is_empty() { String::new() } else { format!("{kept}\n\n") };
+            out.push_str(&format!("## {name}\n{text}\n"));
+        }
+        self.body = out;
+    }
+
     /// The title: the `title` property, else the first heading, else "".
     pub fn title(&self) -> String {
         if let Some(t) = self.props.text("title") {
@@ -93,9 +131,24 @@ impl Note {
     }
 }
 
+fn is_heading(line: &str, name: &str) -> bool {
+    line.strip_prefix("## ").is_some_and(|h| h.trim().eq_ignore_ascii_case(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sections_are_read_and_replaced() {
+        let mut n = Note::parse("## Goal\nShip it.\n\n## Steps\n- [ ] a\n");
+        assert_eq!(n.section("goal").as_deref(), Some("Ship it."));
+        n.set_section("Goal", "Ship it today.");
+        n.set_section("Handoffs", "### x\ndone");
+        assert_eq!(n.body, "## Goal\nShip it today.\n\n## Steps\n- [ ] a\n\n## Handoffs\n### x\ndone\n");
+        assert_eq!(n.section("Steps").as_deref(), Some("- [ ] a"));
+        assert_eq!(n.section("Nothing"), None);
+    }
 
     const ERROR: &str = "---\nid: e45\ntype: error\nfiles: [catalog/catalog.go, .gitattributes]\nseen: 3\n---\n## Symptom\nTests fail.\n\n## Fix\nNormalise line endings.\n";
 

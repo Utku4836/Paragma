@@ -3,8 +3,13 @@
 
 mod doctor;
 mod find;
+mod finish;
 mod ls;
+mod mv;
+mod open;
 mod read;
+mod rm;
+mod target;
 mod write;
 
 use crate::project::{Home, Project};
@@ -35,14 +40,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start or continue a project's work here and get its brief: goal, steps, last handoff, matching rules
+    Open(open::Args),
+    /// End this conversation's work: tick off its steps, save its handoff for the next one
+    Finish(finish::Args),
     /// Search memory: a topic, a question, an error line, a file or a code name
     Find(find::Args),
     /// Print a note (by id, path or rule id)
     Read(read::Args),
     /// Create or update a note; a path ending in '/' creates a folder
-    Write(write::Args),
+    Write(Box<write::Args>),
     /// Projects, or the folders and notes of a project
     Ls(ls::Args),
+    /// Rename or move a note, a folder or a project
+    #[command(alias = "rename")]
+    Mv(mv::Args),
+    /// Take a note, a rule, a folder or a project out of memory (kept in .archive/ unless --hard)
+    Rm(rm::Args),
     /// Check the project's notes and index
     Doctor(doctor::Args),
 }
@@ -104,10 +118,14 @@ pub fn run() -> ExitCode {
 fn dispatch(cli: Cli) -> Result<()> {
     let cx = context(cli.project.as_deref(), cli.budget)?;
     match cli.command {
+        Command::Open(a) => open::run(&cx, a),
+        Command::Finish(a) => finish::run(&cx, a),
         Command::Find(a) => find::run(&cx, a),
         Command::Read(a) => read::run(&cx, a),
-        Command::Write(a) => write::run(&cx, a),
+        Command::Write(a) => write::run(&cx, *a),
         Command::Ls(a) => ls::run(&cx, a),
+        Command::Mv(a) => mv::run(&cx, a),
+        Command::Rm(a) => rm::run(&cx, a),
         Command::Doctor(a) => doctor::run(&cx, a),
     }
 }

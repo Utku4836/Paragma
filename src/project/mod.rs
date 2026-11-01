@@ -9,6 +9,8 @@
 //! ```
 
 pub mod files;
+pub mod names;
+pub mod plan;
 pub mod scan;
 
 use anyhow::{Result, bail};

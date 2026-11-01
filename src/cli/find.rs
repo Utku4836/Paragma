@@ -5,6 +5,7 @@ use crate::index::Index;
 use crate::output::{Budget, count, one_line};
 use crate::project::Project;
 use crate::search::{self, Hit};
+use crate::state::State;
 use anyhow::Result;
 
 #[derive(clap::Args)]
@@ -69,6 +70,19 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         b.add(&format!("+{} more: pg find \"{query}\" --budget {}", rest.len() - ONE_LINERS, cx.budget * 2));
     }
     print!("{}", b.out);
+    // what was shown, per project: upkeep keeps what is used (record/upkeep.rs)
+    for p in &projects {
+        let ids: Vec<String> = hits
+            .iter()
+            .take(shown + ONE_LINERS)
+            .filter(|(name, _)| *name == p.name)
+            .map(|(_, h)| h.id.clone())
+            .collect();
+        if !ids.is_empty() {
+            // a search that found something never fails over bookkeeping
+            let _ = State::open(p).and_then(|s| s.shown(&ids));
+        }
+    }
     Ok(())
 }
 
