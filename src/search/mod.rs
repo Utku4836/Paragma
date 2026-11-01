@@ -36,6 +36,9 @@ pub struct Hit {
 }
 
 pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
+    // every query below reads one snapshot: a parallel write replacing a
+    // note's pieces meanwhile must not make a found piece vanish
+    let _snapshot = index.db.unchecked_transaction()?;
     let qk = classify(query);
     let (w_words, w_meaning) = match qk {
         QueryKind::ErrorLine | QueryKind::Code => (1.5, 0.6),
@@ -88,8 +91,8 @@ pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
                 vec: embed::from_bytes(&r.get::<_, Vec<u8>>(6)?),
                 similar: 0,
             })
-        })?;
-        hits.push(h);
+        });
+        hits.push(h?);
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
     Ok(dedup::fold(hits))

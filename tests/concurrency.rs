@@ -3,11 +3,13 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn pg(home: &Path, args: &[&str]) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_pg"));
     c.args(args).env("PARAGMA_HOME", home).env_remove("PARAGMA_PROJECT").env("PARAGMA_SESSION", "test");
+    // failures show in the test output, not in the log of whatever runs the tests
+    c.stdout(Stdio::piped()).stderr(Stdio::piped());
     c
 }
 
