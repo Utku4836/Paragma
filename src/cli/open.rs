@@ -281,7 +281,8 @@ fn since_last(cx: &Context, project: &Project, state: &State, now: i64) -> Resul
     let mut parts = Vec::new();
     let (mut subjects, mut files) = (Vec::new(), Vec::new());
     for f in Links::load(&cx.home).folders_of(&project.name) {
-        let (s, fs) = git::since(Path::new(&f), at);
+        // git counts the second it is given: commits strictly after the handoff
+        let (s, fs) = git::since(Path::new(&f), at + 1);
         subjects.extend(s);
         files.extend(fs);
     }
