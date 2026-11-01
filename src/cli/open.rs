@@ -63,7 +63,11 @@ const EARLIER_HANDOFFS: usize = 2;
 const LIKELY: usize = 5;
 /// How close in meaning (plus name) code must be to the goal to be listed.
 const LIKELY_MIN: f32 = 0.35;
-/// Rules, decisions and errors listed as matching the goal and the steps.
+/// Rules listed as matching the goal and steps (before the others).
+const RELEVANT_RULES: usize = 6;
+/// Matches below this share of the best one are left out of the brief.
+const RELEVANT_RATIO: f64 = 0.5;
+/// Decisions and errors listed as matching the goal and the steps.
 const RELEVANT: usize = 8;
 
 pub fn run(cx: &Context, mut a: Args) -> Result<()> {
@@ -198,8 +202,10 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
     }
     if !steps.is_empty() {
         b.add(&format!("steps: {} open, {} done", open.len(), steps.len() - open.len()));
-        for s in open.iter().take(STEPS_SHOWN) {
-            b.add(&format!("- [ ] {}", s.text));
+        // numbered as pg finish --done takes them
+        let numbered = steps.iter().enumerate().filter(|(_, s)| !s.done).take(STEPS_SHOWN);
+        for (i, s) in numbered {
+            b.add(&format!("- [ ] {}. {}", i + 1, s.text));
         }
         if open.len() > STEPS_SHOWN {
             b.add(&format!("+{} more: pg read {}/project", open.len() - STEPS_SHOWN, project.name));
@@ -234,11 +240,20 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
     let query: String =
         std::iter::once(goal.as_str()).chain(open.iter().map(|s| s.text.as_str())).collect::<Vec<_>>().join(". ");
     if !query.trim().is_empty() {
-        let hits: Vec<search::Hit> = search::find(&index, &query)?
+        let found: Vec<search::Hit> = search::find(&index, &query)?
             .into_iter()
             .filter(|h| matches!(h.kind, Kind::Rule | Kind::Decision | Kind::Error))
-            .take(RELEVANT)
             .collect();
+        // rules first and apart (short and binding, they must not lose their
+        // place to decisions), then decisions and errors; each list only what
+        // stands near its best match: a long goal touches many notes a little
+        let near = |list: Vec<search::Hit>, n: usize| {
+            let top = list.first().map(|h| h.score).unwrap_or(0.0);
+            list.into_iter().filter(move |h| h.score >= top * RELEVANT_RATIO).take(n)
+        };
+        let (rules, others): (Vec<search::Hit>, Vec<search::Hit>) =
+            found.into_iter().partition(|h| h.kind == Kind::Rule);
+        let hits: Vec<search::Hit> = near(rules, RELEVANT_RULES).chain(near(others, RELEVANT)).collect();
         if !hits.is_empty() {
             b.add("matching the goal and steps:");
             let mut stale = crate::code::stale::Staleness::new(&cx.home, project);
@@ -247,7 +262,12 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
                     if stale.check(&index.props_at(&h.path))?.is_some() { " (its code changed since)" } else { "" };
                 let place =
                     if h.heading.is_empty() { h.path.trim_end_matches(".md").to_string() } else { h.heading.clone() };
-                b.add(&format!("{} {} {place}: {}{changed}", h.id, h.kind.as_str(), one_line(&h.text, 100)));
+                b.add(&format!(
+                    "{} {} {place}: {}{changed}",
+                    h.id,
+                    h.kind.as_str(),
+                    one_line(&h.text, if h.kind == Kind::Rule { 240 } else { 110 })
+                ));
             }
             state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(), false)?;
         }

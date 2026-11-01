@@ -201,7 +201,8 @@ fn known(index: &Index, project: &crate::project::Project, line: &str) -> Result
     let id = note.id().unwrap_or("?").to_string();
     let seen =
         note.props.text("seen").and_then(|s| s.parse::<i64>().ok()).map(|n| format!(" (seen {})", count(n, "time")));
-    let fix = note.section("Fix").map(|f| one_line(&f, 100)).unwrap_or_else(|| one_line(&note.body, 100));
+    // the fix is what the agent needs: in full, up to a short paragraph
+    let fix = note.section("Fix").map(|f| one_line(&f, 300)).unwrap_or_else(|| one_line(&note.body, 300));
     Ok(Some(format!("{id}{}: fix: {fix} (pg read {id})", seen.unwrap_or_default())))
 }
 

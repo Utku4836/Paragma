@@ -198,8 +198,8 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
     }
     let index = Index::open(project)?;
     let near = nearest(&index, Kind::Error, &signature::message(&signature))?;
-    let same = match index.error_with_signature(&signature)? {
-        Some(row) => Some(row.path),
+    let same = match same_signature(&index, &signature)? {
+        Some(path) => Some(path),
         None => near.as_ref().filter(|p| p.1 >= SAME_ERROR).map(|p| p.0.path.clone()),
     };
     let today = date(now());
@@ -293,11 +293,32 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
 /// closest error at least as close as `write --error` links them. Its path.
 pub fn known_error(index: &Index, line: &str) -> Result<Option<String>> {
     let signature = signature::normalize(line);
-    if let Some(row) = index.error_with_signature(&signature)? {
-        return Ok(Some(row.path));
+    if let Some(path) = same_signature(index, &signature)? {
+        return Ok(Some(path));
     }
     let near = nearest(index, Kind::Error, &signature::message(&signature))?;
     Ok(near.filter(|p| p.1 >= RELATED_ERROR).map(|p| p.0.path))
+}
+
+/// The error note with this signature, or with the same message (the
+/// signature without where it happened: the same error in another file or
+/// written as "catalog_test.go:8: ..." once and "'...'" another time).
+fn same_signature(index: &Index, signature: &str) -> Result<Option<String>> {
+    if let Some(row) = index.error_with_signature(signature)? {
+        return Ok(Some(row.path));
+    }
+    let message = signature::message(signature);
+    if message.split_whitespace().count() < 2 {
+        return Ok(None); // too little to be sure
+    }
+    for n in index.notes_of(Kind::Error)? {
+        let Some(theirs) = n.props["signature"].as_str() else { continue };
+        let theirs = theirs.trim_matches(|c| c == '\'' || c == '"' || c == '`');
+        if signature::message(&signature::normalize(theirs)) == message {
+            return Ok(Some(n.path));
+        }
+    }
+    Ok(None)
 }
 
 /// "e45 and similar errors were seen 9 times in 4 files: make it a rule?"

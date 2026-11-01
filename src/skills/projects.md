@@ -17,7 +17,7 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - Decisions, rules, errors as you learn them: `pg skill knowledge`.
 
 ## Finish
-- `pg finish "<what was done; what is next>" --left "<step for later>"`: ticks off this conversation's steps (not other conversations'), adds the steps left, writes this conversation's handoff with what it wrote, the code it changed and the last test run. Other conversations' handoffs are kept.
+- `pg finish "<what was done; what is next>" --done 1,2 --left "<new step for later>"`: ticks off the steps you finished (their numbers in the brief; `--done all`), adds new steps for later, writes this conversation's handoff with what it wrote, the code it changed and the last test run. Steps not done stay open for the next conversation. Finishing again replaces this conversation's handoff; other conversations' are kept.
 
 ## Notes and folders
 - A note: `pg write <folder>/<name> "text"` (`--append` adds below; `-` reads stdin, `--file PATH` a file). A folder: `pg write <folder>/`. In another project: `pg write <project>/<path> "..."`.

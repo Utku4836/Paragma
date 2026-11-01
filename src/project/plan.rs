@@ -90,6 +90,17 @@ pub fn close_step(note: &mut Note, text: &str) -> bool {
     true
 }
 
+/// Ticks off the step with this number (from 1, in the order of the note,
+/// done steps counted): its text, or None when there is no such open step.
+pub fn close_number(note: &mut Note, n: usize) -> Option<String> {
+    let mut steps = steps(note);
+    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| !s.done)?;
+    s.done = true;
+    let text = s.text.clone();
+    set_steps(note, &steps);
+    Some(text)
+}
+
 /// Handoffs, newest first.
 pub fn handoffs(note: &Note) -> Vec<Handoff> {
     let section = note.section("Handoffs").unwrap_or_default();
@@ -108,11 +119,14 @@ pub fn handoffs(note: &Note) -> Vec<Handoff> {
     out
 }
 
-/// Adds a handoff on top: the newest is read first.
-pub fn add_handoff(note: &mut Note, heading: &str, text: &str) {
-    let old = note.section("Handoffs").unwrap_or_default();
-    let new = format!("### {heading}\n{}", text.trim());
-    note.set_section("Handoffs", &if old.is_empty() { new } else { format!("{new}\n\n{old}") });
+/// Adds a handoff on top (the newest is read first), in place of the one
+/// headed `replaces` (the same conversation finishing again).
+pub fn add_handoff(note: &mut Note, heading: &str, text: &str, replaces: Option<&str>) {
+    let mut all = handoffs(note);
+    all.retain(|h| Some(h.heading.as_str()) != replaces);
+    all.insert(0, Handoff { heading: heading.to_string(), text: text.trim().to_string() });
+    let section: Vec<String> = all.iter().map(|h| format!("### {}\n{}", h.heading, h.text)).collect();
+    note.set_section("Handoffs", &section.join("\n\n"));
 }
 
 #[cfg(test)]
@@ -126,7 +140,9 @@ mod tests {
         assert!(add_step(&mut n, "Add the client"));
         assert!(add_step(&mut n, "Move refunds"));
         assert!(!add_step(&mut n, "Move refunds"));
-        assert!(close_step(&mut n, "Add the client"));
+        assert_eq!(close_number(&mut n, 1).as_deref(), Some("Add the client"));
+        assert_eq!(close_number(&mut n, 1), None);
+        assert_eq!(close_number(&mut n, 9), None);
         assert!(!close_step(&mut n, "Add the client"));
         assert_eq!(
             n.body,
@@ -139,8 +155,9 @@ mod tests {
     #[test]
     fn the_newest_handoff_comes_first() {
         let mut n = Note::default();
-        add_handoff(&mut n, "2026-10-31 09:00Z · web", "Login page done.");
-        add_handoff(&mut n, "2026-11-01 14:10Z · api", "Client done.\nTests pass.");
+        add_handoff(&mut n, "2026-10-31 09:00Z · web", "Login page done.", None);
+        add_handoff(&mut n, "2026-11-01 14:00Z · api", "Client half done.", None);
+        add_handoff(&mut n, "2026-11-01 14:10Z · api", "Client done.\nTests pass.", Some("2026-11-01 14:00Z · api"));
         let h = handoffs(&n);
         assert_eq!(h.len(), 2);
         assert_eq!(h[0].heading, "2026-11-01 14:10Z · api");

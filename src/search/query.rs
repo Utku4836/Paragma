@@ -31,9 +31,12 @@ pub fn classify(q: &str) -> QueryKind {
         "timed out",
         "refused",
     ];
-    let has_digits = q.chars().any(|c| c.is_ascii_digit());
-    let marked = error_marks.iter().any(|m| lower.contains(m)) && q.split_whitespace().count() >= 3;
-    if (q.contains(':') && has_digits) || marked {
+    // "...returns an error" in a task or a code signature is not an error line
+    let code_words = ["func ", "fn ", "def ", "function ", "class ", "->"].iter().any(|w| lower.contains(w));
+    let n = q.split_whitespace().count();
+    let marked = error_marks.iter().any(|m| lower.contains(m)) && (3..=14).contains(&n) && !code_words;
+    // a place in code (file.go:12) is what error lines carry
+    if !crate::testrun::parse::locations(q).is_empty() || marked {
         return QueryKind::ErrorLine;
     }
     let words = q.split_whitespace().count();

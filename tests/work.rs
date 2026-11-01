@@ -38,23 +38,34 @@ fn a_new_conversation_continues_where_the_last_one_stopped() {
         &["open", "Shop API", "--goal", "Refunds via Iyzico", "--step", "Add the client", "--step", "Move refunds"],
     );
     assert!(out.starts_with("ok shop-api (new project)\n"), "{out}");
-    assert!(out.contains("- [ ] Move refunds"), "{out}");
+    assert!(out.contains("- [ ] 2. Move refunds"), "{out}");
     ok(&home, &code, "a", &["write", "--rule", "Amounts are int64 kuruş, never float.", "--group", "Money"]);
-    let out = ok(&home, &code, "a", &["finish", "Client added; refunds next.", "--left", "Move refunds"]);
-    assert_eq!(out, "ok shop-api: 1 step closed, 1 step left open, handoff saved\n");
+    // without --done nothing is ticked off; finishing again replaces the handoff
+    let out = ok(&home, &code, "a", &["finish", "Client half done."]);
+    assert_eq!(
+        out,
+        "ok shop-api: 0 steps closed, handoff saved\nopen steps: 1. Add the client; 2. Move refunds (a done one: pg finish again with --done <number>; it replaces this handoff)\n"
+    );
+    let out =
+        ok(&home, &code, "a", &["finish", "Client added; refunds next.", "--done", "1", "--left", "Write the docs"]);
+    assert!(
+        out.starts_with("ok shop-api: 1 step closed, 1 step left open, handoff replaced\nopen steps: 2. Move refunds; 3. Write the docs"),
+        "{out}"
+    );
 
     // another conversation, in a folder below, without a name or by the folder's name
     let out = ok(&home, &code.join("src"), "b", &["open"]);
     assert!(out.starts_with("ok shop-api (continued)\n"), "{out}");
-    assert!(out.contains("steps: 1 open, 1 done"), "{out}");
+    assert!(out.contains("steps: 2 open, 1 done\n- [ ] 2. Move refunds\n- [ ] 3. Write the docs"), "{out}");
     assert!(out.contains("Client added; refunds next.\nWritten to memory: r1"), "{out}");
+    assert!(!out.contains("Client half done."), "{out}");
     let out = ok(&home, &code.join("src"), "c", &["open", "shop api"]);
     assert!(out.starts_with("ok shop-api (continued: same name as \"shop api\")"), "{out}");
     assert!(out.contains("other conversations at work, not finished: shop-api"), "{out}");
 
     // a similar name is a new project, with a mention
     let out = ok(&home, &code, "d", &["open", "shop"]);
-    assert!(out.starts_with("ok shop (new project)\nsimilar project: shop-api (1 open step)"), "{out}");
+    assert!(out.starts_with("ok shop (new project)\nsimilar project: shop-api (2 open steps)"), "{out}");
     // no name and no link: say how
     let (code_, out) = pg(&home, d.path(), "e", &["open"]);
     assert_eq!(code_, 2, "{out}");

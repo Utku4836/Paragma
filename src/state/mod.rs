@@ -64,7 +64,6 @@ pub struct Session {
 #[derive(Clone, Debug)]
 pub struct Event {
     pub action: String,
-    pub target: String,
     pub detail: String,
 }
 
@@ -100,21 +99,23 @@ impl State {
     }
 
     /// What this conversation did since its last `pg finish`, oldest first.
-    pub fn my_events(&self) -> Result<Vec<Event>> {
+    /// `skip`: finishes passed over (1: since the one before the last, for a
+    /// handoff that replaces the last one).
+    pub fn my_events(&self, skip: usize) -> Result<Vec<Event>> {
         let me = conversation::key();
         let since: i64 = self
             .db
             .query_row(
-                "SELECT COALESCE(MAX(rowid), 0) FROM events WHERE conversation = ?1 AND action = 'finish'",
-                [me],
+                "SELECT rowid FROM events WHERE conversation = ?1 AND action = 'finish' ORDER BY rowid DESC LIMIT 1 OFFSET ?2",
+                params![me, skip as i64],
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let mut st = self.db.prepare(
-            "SELECT action, target, detail FROM events WHERE conversation = ?1 AND rowid > ?2 ORDER BY rowid",
-        )?;
+        let mut st = self
+            .db
+            .prepare("SELECT action, detail FROM events WHERE conversation = ?1 AND rowid > ?2 ORDER BY rowid")?;
         let rows = st
-            .query_map(params![me, since], |r| Ok(Event { action: r.get(0)?, target: r.get(1)?, detail: r.get(2)? }))?
+            .query_map(params![me, since], |r| Ok(Event { action: r.get(0)?, detail: r.get(1)? }))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }

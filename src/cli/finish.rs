@@ -1,14 +1,14 @@
 //! pg finish: end this conversation's work on the project.
 //!
 //! ```text
-//! pg finish "Client done, refunds next. Tests pass." --left "Move refunds to the client"
+//! pg finish "Client done, refunds next. Tests pass." --done 1,2 --left "Move refunds to the client"
 //! ```
 //!
-//! Ticks off the steps this conversation added (not other conversations'
-//! steps), adds the steps left for later, and writes this conversation's
-//! handoff on top of the project note: the summary, and what it wrote to
-//! memory, the code it changed and how its last test run went. Each
-//! conversation has its own handoff; none overwrites another.
+//! Ticks off the steps it is told are done (by their number in the brief),
+//! adds the steps left for later, and writes this conversation's handoff on
+//! top of the project note: the summary, and what it wrote to memory, the
+//! code it changed and how its last test run went. Each conversation has
+//! its own handoff: finishing again replaces it, and no other one.
 //!
 //! It also shows the notes about the changed code (and about the code that
 //! calls it or that it calls): the rules to check the change against.
@@ -31,6 +31,10 @@ pub struct Args {
     /// What was done, and what the next conversation should know
     summary: Vec<String>,
 
+    /// The steps done, by their number in the brief (1,3), their text, or all
+    #[arg(long, value_delimiter = ',', value_name = "STEPS")]
+    done: Vec<String>,
+
     /// A step left for later (repeat for more)
     #[arg(long = "left", value_name = "STEP")]
     left: Vec<String>,
@@ -51,16 +55,6 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         return Err(fail(USAGE, "say what was done: pg finish \"what was done; what is next\""));
     }
     let state = State::open(project)?;
-    let events = state.my_events()?;
-    let mine: Vec<&str> = events.iter().filter(|e| e.action == "step").map(|e| e.target.as_str()).collect();
-    let mut written: Vec<&str> = Vec::new();
-    for e in events.iter().filter(|e| e.action == "write") {
-        let id = e.detail.split(' ').next().unwrap_or("");
-        if !id.is_empty() && !written.contains(&id) {
-            written.push(id);
-        }
-    }
-
     let code = crate::code::notes::open(&cx.home, project)?;
     let changes = match &code {
         Some(c) => work::changed(c)?,
@@ -70,12 +64,34 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     let work = super::open::work_folder(cx, &project.name);
     let folder = work.rsplit(['/', '\\']).next().unwrap_or("").to_string();
     let heading = if folder.is_empty() { date_time(now()) } else { format!("{} · {folder}", date_time(now())) };
-    let (_, (closed, left)) = update_note(project, plan::FILE, |n, exists, _| {
+    // this conversation's earlier handoff, replaced by this one
+    let mine = format!("handoff:{}", crate::state::conversation::key());
+    let earlier = state.get(&mine);
+    // a handoff that replaces this conversation's last one tells all since the one before
+    let events = state.my_events(usize::from(earlier.is_some()))?;
+    let mut written: Vec<&str> = Vec::new();
+    for e in events.iter().filter(|e| e.action == "write") {
+        let id = e.detail.split(' ').next().unwrap_or("");
+        if !id.is_empty() && !written.contains(&id) {
+            written.push(id);
+        }
+    }
+    let (_, (closed, left, open)) = update_note(project, plan::FILE, |n, exists, _| {
         if !exists {
             n.props.set_text("type", Kind::Project.as_str());
             n.props.set_text("title", project.name.clone());
         }
-        let closed = mine.iter().filter(|s| !a.left.iter().any(|l| l == *s) && plan::close_step(n, s)).count();
+        let mut closed = 0;
+        for d in a.done.iter().map(|d| d.trim()).filter(|d| !d.is_empty()) {
+            closed += if d.eq_ignore_ascii_case("all") {
+                let open: Vec<String> = plan::steps(n).into_iter().filter(|s| !s.done).map(|s| s.text).collect();
+                open.iter().filter(|s| plan::close_step(n, s)).count()
+            } else if let Ok(number) = d.trim_end_matches('.').parse::<usize>() {
+                usize::from(plan::close_number(n, number).is_some())
+            } else {
+                usize::from(plan::close_step(n, d))
+            };
+        }
         let left = a
             .left
             .iter()
@@ -98,17 +114,32 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         if let Some(r) = &last_run {
             text.push_str(&format!("\nTests: {}", testrun::describe(r)));
         }
-        plan::add_handoff(n, &heading, &text);
-        Ok((closed, left))
+        plan::add_handoff(n, &heading, &text, earlier.as_deref());
+        let open: Vec<String> = plan::steps(n)
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.done)
+            .map(|(i, s)| format!("{}. {}", i + 1, one_line(&s.text, 60)))
+            .collect();
+        Ok((closed, left, open))
     })?;
+    state.set(&mine, &heading)?;
     state.event("finish", &project.name, summary.lines().next().unwrap_or(""))?;
 
     let mut out = format!("ok {}: {} closed", project.name, count(closed as i64, "step"));
     if left > 0 {
         out.push_str(&format!(", {} left open", count(left as i64, "step")));
     }
-    out.push_str(", handoff saved");
+    out.push_str(if earlier.is_some() { ", handoff replaced" } else { ", handoff saved" });
     println!("{out}");
+    if !open.is_empty() {
+        let more = open.len().saturating_sub(5);
+        println!(
+            "open steps: {}{} (a done one: pg finish again with --done <number>; it replaces this handoff)",
+            open.iter().take(5).cloned().collect::<Vec<_>>().join("; "),
+            if more > 0 { format!("; +{more}") } else { String::new() }
+        );
+    }
     if let Some(w) = warning {
         println!("{w}");
     }
