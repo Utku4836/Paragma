@@ -39,6 +39,10 @@ pub struct Args {
     #[arg(long = "step", value_name = "STEP")]
     steps: Vec<String>,
 
+    /// A decision the user made for the work (repeat for more): kept as a decision record
+    #[arg(long = "decision", value_name = "DECISION")]
+    decisions: Vec<String>,
+
     /// Start a new project even when the name is close to an existing one
     #[arg(long)]
     new: bool,
@@ -71,7 +75,7 @@ const RELEVANT_RATIO: f64 = 0.5;
 const RELEVANT: usize = 8;
 
 pub fn run(cx: &Context, mut a: Args) -> Result<()> {
-    let warning = super::mask_all(a.goal.iter_mut().chain(a.steps.iter_mut()));
+    let warning = super::mask_all(a.goal.iter_mut().chain(a.steps.iter_mut()).chain(a.decisions.iter_mut()));
     let names: Vec<String> = cx.home.projects().into_iter().map(|p| p.name).collect();
     let links = Links::load(&cx.home);
     let linked: Vec<String> = links.projects_of(&cx.cwd).into_iter().filter(|p| names.contains(p)).collect();
@@ -108,9 +112,26 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     }
     state.touch_session(&work_folder(cx, &project.name))?;
     state.event("open", &project.name, "")?;
+    let mut recorded = Vec::new();
+    for d in &a.decisions {
+        let input = crate::record::DecisionInput {
+            text: d,
+            title: None,
+            why: None,
+            alternatives: None,
+            supersedes: None,
+            commit: crate::code::head_commit(&cx.home, &project),
+        };
+        let w = crate::record::decision(&project, &input)?;
+        state.event("write", "decision", &format!("{} {}", w.id, w.what))?;
+        recorded.push(w.id);
+    }
 
     let others: Vec<String> = linked.into_iter().filter(|p| *p != project.name).collect();
     print!("{}", brief(cx, &project, &state, &first_line(&project.name, &how), &how, &others)?);
+    if !recorded.is_empty() {
+        println!("decisions recorded: {}", recorded.join(", "));
+    }
     if let Some(w) = warning {
         println!("{w}");
     }
