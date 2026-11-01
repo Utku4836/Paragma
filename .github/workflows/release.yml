@@ -1,49 +1,124 @@
 name: Release
 
-# Push a tag like v0.1.0: builds pg for every platform, attaches the binaries
-# to a GitHub release and publishes the npm package "paragma" with the same
-# version. npm accepts this workflow as a trusted publisher (OIDC), so no
-# token is needed. A tag with a suffix (v0.2.0-rc.1) is a pre-release.
+# Push a tag like v0.2.0: builds pg for every platform, attaches the
+# binaries to a GitHub release and publishes the npm package "paragma" with
+# the same version. The package is small: when it is installed it downloads
+# the one binary for that computer from the release (npm/install.js) and
+# checks it against the SHA256SUMS packed into it. npm accepts this workflow
+# as a trusted publisher (OIDC), so no token is needed. A tag with a suffix
+# (v0.2.0-rc.1) is a pre-release, published under npm's "next" tag.
+#
+# Run by hand (Actions > Release > Run workflow) it only builds, to try the
+# builds without releasing.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write # npm trusted publishing
 
 jobs:
-  release:
+  # the embedded model, built once from its source and shared by every build
+  model:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: go test ./...
-      - name: Build
-        env:
-          CGO_ENABLED: "0"
+      # the version comes from Cargo.toml, set before tagging (Cargo.lock follows it)
+      - if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          want="${GITHUB_REF_NAME#v}"
+          have=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $have"; exit 1; }
+      - uses: actions/cache@v4
+        with:
+          path: target/model-src
+          key: model-src-potion-multilingual-128M
+      - run: bash tools/build-model/fetch.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: model/
+
+  build:
+    needs: model
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, ext: .exe }
+          - { name: windows-arm64, os: windows-11-arm, target: aarch64-pc-windows-msvc, ext: .exe }
+          - { name: linux-x64, os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { name: darwin-x64, os: macos-latest, target: x86_64-apple-darwin }
+          - { name: darwin-arm64, os: macos-latest, target: aarch64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: model
+          path: model/
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # Linux: a static binary (musl), so it runs on any distribution
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq musl-tools
+          t="${{ matrix.target }}"
+          echo "CC_${t//-/_}=musl-gcc" >> "$GITHUB_ENV"
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} --bin pg
           mkdir -p dist
-          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            os="${target%/*}"; arch="${target#*/}"; ext=""
-            [ "$os" = windows ] && ext=".exe"
-            GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -X github.com/Utku4836/Paragma/internal/cli.Version=$v" \
-              -o "dist/pg-$os-$arch$ext" ./cmd/pg
-          done
-          (cd dist && sha256sum pg-* > SHA256SUMS)
+          cp "target/${{ matrix.target }}/release/pg${{ matrix.ext }}" "dist/pg-${{ matrix.name }}${{ matrix.ext }}"
+      # the binary runs on the machine that built it (all but the Intel Mac one)
+      - if: matrix.name != 'darwin-x64'
+        shell: bash
+        run: |
+          pg="$PWD/dist/pg-${{ matrix.name }}${{ matrix.ext }}"
+          "$pg" --version
+          export PARAGMA_HOME="$RUNNER_TEMP/pghome"
+          mkdir -p "$RUNNER_TEMP/work" && cd "$RUNNER_TEMP/work"
+          "$pg" open smoke --goal "Smoke test"
+          "$pg" write --rule "Smoke tests run in CI on every platform."
+          "$pg" find "smoke test platform" | grep -q "Smoke tests"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pg-${{ matrix.name }}
+          path: dist/
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pg-*
+          path: dist/
+          merge-multiple: true
+      - name: Checksums and compressed copies
+        run: |
+          cd dist
+          sha256sum pg-* > SHA256SUMS
+          # the installer downloads the compressed copy (half the size) and checks the binary
+          for f in pg-*; do gzip -9 -k "$f"; done
+          ls -la
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # re-running the workflow (for example after adding NPM_TOKEN) updates the assets
+          notes=""; [ -f "docs/releases/$GITHUB_REF_NAME.md" ] && notes="--notes-file docs/releases/$GITHUB_REF_NAME.md"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             pre=""; case "$GITHUB_REF_NAME" in *-*) pre="--prerelease";; esac # v0.2.0-rc.1
-            gh release create "$GITHUB_REF_NAME" dist/* --title "Paragma $GITHUB_REF_NAME" --generate-notes $pre
+            gh release create "$GITHUB_REF_NAME" dist/* --title "Paragma $GITHUB_REF_NAME" ${notes:---generate-notes} $pre
           fi
       - uses: actions/setup-node@v4
         with:
@@ -54,13 +129,7 @@ jobs:
           npm install -g npm@latest # trusted publishing needs npm 11.5.1 or later
           v="${GITHUB_REF_NAME#v}"
           if npm view "paragma@$v" version >/dev/null 2>&1; then echo "paragma@$v already on npm"; exit 0; fi
-          # one package with every platform's binary; bin/pg runs the one for this machine
-          for f in dist/pg-*; do
-            t="${f#dist/pg-}"; ext=""; [ "${t%.exe}" != "$t" ] && ext=".exe"; t="${t%.exe}"
-            os="${t%-*}"; arch="${t#*-}"
-            cp "$f" "npm/bin/pg-${os/windows/win32}-${arch/amd64/x64}$ext"
-          done
-          chmod 755 npm/bin/*
+          cp dist/SHA256SUMS npm/SHA256SUMS
           cd npm
           npm version "$v" --no-git-tag-version --allow-same-version
           # npm does not resolve the README's relative image paths

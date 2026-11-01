@@ -1,30 +1,36 @@
 #!/usr/bin/env node
-// Runs the native pg binary for this machine. The package carries one
-// binary per platform (bin/pg-<platform>-<arch>[.exe]), so the install
-// needs no download script.
+// Runs the native pg binary for this computer, downloading it first when
+// the install did not (install scripts turned off, or no network then).
+"use strict";
 const { spawnSync } = require("child_process");
 const fs = require("fs");
-const path = require("path");
+const { install, binaryPath } = require("../install.js");
 
-const exe = path.join(__dirname, `pg-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`);
-if (!fs.existsSync(exe)) {
-  console.error(`paragma: no prebuilt pg for ${process.platform}/${process.arch}.`);
-  console.error("Download it from https://github.com/Utku4836/Paragma/releases or build it: go install github.com/Utku4836/Paragma/cmd/pg@latest");
-  process.exit(7);
-}
-if (process.platform !== "win32") {
-  try {
-    fs.accessSync(exe, fs.constants.X_OK);
-  } catch {
-    try { fs.chmodSync(exe, 0o755); } catch {}
+async function main() {
+  let exe = binaryPath();
+  if (!exe) {
+    console.error(`paragma: no prebuilt pg for ${process.platform}/${process.arch}.`);
+    console.error("Build it from source: https://github.com/Utku4836/Paragma");
+    process.exit(7);
   }
+  if (!fs.existsSync(exe)) {
+    try {
+      exe = await install();
+    } catch (e) {
+      console.error(`paragma: ${e.message}`);
+      console.error("Download pg by hand from https://github.com/Utku4836/Paragma/releases");
+      process.exit(7);
+    }
+  }
+  const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit" });
+  if (r.error) {
+    console.error("paragma: " + r.error.message);
+    process.exit(7);
+  }
+  if (r.signal) {
+    process.kill(process.pid, r.signal);
+  }
+  process.exit(r.status === null ? 1 : r.status);
 }
-const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit" });
-if (r.error) {
-  console.error("paragma: " + r.error.message);
-  process.exit(7);
-}
-if (r.signal) {
-  process.kill(process.pid, r.signal);
-}
-process.exit(r.status === null ? 1 : r.status);
+
+main();
