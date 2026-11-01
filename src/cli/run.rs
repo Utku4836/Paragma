@@ -30,10 +30,21 @@ use std::time::Instant;
 
 #[derive(clap::Args)]
 pub struct Args {
+    /// Stop the command (and what it started) after this many seconds
+    #[arg(long, value_name = "SECONDS", default_value_t = 600)]
+    timeout: u64,
+
     /// The command, after --: pg run -- go test ./...
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true, value_name = "COMMAND")]
     command: Vec<String>,
 }
+
+/// Output lines kept: the first ones and, mostly, the last ones (where test
+/// tools put their summary).
+const HEAD_LINES: usize = 2_000;
+const TAIL_LINES: usize = 20_000;
+/// The exit code of a command stopped at its timeout (as timeout(1) gives).
+const TIMED_OUT: i32 = 124;
 
 /// Earlier runs of a command compared with.
 const HISTORY: usize = 10;
@@ -45,7 +56,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let started = Instant::now();
     let secrets = cx.project.as_ref().map(crate::project::env::load).unwrap_or_default();
     let line = crate::project::env::substitute(&command, &secrets);
-    let (exit, output) = execute(&line, &cx.cwd, &secrets)?;
+    let (exit, output, timed_out) = execute(&line, &cx.cwd, &secrets, a.timeout)?;
     let output = crate::project::env::hide(&output, &secrets);
     // as shown and kept in the history of runs: without any value typed in it
     let command = crate::project::env::hide(&command, &secrets);
@@ -73,7 +84,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     } else {
         format!(": {} failing, {} passed", run.failing.len(), run.passed)
     };
-    if exit == 0 {
+    if timed_out {
+        b.add(&format!("fail {command}: stopped after {} s (--timeout), with what it started{tests}", a.timeout));
+    } else if exit == 0 {
         b.add(&format!("ok {command} ({:.1} s){tests}", run.seconds));
     } else {
         b.add(&format!("fail {command} (exit {exit}, {:.1} s){tests}", run.seconds));
@@ -241,23 +254,33 @@ fn shell(command: &str) -> std::process::Command {
 
 #[cfg(not(windows))]
 fn shell(command: &str) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
     let mut c = std::process::Command::new("sh");
     c.args(["-c", command]);
+    c.process_group(0); // its own group: a timeout stops everything it started
     c
 }
 
 /// Runs a command line in the shell; its exit code and its output (stdout
 /// and stderr as they came).
-fn execute(command: &str, cwd: &std::path::Path, secrets: &[crate::project::env::Secret]) -> Result<(i32, String)> {
+fn execute(
+    command: &str,
+    cwd: &std::path::Path,
+    secrets: &[crate::project::env::Secret],
+    timeout: u64,
+) -> Result<(i32, String, bool)> {
     let mut c = shell(command);
     let mut child = c
         .current_dir(cwd)
         .envs(secrets.iter().map(|s| (s.name.as_str(), s.value.as_str())))
+        // nothing to answer a question with: a command that asks fails
+        // instead of waiting forever
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .context("start the command")?; // its line may hold secrets: not repeated
-    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let kept = Arc::new(Mutex::new(Kept::default()));
     let readers: Vec<_> = [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
         child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
@@ -265,20 +288,82 @@ fn execute(command: &str, cwd: &std::path::Path, secrets: &[crate::project::env:
     .into_iter()
     .flatten()
     .map(|r| {
-        let lines = Arc::clone(&lines);
+        let kept = Arc::clone(&kept);
         std::thread::spawn(move || {
-            for l in BufReader::new(r).lines().map_while(Result::ok) {
-                lines.lock().expect("output lock").push(l);
+            let mut reader = BufReader::new(r);
+            let mut buf = Vec::new();
+            // lines as bytes: output that is not UTF-8 is read, not dropped
+            while reader.read_until(b'\n', &mut buf).is_ok_and(|n| n > 0) {
+                let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
+                kept.lock().expect("output lock").push(line);
+                buf.clear();
             }
         })
     })
     .collect();
-    let status = child.wait()?;
+    let deadline = Instant::now() + std::time::Duration::from_secs(timeout.max(1));
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (Some(status), false);
+        }
+        if Instant::now() >= deadline {
+            kill_tree(&mut child);
+            break (child.wait().ok(), true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
     for r in readers {
         let _ = r.join();
     }
-    let out = lines.lock().expect("output lock").join("\n");
-    Ok((status.code().unwrap_or(1), out))
+    let out = kept.lock().expect("output lock").text();
+    let code = if timed_out { TIMED_OUT } else { status.and_then(|s| s.code()).unwrap_or(1) };
+    Ok((code, out, timed_out))
+}
+
+/// The output kept: the first lines, then the last ones, with how many were
+/// left out between.
+#[derive(Default)]
+struct Kept {
+    head: Vec<String>,
+    tail: std::collections::VecDeque<String>,
+    dropped: usize,
+}
+
+impl Kept {
+    fn push(&mut self, line: String) {
+        let line =
+            if line.len() > 2_000 { format!("{}...", line.chars().take(2_000).collect::<String>()) } else { line };
+        if self.head.len() < HEAD_LINES {
+            self.head.push(line);
+            return;
+        }
+        self.tail.push_back(line);
+        if self.tail.len() > TAIL_LINES {
+            self.tail.pop_front();
+            self.dropped += 1;
+        }
+    }
+
+    fn text(&self) -> String {
+        let mut lines: Vec<String> = self.head.clone();
+        if self.dropped > 0 {
+            lines.push(format!("... {} lines left out ...", self.dropped));
+        }
+        lines.extend(self.tail.iter().cloned());
+        lines.join("\n")
+    }
+}
+
+/// Stops the command and every process it started (a test runner's
+/// workers would outlive the shell otherwise).
+fn kill_tree(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    if cfg!(windows) {
+        let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid]).output();
+    } else {
+        let _ = std::process::Command::new("kill").args(["-KILL", &format!("-{pid}")]).output();
+    }
+    let _ = child.kill();
 }
 
 #[cfg(test)]

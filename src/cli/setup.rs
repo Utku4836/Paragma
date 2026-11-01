@@ -66,7 +66,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         (Some(d), false) => Some(std::path::absolute(d)?),
         (None, true) => None,
         _ => {
-            return Err(fail(USAGE, "say where: --global (every conversation) or --dir <folder> (conversations there)"));
+            return Err(fail(
+                USAGE,
+                "say where: --global (every conversation) or --dir <folder> (conversations there)",
+            ));
         }
     };
     connect(&style, &chosen, folder.as_deref())
