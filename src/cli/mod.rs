@@ -10,6 +10,8 @@ mod open;
 mod read;
 mod rm;
 mod run;
+mod setup;
+mod skill;
 mod target;
 mod tree;
 mod write;
@@ -48,9 +50,9 @@ enum Command {
     Finish(finish::Args),
     /// Search memory: a topic, a question, an error line, a file or a code name
     Find(find::Args),
-    /// Print a note (by id, path or rule id)
+    /// Print a note (id, path), one rule, or code: file#Function, file:10-20
     Read(read::Args),
-    /// Create or update a note; a path ending in '/' creates a folder
+    /// Write a note or folder/, a rule, decision or error (--rule, --decision, --error), or a secret (--secret)
     Write(Box<write::Args>),
     /// Run the tests or a build: what fails, what is new, flaky or fixed, and the known fix
     Run(run::Args),
@@ -63,8 +65,12 @@ enum Command {
     Mv(mv::Args),
     /// Take a note, a rule, a folder or a project out of memory (kept in .archive/ unless --hard)
     Rm(rm::Args),
-    /// Check the project's notes and index
+    /// Check the project's notes, code and indexes
     Doctor(doctor::Args),
+    /// Connect Paragma to your coding agents (Claude Code, Codex, Antigravity, OpenCode)
+    Setup(setup::Args),
+    /// Paragma's instructions for agents: the core, or a skill (coding, projects, knowledge)
+    Skill(skill::Args),
 }
 
 /// What every command needs.
@@ -135,6 +141,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Mv(a) => mv::run(&cx, a),
         Command::Rm(a) => rm::run(&cx, a),
         Command::Doctor(a) => doctor::run(&cx, a),
+        Command::Setup(a) => setup::run(&cx, a),
+        Command::Skill(a) => skill::run(&cx, a),
     }
 }
 
