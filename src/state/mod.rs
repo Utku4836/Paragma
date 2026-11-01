@@ -75,6 +75,8 @@ impl State {
         db.busy_timeout(Duration::from_secs(60))?;
         db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         db.execute_batch(SCHEMA)?;
+        // added after the first release of the table
+        let _ = db.execute_batch("ALTER TABLE shown ADD COLUMN full_at INTEGER NOT NULL DEFAULT 0");
         Ok(State { db })
     }
 
@@ -136,17 +138,26 @@ impl State {
         Ok(rows)
     }
 
-    /// Remembers that results were shown to this conversation.
-    pub fn shown(&self, refs: &[String]) -> Result<()> {
+    /// Remembers that results were shown to this conversation, in full or
+    /// as one line.
+    pub fn shown(&self, refs: &[String], full: bool) -> Result<()> {
         let at = now();
+        let full_at = if full { at } else { 0 };
         let mut st = self.db.prepare_cached(
-            "INSERT INTO shown(conversation, ref, at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(conversation, ref) DO UPDATE SET at = ?3",
+            "INSERT INTO shown(conversation, ref, at, full_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(conversation, ref) DO UPDATE SET at = ?3, full_at = MAX(full_at, ?4)",
         )?;
         for r in refs {
-            st.execute(params![conversation::key(), r, at])?;
+            st.execute(params![conversation::key(), r, at, full_at])?;
         }
         Ok(())
+    }
+
+    /// What this conversation was shown in full since `since`.
+    pub fn shown_in_full(&self, since: i64) -> Result<std::collections::HashSet<String>> {
+        let mut st = self.db.prepare_cached("SELECT ref FROM shown WHERE conversation = ?1 AND full_at >= ?2")?;
+        let rows = st.query_map(params![conversation::key(), since], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
     }
 
     /// When a note or rule was last shown to any conversation.

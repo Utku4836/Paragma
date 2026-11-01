@@ -340,6 +340,7 @@ dependencies = [
  "clap",
  "fst",
  "half",
+ "regex",
  "rusqlite",
  "serde_json",
  "tempfile",

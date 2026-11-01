@@ -73,8 +73,13 @@ fn another_project_by_name_and_search_across() {
     assert_eq!(here.code, 1, "searched outside the project: {}", here.out);
     let there = ok(h, &["-p", "game", "find", "refund window", "--in", "shop"]);
     assert!(there.contains("Refunds are allowed"), "{there}");
+    // this conversation was just shown n1 in full: now one line
     let all = ok(h, &["find", "refund window"]);
-    assert!(all.contains("(all projects)") && all.contains("[shop:n1 note]"), "{all}");
+    assert!(
+        all.contains("(all projects)") && all.contains("shop:n1 note payments/refunds: Refunds are allowed"),
+        "{all}"
+    );
+    assert!(all.contains("(shown above; pg read shop:n1)"), "{all}");
 }
 
 #[test]

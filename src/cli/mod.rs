@@ -157,6 +157,23 @@ fn context(flag: Option<&str>, budget: usize) -> Result<Context> {
     Ok(Context { home, project, budget, cwd })
 }
 
+/// Masks the secrets in text an agent hands over (record/secrets.rs),
+/// collecting what kinds were found.
+pub fn masked(text: &mut String, found: &mut Vec<&'static str>) {
+    let (clean, kinds) = crate::record::secrets::mask(text);
+    *text = clean;
+    found.extend(kinds);
+}
+
+/// Masks every given text; None when there were no secrets.
+pub fn mask_all<'a>(texts: impl IntoIterator<Item = &'a mut String>) -> Option<String> {
+    let mut found = Vec::new();
+    for t in texts {
+        masked(t, &mut found);
+    }
+    crate::record::secrets::warning(&found)
+}
+
 impl Context {
     /// The command's project, or an error saying how to pick one.
     pub fn need_project(&self) -> Result<&Project> {

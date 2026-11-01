@@ -71,6 +71,9 @@ fn list_folder(cx: &Context, project: &Project, folder: &str) -> Result<()> {
     let here = if folder.is_empty() { project.name.clone() } else { format!("{}/{folder}", project.name) };
     b.add(&format!("ok {here}"));
     if folder.is_empty() {
+        if let Some(s) = crate::project::env::summary(project) {
+            b.add(&s);
+        }
         let code = Links::load(&cx.home).folders_of(&project.name);
         if !code.is_empty() {
             b.add(&format!("code: {}", code.join(", ")));

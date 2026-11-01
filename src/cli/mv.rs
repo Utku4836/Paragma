@@ -112,6 +112,11 @@ fn rename_project(cx: &Context, p: &Project, to: &str) -> Result<()> {
     rename(&p.dir, &cx.home.projects_dir().join(to))?;
     Links::rename_project(&cx.home, &p.name, to)?;
     let renamed = cx.home.project(to).expect("just renamed");
+    // the env file is named after the project
+    let old_env = renamed.dir.join(format!("{}.env", p.name));
+    if old_env.exists() {
+        rename(&old_env, &crate::project::env::path(&renamed))?;
+    }
     if renamed.note_file(crate::project::plan::FILE).exists() {
         update_note(&renamed, crate::project::plan::FILE, |n, _, _| {
             n.props.set_text("title", to);

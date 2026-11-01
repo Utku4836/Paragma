@@ -43,9 +43,10 @@ const CHANGED_SHOWN: usize = 8;
 /// Notes about the changed code listed.
 const NOTES_SHOWN: usize = 8;
 
-pub fn run(cx: &Context, a: Args) -> Result<()> {
+pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     let project = cx.need_project()?;
-    let summary = a.summary.join(" ").trim().to_string();
+    let mut summary = a.summary.join(" ").trim().to_string();
+    let warning = super::mask_all(std::iter::once(&mut summary).chain(a.left.iter_mut()));
     if summary.is_empty() {
         return Err(fail(USAGE, "say what was done: pg finish \"what was done; what is next\""));
     }
@@ -108,6 +109,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     out.push_str(", handoff saved");
     println!("{out}");
+    if let Some(w) = warning {
+        println!("{w}");
+    }
     if let Some(c) = &code
         && !changes.is_empty()
     {

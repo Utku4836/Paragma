@@ -15,6 +15,7 @@ use crate::index::{Index, NoteRow};
 use crate::note::{Note, Value, chunks};
 use crate::output::Budget;
 use crate::project::{Project, files};
+use crate::state::State;
 use anyhow::Result;
 
 #[derive(clap::Args)]
@@ -49,6 +50,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     {
         b.add(&format!("[{id} rule] {}#{}\n{}", row.path.trim_end_matches(".md"), c.heading, c.text));
         print!("{}", b.out);
+        let _ = State::open(&project).and_then(|s| s.shown(&[id.to_string()], true));
         return Ok(());
     }
     b.add(&format!(
@@ -82,6 +84,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         b.out.push_str(&format!("... more below line {n}: pg read {} --budget {}\n", a.target, cx.budget * 2));
     }
     print!("{}", b.out);
+    if !row.id.is_empty() {
+        // later searches in this conversation show it as one line
+        let _ = State::open(&project).and_then(|s| s.shown(std::slice::from_ref(&row.id), true));
+    }
     Ok(())
 }
 

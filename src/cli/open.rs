@@ -66,7 +66,8 @@ const LIKELY_MIN: f32 = 0.35;
 /// Rules, decisions and errors listed as matching the goal and the steps.
 const RELEVANT: usize = 8;
 
-pub fn run(cx: &Context, a: Args) -> Result<()> {
+pub fn run(cx: &Context, mut a: Args) -> Result<()> {
+    let warning = super::mask_all(a.goal.iter_mut().chain(a.steps.iter_mut()));
     let names: Vec<String> = cx.home.projects().into_iter().map(|p| p.name).collect();
     let links = Links::load(&cx.home);
     let linked: Vec<String> = links.projects_of(&cx.cwd).into_iter().filter(|p| names.contains(p)).collect();
@@ -106,6 +107,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
     let others: Vec<String> = linked.into_iter().filter(|p| *p != project.name).collect();
     print!("{}", brief(cx, &project, &state, &first_line(&project.name, &how), &how, &others)?);
+    if let Some(w) = warning {
+        println!("{w}");
+    }
     Ok(())
 }
 
@@ -239,11 +243,14 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
                     if h.heading.is_empty() { h.path.trim_end_matches(".md").to_string() } else { h.heading.clone() };
                 b.add(&format!("{} {} {place}: {}", h.id, h.kind.as_str(), one_line(&h.text, 100)));
             }
-            state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>())?;
+            state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(), false)?;
         }
     }
     if let Some(code) = crate::code::notes::open(&cx.home, project)? {
         code_part(&mut b, &code, state, &query)?;
+    }
+    if let Some(s) = crate::project::env::summary(project) {
+        b.add(&s);
     }
     let rules = index.count("SELECT COUNT(*) FROM chunks WHERE kind = 'rule'");
     let of = |k: &str| index.count(&format!("SELECT COUNT(*) FROM notes WHERE kind = '{k}'"));

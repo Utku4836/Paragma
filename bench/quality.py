@@ -198,7 +198,10 @@ def main():
     to_v2.convert(os.path.join(HERE, "memory-big"), home2, "shopkit")
     env2 = dict(os.environ, PARAGMA_HOME=home2, PARAGMA_PROJECT="shopkit")
     run([PG2, "doctor"], env2)  # first index
-    systems = [("pg 2", lambda q, g: run([PG2, "find", q, "--budget", str(a.budget)], env2))]
+    # every question is its own conversation: pg find shortens what a
+    # conversation was already shown
+    ask = lambda q: run([PG2, "find", q, "--budget", str(a.budget)], dict(env2, PARAGMA_SESSION=q))
+    systems = [("pg 2", lambda q, g: ask(q))]
 
     if a.go:
         import agent_eval as ae

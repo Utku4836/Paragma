@@ -13,6 +13,10 @@
 //!
 //! Rules, decisions and errors go to their place in the project with their
 //! fields, and are never written twice (see record/).
+//!
+//! pg write --secret "Npm Api" <value>   a secret, by its title, to the
+//! project's env file: never shown again, used by pg run as $NPM_API.
+//! Secrets in any other text are masked and not kept: they need a title.
 
 use super::{Context, USAGE, fail};
 use crate::index::update_note;
@@ -38,6 +42,11 @@ pub struct Args {
     /// Read the text from a file
     #[arg(long, value_name = "FILE")]
     file: Option<std::path::PathBuf>,
+
+    /// Keep a secret (API key, token, password) under this title in the project's env file;
+    /// the value follows, or "-" reads it from stdin
+    #[arg(long, value_name = "TITLE", conflicts_with_all = ["rule", "decision", "error"])]
+    secret: Option<String>,
 
     /// Record a rule (to rules.md)
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["decision", "error"])]
@@ -84,14 +93,33 @@ pub struct Args {
     files: Vec<String>,
 }
 
-pub fn run(cx: &Context, a: Args) -> Result<()> {
+pub fn run(cx: &Context, mut a: Args) -> Result<()> {
+    if let Some(title) = a.secret.clone() {
+        return write_secret(cx, &title, &a);
+    }
     if a.rule.is_some() || a.decision.is_some() || a.error.is_some() {
-        return write_record(cx, &a);
+        let fields = [
+            &mut a.rule,
+            &mut a.decision,
+            &mut a.why,
+            &mut a.alternatives,
+            &mut a.title,
+            &mut a.error,
+            &mut a.cause,
+            &mut a.fix,
+        ];
+        let warning = super::mask_all(fields.into_iter().flatten());
+        write_record(cx, &a)?;
+        if let Some(w) = warning {
+            println!("{w}");
+        }
+        return Ok(());
     }
     let Some(path) = a.path.as_deref() else {
         return Err(fail(USAGE, "say where: pg write <note> \"text\" (or --rule, --decision, --error)"));
     };
-    let text = text_of(&a)?;
+    let mut text = text_of(&a)?;
+    let warning = super::mask_all([&mut text]);
     let folder_only = path.ends_with('/');
     let (project, rel) = target(cx, path.trim_end_matches('/'))?;
     for part in rel.split('/').filter(|s| !s.is_empty()) {
@@ -113,6 +141,35 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let (id, what) = write_note(&project, &rel, &text, a.append)?;
     State::open(&project)?.touch_session(&cx.cwd.to_string_lossy())?;
     println!("ok {}/{} ({id}, {what})", project.name, rel.trim_end_matches(".md"));
+    if let Some(w) = warning {
+        println!("{w}");
+    }
+    Ok(())
+}
+
+/// A secret to the project's env file, by its title.
+fn write_secret(cx: &Context, title: &str, a: &Args) -> Result<()> {
+    let project = cx.need_project()?;
+    let given: Vec<String> = a.path.iter().chain(a.text.iter()).cloned().collect();
+    let value = if given.len() == 1 && given[0] == "-" {
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s)?;
+        s.trim_end_matches(['\r', '\n']).to_string()
+    } else {
+        given.join(" ")
+    };
+    if title.trim().is_empty() || value.trim().is_empty() {
+        return Err(fail(USAGE, "a secret needs a title and a value: pg write --secret \"Npm Api\" <value>"));
+    }
+    let (s, new) = crate::project::env::set(project, title, value.trim())?;
+    State::open(project)?.event("secret", &s.title, if new { "added" } else { "replaced" })?;
+    println!(
+        "ok {} {}: use ${} in pg run (pg run -- <command with ${}>)",
+        s.show(),
+        if new { "kept" } else { "replaced" },
+        s.name,
+        s.name
+    );
     Ok(())
 }
 

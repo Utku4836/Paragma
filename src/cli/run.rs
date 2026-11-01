@@ -8,6 +8,10 @@
 //! new, was failing already or comes and goes, the lines that say what went
 //! wrong with the function they point at, and the fix memory already has
 //! for that error. Exits with the command's exit code.
+//!
+//! The project's secrets are given to the command: $NAME in the command line
+//! becomes the value (on every system), every secret is in its environment,
+//! and a value showing up in the output is shown as $NAME again.
 
 use super::Context;
 use crate::code::notes;
@@ -39,7 +43,12 @@ const EXPLAINED: usize = 3;
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let command = join(&a.command);
     let started = Instant::now();
-    let (exit, output) = execute(&command, &cx.cwd)?;
+    let secrets = cx.project.as_ref().map(crate::project::env::load).unwrap_or_default();
+    let line = crate::project::env::substitute(&command, &secrets);
+    let (exit, output) = execute(&line, &cx.cwd, &secrets)?;
+    let output = crate::project::env::hide(&output, &secrets);
+    // as shown and kept in the history of runs: without any value typed in it
+    let command = crate::project::env::hide(&command, &secrets);
     let parsed = parse::parse(&output);
     let code = match &cx.project {
         Some(p) => notes::open(&cx.home, p)?,
@@ -126,8 +135,11 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             }
         }
     }
+    let tests_seen = run.passed > 0 || !run.failing.is_empty();
     if exit != 0 && run.errors.is_empty() {
         tail(&mut b, &output, 30); // nothing understood: the output says it best
+    } else if exit == 0 && !tests_seen {
+        tail(&mut b, &output, 60); // not a test run (an API call, a script): its output is the answer
     }
     if let Some((line, files)) = unexplained {
         let files = if files.is_empty() { String::new() } else { format!(" --files {}", files.join(",")) };
@@ -215,14 +227,15 @@ fn shell(command: &str) -> std::process::Command {
 
 /// Runs a command line in the shell; its exit code and its output (stdout
 /// and stderr as they came).
-fn execute(command: &str, cwd: &std::path::Path) -> Result<(i32, String)> {
+fn execute(command: &str, cwd: &std::path::Path, secrets: &[crate::project::env::Secret]) -> Result<(i32, String)> {
     let mut c = shell(command);
     let mut child = c
         .current_dir(cwd)
+        .envs(secrets.iter().map(|s| (s.name.as_str(), s.value.as_str())))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .with_context(|| format!("run {command}"))?;
+        .context("start the command")?; // its line may hold secrets: not repeated
     let lines = Arc::new(Mutex::new(Vec::<String>::new()));
     let readers: Vec<_> = [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),

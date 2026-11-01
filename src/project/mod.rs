@@ -8,6 +8,7 @@
 //!     .pg/index.db  .pg/state.db  .pg/lock
 //! ```
 
+pub mod env;
 pub mod files;
 pub mod names;
 pub mod plan;
@@ -58,6 +59,7 @@ impl Home {
         check_name(name)?;
         let p = self.project_at(name);
         std::fs::create_dir_all(p.meta_dir())?;
+        env::create(&p)?;
         Ok(p)
     }
 

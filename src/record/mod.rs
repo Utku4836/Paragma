@@ -8,6 +8,7 @@
 //!   out, with how to mark it as replacing that one;
 //! - an error seen often, in many files, is proposed as a rule.
 
+pub mod secrets;
 pub mod signature;
 pub mod upkeep;
 

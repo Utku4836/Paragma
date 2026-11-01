@@ -1,6 +1,7 @@
 //! pg find: one search for everything memory holds. A code name or a
 //! file of the project's code also finds the code itself, first, with the
-//! notes about it.
+//! notes about it. What this conversation was shown in full lately comes as
+//! one line: it is still in the agent's context.
 
 use super::{Context, NOTHING_FOUND, fail};
 use crate::code::lang::Lang;
@@ -31,6 +32,9 @@ pub struct Args {
 const KEEP_RATIO: f64 = 0.45;
 /// Results shown as one line after the budget for full text is spent.
 const ONE_LINERS: usize = 5;
+/// A result shown in full to the conversation this recently is not shown
+/// in full again.
+const STILL_IN_CONTEXT: i64 = 90 * 60;
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let query = a.query.join(" ");
@@ -48,7 +52,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         hits.extend(search::find(&index, &query)?.into_iter().map(|h| (p.name.clone(), h)));
     }
     hits.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
-    let code = if several { Vec::new() } else { code_lines(cx, &projects[0], &query)? };
+    let mut code = if several { Vec::new() } else { secret_lines(&projects[0], &query) };
+    if !several {
+        code.extend(code_lines(cx, &projects[0], &query)?);
+    }
     if hits.is_empty() && code.is_empty() {
         return Err(fail(NOTHING_FOUND, format!("no results for {query:?}")));
     }
@@ -61,12 +68,27 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     for line in &code {
         b.add(line);
     }
+    let mut seen = std::collections::HashSet::new();
+    for p in &projects {
+        let since = crate::output::now() - STILL_IN_CONTEXT;
+        if let Ok(ids) = State::open(p).and_then(|s| s.shown_in_full(since)) {
+            seen.extend(ids.into_iter().map(|id| (p.name.clone(), id)));
+        }
+    }
     let mut shown = 0;
+    let mut in_full = Vec::new();
     for (project, h) in &hits {
         let id = if several { format!("{project}:{}", h.id) } else { h.id.clone() };
-        if b.add(&full(&id, h)) {
+        let block = if seen.contains(&(project.clone(), h.id.clone())) {
+            format!("{id} {} {}: {} (shown above; pg read {id})", h.kind.as_str(), where_(h), one_line(&h.text, 70))
+        } else {
+            in_full.push((project.clone(), h.id.clone()));
+            full(&id, h)
+        };
+        if b.add(&block) {
             shown += 1;
         } else {
+            in_full.pop();
             break;
         }
     }
@@ -79,20 +101,33 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         b.add(&format!("+{} more: pg find \"{query}\" --budget {}", rest.len() - ONE_LINERS, cx.budget * 2));
     }
     print!("{}", b.out);
-    // what was shown, per project: upkeep keeps what is used (record/upkeep.rs)
+    // what was shown, per project: what is still in the agent's context,
+    // and what upkeep keeps as used (record/upkeep.rs)
     for p in &projects {
-        let ids: Vec<String> = hits
+        let full: Vec<String> = in_full.iter().filter(|(n, _)| *n == p.name).map(|(_, id)| id.clone()).collect();
+        let lines: Vec<String> = hits
             .iter()
             .take(shown + ONE_LINERS)
-            .filter(|(name, _)| *name == p.name)
+            .filter(|(name, h)| *name == p.name && !full.contains(&h.id))
             .map(|(_, h)| h.id.clone())
             .collect();
-        if !ids.is_empty() {
-            // a search that found something never fails over bookkeeping
-            let _ = State::open(p).and_then(|s| s.shown(&ids));
+        // a search that found something never fails over bookkeeping
+        if let Ok(state) = State::open(p) {
+            let _ = state.shown(&full, true);
+            let _ = state.shown(&lines, false);
         }
     }
     Ok(())
+}
+
+/// The project's secrets a query asks for, by title; never their values.
+fn secret_lines(project: &Project, query: &str) -> Vec<String> {
+    let secrets = crate::project::env::load(project);
+    crate::project::env::matching(&secrets, query)
+        .iter()
+        .take(10)
+        .map(|s| format!("[secret] {}: use ${} in pg run", s.show(), s.name))
+        .collect()
 }
 
 /// The project's code a query names: a file, file#Symbol, or a symbol
