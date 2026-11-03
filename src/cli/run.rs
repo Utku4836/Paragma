@@ -169,6 +169,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         && known(&index, project, line)?.is_none()
     {
         b.add(&format!("worth remembering? pg write --error {:?} --cause \"...\" --fix \"...\"", one_line(line, 120)));
+        state.event("fixed", line, &verdict.fixed.join(", "))?;
     }
 
     state.record_run(&run)?;

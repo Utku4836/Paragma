@@ -211,6 +211,18 @@ impl State {
         }
     }
 
+    /// What this conversation did `action` to since `since`, each once, in
+    /// order (the files it edited, ...).
+    pub fn my_targets_since(&self, action: &str, since: i64) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT target FROM events WHERE conversation = ?1 AND action = ?2 AND at >= ?3 GROUP BY target ORDER BY MIN(rowid)",
+        )?;
+        let rows = st
+            .query_map(params![conversation::key(), action, since], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
     /// When this conversation last did `action` (an "open": its start, or
     /// its brief again after it was compacted).
     pub fn my_last(&self, action: &str) -> Option<i64> {

@@ -10,6 +10,7 @@
 //! PreToolUse, an edit     the rules and notes tied to the code it touches
 //! PostToolUse, a command  a failing test or build: the fix memory has for it
 //! PostToolUse, an edit    remembers the files the conversation changed
+//! UserPromptSubmit        a lasting rule in the user's words: asks to keep it
 //! Stop                    work done but no handoff: asks once for pg finish
 //! ```
 
@@ -100,6 +101,7 @@ pub fn answer(agent: Agent, input: &str) -> Result<Option<String>> {
     let text = match name {
         "SessionStart" => Some(session_start(&cx, project, event["source"].as_str().unwrap_or(""))?),
         "PreToolUse" => before_edit(&cx, project, &event)?,
+        "UserPromptSubmit" => said_rule(project, event["prompt"].as_str().unwrap_or(""))?,
         "PostToolUse" | "PostToolUseFailure" => after_tool(&cx, project, &event)?,
         "Stop" if event["stop_hook_active"].as_bool() != Some(true) => stop(project)?,
         _ => None,
@@ -383,15 +385,20 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
     }
     let (output, exit) = tool_output(event);
     let parsed = parse::parse(&output);
-    // Codex gives no exit code: what the output says decides
-    let exit = exit.unwrap_or(if !parsed.failed.is_empty() || (parsed.passed == 0 && !parsed.errors.is_empty()) {
-        1
-    } else {
-        0
-    });
-    if parsed.failed.is_empty() && parsed.passed == 0 && (exit == 0 || parsed.errors.is_empty()) {
+    let failed = !parsed.failed.is_empty() || parse::suite_failed(&output);
+    let tests = failed || parsed.passed > 0 || parse::suite_passed(&output);
+    let exit = match exit {
+        Some(code) => code,
+        // no exit code given: only a test or build tool's own words count,
+        // not lines that look like errors (a source file printed)
+        None if !tests => return Ok(None),
+        None => i32::from(failed),
+    };
+    if !tests && (exit == 0 || parsed.errors.is_empty()) {
         return Ok(None); // not a test run or a build that failed
     }
+    // one history for `go test ./...`, `cd app && go test ./... 2>&1 | head`
+    let command = &normalized(command);
     let code = crate::code::notes::open(&cx.home, project)?;
     let run = Run {
         at: now(),
@@ -408,15 +415,15 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
     let verdict = testrun::judge(&run, &history);
     state.record_run(&run)?;
     state.event("run", &run.command, if exit == 0 { "pass" } else { "fail" })?;
+    let index = Index::open(project)?;
     if exit == 0 {
-        return Ok(None);
+        return fixed_here(cx, project, (&state, &index, code.as_ref()), &verdict, history.first());
     }
 
     let mut lines = Vec::new();
     if !verdict.flaky.is_empty() {
         lines.push(format!("flaky (fails now and then, also without a change): {}", verdict.flaky.join(", ")));
     }
-    let index = Index::open(project)?;
     let since = now() - SHOWN_AGAIN;
     for line in run.errors.iter().take(EXPLAINED) {
         let known = match super::run::known(&index, project, line)? {
@@ -435,6 +442,71 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         return Ok(None);
     }
     Ok(Some(format!("Paragma, about this run:\n{}", lines.join("\n"))))
+}
+
+/// Tests that failed in the last run pass now: when memory has no fix for
+/// the error they failed with, the agent is asked to remember it, while it
+/// still knows the cause. Nothing is written for it.
+fn fixed_here(
+    cx: &Context,
+    project: &crate::project::Project,
+    (state, index, code): (&State, &Index, Option<&crate::code::CodeIndex>),
+    verdict: &testrun::Verdict,
+    before: Option<&Run>,
+) -> Result<Option<String>> {
+    let (Some(before), false) = (before, verdict.fixed.is_empty()) else { return Ok(None) };
+    let Some(line) = before.errors.first() else { return Ok(None) };
+    if super::run::known(index, project, line)?.is_some() {
+        return Ok(None);
+    }
+    state.event("fixed", line, &verdict.fixed.join(", "))?;
+    let folders = Links::load(&cx.home).folders_of(&project.name);
+    let changed: Vec<String> = state
+        .my_targets_since("edit", before.at)?
+        .iter()
+        .filter_map(|f| relative(&folders, Path::new(f)).map(|r| r.1))
+        .collect();
+    let (since, files) = if changed.is_empty() {
+        (String::new(), String::new())
+    } else {
+        // the record is then tied to the code that was fixed, not only to the test
+        let mut files: Vec<String> = changed.clone();
+        if let Some(code) = code {
+            for (file, _) in parse::locations(line) {
+                if let Some((folder, path)) = code.locate(&file)? {
+                    files.push(code.display(&folder, &path));
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        files.retain(|f| seen.insert(f.clone()));
+        (format!(" Changed since: {}.", changed.join(", ")), format!(" --files {}", files.join(",")))
+    };
+    Ok(Some(format!(
+        "Paragma: {} pass again; they failed with \"{}\" and memory has no fix for it.{since} If the cause is worth \
+         knowing next time: pg write --error {:?} --cause \"...\" --fix \"...\"{files}",
+        verdict.fixed.join(", "),
+        one_line(line, 160),
+        one_line(line, 160)
+    )))
+}
+
+/// The user's message gives the project a lasting rule: the agent is asked
+/// to keep it, if the user meant it so (record/said_rule.rs). Each sentence
+/// once a conversation.
+fn said_rule(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
+    let Some(sentence) = crate::record::said_rule::find(prompt) else { return Ok(None) };
+    let sentence = one_line(&sentence, 300);
+    let state = State::open(project)?;
+    if state.my_targets_since("rule-offered", 0)?.contains(&sentence) {
+        return Ok(None);
+    }
+    state.event("rule-offered", &sentence, "")?;
+    Ok(Some(format!(
+        "Paragma: the user's message reads like a lasting rule for this project: \"{sentence}\". If they mean it for \
+         the future, keep it: pg write --rule \"<the rule in a sentence>\" (add (applies: <folder>/) when it is about \
+         one part of the code). If it was only for this task, ignore this."
+    )))
 }
 
 /// Asks once for a handoff when this conversation changed something since
@@ -492,12 +564,11 @@ fn tool_output(event: &Value) -> (String, Option<i32>) {
     if let Some(e) = event["error"].as_str() {
         text.push_str(e);
     }
-    let exit = exit.or_else(|| exit_in(&text)).or(match event["hook_event_name"].as_str() {
-        Some("PostToolUseFailure") => Some(1),
-        // Claude Code sends a failed command to PostToolUseFailure
-        _ if event["tool_response"].is_object() => Some(0),
-        _ => None,
-    });
+    // a failed command does not always come as PostToolUseFailure: Claude
+    // Code gave `go test` failing with exit code 1 as a plain result
+    let exit = exit
+        .or_else(|| exit_in(&text))
+        .or((event["hook_event_name"].as_str() == Some("PostToolUseFailure")).then_some(1));
     (text, exit)
 }
 
@@ -547,6 +618,29 @@ fn exit_in(text: &str) -> Option<i32> {
         l.strip_prefix("Exit code").or_else(|| l.strip_prefix("Process exited with code")).and_then(number)
     });
     lines.or_else(|| text.find("\"exit_code\":").and_then(|i| number(&text[i + "\"exit_code\":".len()..])))
+}
+
+/// A command as its runs are kept: without the folder it changes to first,
+/// its output redirections and a filter it is piped into, which do not
+/// change what runs.
+fn normalized(command: &str) -> String {
+    let mut c = command.trim();
+    // `cd app && go test`: the last part runs the tests
+    if let Some((first, rest)) = c.split_once("&&")
+        && first.trim_start().starts_with("cd ")
+    {
+        c = rest.trim();
+    }
+    if let Some((head, tail)) = c.split_once('|') {
+        let filter = tail.split_whitespace().next().unwrap_or("");
+        if ["head", "tail", "grep", "tee", "less", "more", "Select-Object", "Out-String", "Select-String"]
+            .contains(&filter)
+        {
+            c = head;
+        }
+    }
+    let words: Vec<&str> = c.split_whitespace().filter(|w| !matches!(*w, "2>&1" | "2>/dev/null" | "*>&1")).collect();
+    words.join(" ")
 }
 
 /// Whether a command line runs pg itself.
@@ -601,8 +695,12 @@ mod tests {
         let (text, exit) = tool_output(&claude_failed);
         assert_eq!(exit, Some(1));
         assert!(text.contains("refund_test.go:7: day 30"));
+        // Claude Code 2.1: a plain result says no exit code, even for `go test`
+        // failing with 1 (as it came in a real run)
         let claude_ok = json!({ "hook_event_name": "PostToolUse", "tool_response": { "stdout": "ok", "stderr": "" } });
-        assert_eq!(tool_output(&claude_ok).1, Some(0));
+        assert_eq!(tool_output(&claude_ok).1, None);
+        let claude_failed = json!({ "hook_event_name": "PostToolUse", "tool_response": { "stdout": "--- FAIL: TestRefundRejectsNegativeDays (0.00s)\n    refund_test.go:7: negative days must be rejected\nFAIL\nFAIL\tapp/payments\t3.460s\nFAIL", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false } });
+        assert_eq!(tool_output(&claude_failed).1, None);
         // Codex 0.162, as it came: the output alone, no exit code
         let codex = json!({ "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": { "command": ".\\fail.cmd" }, "tool_response": "--- FAIL: TestRefund (0.00s)\n    refund_test.go:7: day 30\nFAIL\n" });
         assert_eq!(
@@ -667,6 +765,18 @@ mod tests {
         assert_eq!(folder, key);
         assert_eq!(rel, "Payments/Refund.go");
         assert_eq!(relative(&[key], &d.path().join("ShopX").join("a.go")), None);
+    }
+
+    #[test]
+    fn one_history_for_the_same_command() {
+        assert_eq!(normalized("go test ./..."), "go test ./...");
+        assert_eq!(normalized("go test ./... 2>&1 | head -100"), "go test ./...");
+        assert_eq!(normalized("cd \"C:/dev/app\" && go test ./... 2>&1"), "go test ./...");
+        assert_eq!(normalized("go test ./...  |  tail -20"), "go test ./...");
+        assert_eq!(normalized("npm test | Select-Object -Last 30"), "npm test");
+        // a pipe into something else, or a chain that is not a cd: as given
+        assert_eq!(normalized("cat log | sort"), "cat log | sort");
+        assert_eq!(normalized("make build && make test"), "make build && make test");
     }
 
     #[test]

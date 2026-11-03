@@ -14,6 +14,52 @@ pub struct Parsed {
 /// Error lines kept.
 const ERRORS: usize = 5;
 
+/// Whether the output says a test suite passed without listing its tests:
+/// go test's "ok  shop/payments 0.01s", cargo's "test result: ok.",
+/// pytest's "5 passed in 0.1s", jest's "Tests: 5 passed", dotnet's
+/// "Passed!".
+pub fn suite_passed(output: &str) -> bool {
+    output.lines().map(str::trim).any(|line| {
+        let lower = line.to_lowercase();
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let go = words.len() >= 3
+            && words[0] == "ok"
+            && words[1].contains(|c: char| c.is_alphanumeric())
+            && words[2..]
+                .iter()
+                .any(|w| *w == "(cached)" || w.strip_suffix('s').is_some_and(|n| n.parse::<f64>().is_ok()));
+        let counted = lower.contains(" passed") && !lower.contains("failed") && {
+            let at = lower.find(" passed").unwrap_or(0);
+            lower[..at].rsplit(|c: char| !c.is_ascii_digit()).next().is_some_and(|n| !n.is_empty())
+        };
+        go || lower.starts_with("test result: ok.") || lower.starts_with("passed!") || counted
+    })
+}
+
+/// Whether the output has a test or build tool's own word that it failed:
+/// go's "FAIL\tshop/payments" or "[build failed]", cargo's "test result:
+/// FAILED" or "could not compile", pytest's "1 failed", jest's "Tests: 1
+/// failed", dotnet's "Failed!" or "Build FAILED". Error-like lines alone
+/// (a source file printed, a log) are not.
+pub fn suite_failed(output: &str) -> bool {
+    output.lines().map(str::trim).any(|line| {
+        let lower = line.to_lowercase();
+        let counted = lower.contains(" failed") && {
+            let at = lower.find(" failed").unwrap_or(0);
+            lower[..at].rsplit(|c: char| !c.is_ascii_digit()).next().is_some_and(|n| !n.is_empty() && n != "0")
+        };
+        line == "FAIL"
+            || line.starts_with("FAIL\t")
+            || line.starts_with("--- FAIL")
+            || lower.contains("[build failed]")
+            || lower.starts_with("test result: failed")
+            || lower.starts_with("error: could not compile")
+            || lower.starts_with("failed!")
+            || lower.starts_with("build failed")
+            || (counted && (lower.contains(" passed") || lower.contains(" in ") || lower.starts_with("tests:")))
+    })
+}
+
 pub fn parse(output: &str) -> Parsed {
     let mut p = Parsed::default();
     let mut with_place = Vec::new();
@@ -167,6 +213,38 @@ pub fn locations(line: &str) -> Vec<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suites_that_say_they_passed() {
+        assert!(suite_passed("ok  \tshop/payments\t0.012s\nok  \tshop/cart\t(cached)\n"));
+        assert!(suite_passed("test result: ok. 12 passed; 0 failed; 0 ignored\n"));
+        assert!(suite_passed("============ 5 passed in 0.12s ============\n"));
+        assert!(suite_passed("Tests:       5 passed, 5 total\n"));
+        assert!(suite_passed("Passed!  - Failed:     0, Passed:     5, Skipped:     0\n"));
+        assert!(!suite_passed("--- FAIL: TestRefund (0.00s)\nFAIL\tshop/payments\t0.01s\n"));
+        assert!(!suite_passed("Tests:       1 failed, 4 passed, 5 total\n"));
+        assert!(!suite_passed("==== 1 failed, 2 passed in 0.3s ====\n"));
+        assert!(!suite_passed("ok\nthe check passed\n"));
+        assert!(!suite_passed("go.mod\nREADME.md\n"));
+    }
+
+    #[test]
+    fn suites_that_say_they_failed() {
+        assert!(suite_failed("--- FAIL: TestRefund (0.00s)\nFAIL\nFAIL\tshop/payments\t0.01s\n"));
+        assert!(suite_failed(
+            "# shop/payments\npayments/refund.go:9:3: undefined: x\nFAIL\tshop/payments [build failed]\n"
+        ));
+        assert!(suite_failed("test result: FAILED. 1 passed; 1 failed;\n"));
+        assert!(suite_failed("error: could not compile `shop` (lib) due to 1 previous error\n"));
+        assert!(suite_failed("==== 1 failed, 2 passed in 0.3s ====\n"));
+        assert!(suite_failed("Tests:       1 failed, 4 passed, 5 total\n"));
+        assert!(suite_failed("Failed!  - Failed:     1, Passed:     4\n"));
+        // a source file or a log that only looks like trouble
+        let source = "func TestRefund(t *testing.T) {\n\tif Refund(-1) == nil {\n\t\tt.Fatal(\"negative days must be rejected\")\n\t}\n}\n";
+        assert!(!suite_failed(source));
+        assert!(!suite_failed("error: file not found\nretrying, 0 failed so far\n"));
+        assert!(!suite_failed("==== 3 passed in 0.2s ====\n"));
+    }
 
     #[test]
     fn go_test() {

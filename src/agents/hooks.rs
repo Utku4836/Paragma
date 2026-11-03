@@ -21,12 +21,14 @@ fn events(agent: &str) -> &'static [(&'static str, Option<&'static str>)] {
             ("PreToolUse", Some("Edit|Write|MultiEdit")),
             ("PostToolUse", Some("Bash|Edit|Write|MultiEdit|NotebookEdit")),
             ("PostToolUseFailure", Some("Bash")),
+            ("UserPromptSubmit", None),
             ("Stop", None),
         ],
         _ => &[
             ("SessionStart", Some("startup|resume|clear|compact")),
             ("PreToolUse", Some("apply_patch")),
             ("PostToolUse", Some("Bash|apply_patch")),
+            ("UserPromptSubmit", None),
             ("Stop", None),
         ],
     }

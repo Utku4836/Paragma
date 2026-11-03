@@ -55,6 +55,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         return Err(fail(USAGE, "say what was done: pg finish \"what was done; what is next\""));
     }
     let state = State::open(project)?;
+    let last_finish = state.my_last("finish").unwrap_or(0);
     let code = crate::code::notes::open(&cx.home, project)?;
     let changes = match &code {
         Some(c) => work::changed(c)?,
@@ -159,6 +160,16 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         Some(r) => println!("tests: {}", testrun::describe(r)),
         None if !changes.is_empty() => println!("tests: not run in this conversation (pg run -- <test command>)"),
         None => {}
+    }
+    // errors this conversation fixed that memory still has no fix for
+    let index = Index::open(project)?;
+    for line in state.my_targets_since("fixed", last_finish)? {
+        if super::run::known(&index, project, &line)?.is_none() {
+            println!(
+                "fixed here, not in memory: pg write --error {:?} --cause \"...\" --fix \"...\"",
+                one_line(&line, 120)
+            );
+        }
     }
     for line in upkeep::daily(project, &state)? {
         println!("{line}");

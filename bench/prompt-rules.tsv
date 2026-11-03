@@ -1,0 +1,84 @@
+# Messages a user sends an agent, labeled: does it give a lasting rule for
+# the project (rule), or not (no)? Written before the detector, and not
+# changed for it. "dev" is looked at while building; "held" is measured once.
+# split	label	message
+dev	rule	From now on, always run the tests with -race.
+dev	rule	Never push directly to main, open a PR instead.
+dev	rule	Don't use any in TypeScript here, use unknown and narrow it.
+dev	rule	Going forward, commit messages should be in English.
+dev	rule	Always keep amounts in cents, never floats.
+dev	rule	bundan sonra commit mesajlarını İngilizce yaz
+dev	rule	asla main'e direkt push etme
+dev	rule	her zaman testleri -race ile çalıştır
+dev	rule	artık console.log kullanma, logger kullan
+dev	rule	bu projede hiçbir zaman float ile para tutma
+dev	rule	Remember: we never edit generated files under api/gen, change the schema instead.
+dev	rule	In this repo every migration must be reversible.
+dev	rule	Please stop adding comments to every line, only where it's not obvious.
+dev	rule	unutma, migration dosyalarını asla elle değiştirmiyoruz
+dev	rule	Every time you change the API, update openapi.yaml too.
+dev	rule	Use pnpm, not npm, in this project.
+dev	rule	bundan böyle her PR'da CHANGELOG güncellensin
+dev	rule	Make sure you always format with gofmt before committing.
+dev	rule	no, don't use mocks for the database, we test against a real sqlite file
+dev	rule	daima UTC kullan, yerel saat değil
+dev	no	Fix the login bug please.
+dev	no	Why do you always add so many comments?
+dev	no	Never mind, let's do the other thing.
+dev	no	Can you run the tests?
+dev	no	The function always returns nil, that's the bug.
+dev	no	It never reaches the second branch, can you check why?
+dev	no	login hatasını düzelt
+dev	no	neden hep bu kadar uzun yazıyorsun?
+dev	no	boşver, diğerini yapalım
+dev	no	testleri çalıştırır mısın
+dev	no	bu fonksiyon her zaman nil döndürüyor, sorun bu
+dev	no	Add a refund report to the admin page.
+dev	no	Don't forget to update the README for this change.
+dev	no	Thanks, that works!
+dev	no	asla böyle bir hata görmemiştim, ilginç
+dev	no	Always happy to see green tests :)
+dev	no	Don't change anything yet, just explain the code.
+dev	no	şimdilik hiçbir şeyi değiştirme, sadece açıkla
+dev	no	From now on the button is blue, as the design says. Can you make that change?
+dev	no	What does "never" mean in this cron expression?
+held	rule	From now on, use snake_case for all database columns.
+held	rule	Never log tokens or passwords, mask them.
+held	rule	Always add a test for every bug you fix.
+held	rule	Do not use the ORM for reports, write SQL by hand there.
+held	rule	We always deploy through make deploy, never by hand.
+held	rule	bundan sonra her yeni endpoint için test yaz
+held	rule	asla .env dosyasını commit etme
+held	rule	her zaman Türkçe karakterleri test et
+held	rule	artık yeni kodda jQuery kullanmıyoruz
+held	rule	hiçbir zaman production veritabanına doğrudan bağlanma
+held	rule	In the future, prefer early returns over nested ifs.
+held	rule	Keep every function under 50 lines in this codebase.
+held	rule	unutma ki API yanıtları her zaman camelCase olmalı
+held	rule	Stop using print for debugging, use the logger.
+held	rule	every PR needs a changelog entry, please remember that
+held	rule	yeni bağımlılık eklemeden önce her zaman bana sor
+held	rule	Please always ask before deleting files.
+held	rule	tarihleri her zaman ISO 8601 formatında sakla
+held	rule	The rule here is: no business logic in controllers.
+held	rule	Prefer composition over inheritance in this project, always.
+held	no	Please never mind the warning, it is harmless.
+held	no	Why does it never finish loading?
+held	no	ödeme sayfasındaki hatayı bul
+held	no	Always the same error, I don't understand.
+held	no	bu test hiçbir zaman geçmiyor, neden?
+held	no	Can you always... sorry, can you just rerun it?
+held	no	Add pagination to the users list.
+held	no	her zaman olduğu gibi harika iş, teşekkürler
+held	no	I never used Rust before, can you explain this?
+held	no	Delete the old migration files from last year.
+held	no	asla tahmin edemezdim bunu
+held	no	Run the build and tell me what fails.
+held	no	From now on until Friday I'm on holiday, keep going with the plan.
+held	no	The cache is never invalidated, fix that.
+held	no	şu dosyayı sil
+held	no	Does this always run on startup?
+held	no	Make the error message say "never retry".
+held	no	Okay, commit it.
+held	no	bir dahaki sefere bakarız, şimdi sadece build al
+held	no	Don't stop, continue with step 2.
