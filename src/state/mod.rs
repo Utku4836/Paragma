@@ -3,49 +3,13 @@
 
 pub mod conversation;
 pub mod links;
+pub mod migrate;
 
 use crate::output::now;
 use crate::project::Project;
 use crate::testrun::Run;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::time::Duration;
-
-const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS sessions(
-    conversation TEXT PRIMARY KEY,
-    folder TEXT,
-    started INTEGER,
-    last INTEGER
-);
-CREATE TABLE IF NOT EXISTS events(
-    at INTEGER,
-    conversation TEXT,
-    action TEXT,
-    target TEXT,
-    detail TEXT
-);
-CREATE INDEX IF NOT EXISTS events_conversation ON events(conversation, at);
-CREATE TABLE IF NOT EXISTS shown(
-    conversation TEXT,
-    ref TEXT,
-    at INTEGER,
-    PRIMARY KEY(conversation, ref)
-);
-CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS runs(
-    at INTEGER,
-    conversation TEXT,
-    command TEXT,
-    exit INTEGER,
-    seconds REAL,
-    failing TEXT,
-    passed INTEGER,
-    errors TEXT,
-    changed TEXT
-);
-CREATE INDEX IF NOT EXISTS runs_command ON runs(command, at);
-";
 
 pub struct State {
     db: Connection,
@@ -69,13 +33,9 @@ pub struct Event {
 
 impl State {
     pub fn open(project: &Project) -> Result<State> {
-        std::fs::create_dir_all(project.meta_dir())?;
-        let db = Connection::open(project.state_path())?;
-        db.busy_timeout(Duration::from_secs(60))?;
-        db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        db.execute_batch(SCHEMA)?;
-        // added after the first release of the table
-        let _ = db.execute_batch("ALTER TABLE shown ADD COLUMN full_at INTEGER NOT NULL DEFAULT 0");
+        let path = project.state_path();
+        let mut db = crate::db::open(&path)?;
+        migrate::run(&mut db, &path)?;
         Ok(State { db })
     }
 

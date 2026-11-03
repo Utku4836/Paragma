@@ -16,7 +16,14 @@ const SETUP_LIST: &str = "setup.txt";
 pub fn run(home: &Home) {
     let stamp = format!("{} {:016x}", env!("CARGO_PKG_VERSION"), instructions_hash());
     let path = home.root.join(STAMP);
-    if std::fs::read_to_string(&path).ok().as_deref().map(str::trim) == Some(stamp.as_str()) {
+    let found = std::fs::read_to_string(&path).unwrap_or_default();
+    if found.trim() == stamp {
+        return;
+    }
+    // a newer pg wrote its instructions: an older one (a version taken back)
+    // leaves them as they are
+    let found_version = found.split_whitespace().next().unwrap_or("");
+    if numbers(found_version) > numbers(env!("CARGO_PKG_VERSION")) {
         return;
     }
     if !home.root.is_dir() {
@@ -50,6 +57,12 @@ fn set_up_list(home: &Home) -> Vec<PathBuf> {
         .filter(|l| !l.trim().is_empty())
         .map(PathBuf::from)
         .collect()
+}
+
+/// "0.2.10" -> [0, 2, 10], to compare versions; a suffix such as "-rc.1" is
+/// left out.
+fn numbers(version: &str) -> Vec<u64> {
+    version.split('-').next().unwrap_or("").split('.').map(|n| n.parse().unwrap_or(0)).collect()
 }
 
 /// Changes when the section or a skill changes, also within one version.
@@ -102,5 +115,22 @@ mod tests {
         std::fs::write(&mine, old).unwrap();
         run(&home);
         assert_eq!(std::fs::read_to_string(&mine).unwrap(), old);
+    }
+
+    #[test]
+    fn an_older_version_leaves_a_newer_ones_instructions_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let home = Home { root: d.path().join("home") };
+        std::fs::create_dir_all(&home.root).unwrap();
+        let mine = d.path().join("AGENTS.md");
+        let newer = "<!-- paragma:start -->\nnewer instructions\n<!-- paragma:end -->\n";
+        std::fs::write(&mine, newer).unwrap();
+        remember_setup(&home, &mine);
+        std::fs::write(home.root.join(STAMP), "99.0.0 0000000000000000\n").unwrap();
+        run(&home);
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), newer);
+        assert!(numbers("0.2.10") > numbers("0.2.9"));
+        assert!(numbers("0.3.0-rc.1") > numbers("0.2.9"));
+        assert_eq!(numbers(""), [0]);
     }
 }

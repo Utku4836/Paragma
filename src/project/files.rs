@@ -24,7 +24,11 @@ impl WriteLock {
         let start = Instant::now();
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(WriteLock { _file: file }),
+                Ok(()) => {
+                    // a pg older than the project's data writes nothing into it
+                    crate::state::migrate::check(&meta_dir.join("state.db"))?;
+                    return Ok(WriteLock { _file: file });
+                }
                 Err(std::fs::TryLockError::WouldBlock) if start.elapsed() < LOCK_WAIT => {
                     std::thread::sleep(Duration::from_millis(15));
                 }
