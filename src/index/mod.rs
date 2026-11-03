@@ -11,7 +11,6 @@ use crate::note::Kind;
 use crate::project::Project;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::time::Duration;
 
 /// Bumped whenever the tables change; an index of another version, or
 /// built with another model, is rebuilt.
@@ -78,10 +77,7 @@ impl Index {
     /// Opens the index, creating or rebuilding it when needed, and brings it
     /// up to date with the note files.
     pub fn open(project: &Project) -> Result<Index> {
-        std::fs::create_dir_all(project.meta_dir())?;
-        let db = Connection::open(project.index_path())?;
-        db.busy_timeout(Duration::from_secs(60))?;
-        db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        let db = crate::db::open(&project.index_path())?;
         let mut index = Index { db };
         index.ensure_schema()?;
         index.sync(project)?;

@@ -3,6 +3,7 @@
 mod agents;
 mod cli;
 mod code;
+mod db;
 mod embed;
 mod index;
 mod note;

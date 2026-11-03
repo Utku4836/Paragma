@@ -19,7 +19,6 @@ use lang::Lang;
 use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// Bumped whenever the tables or the parsing change.
 const SCHEMA_VERSION: &str = "2";
@@ -117,10 +116,7 @@ impl CodeIndex {
         if folders.is_empty() {
             return Ok(None);
         }
-        std::fs::create_dir_all(project.meta_dir())?;
-        let db = Connection::open(project.meta_dir().join("code.db"))?;
-        db.busy_timeout(Duration::from_secs(60))?;
-        db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        let db = crate::db::open(&project.meta_dir().join("code.db"))?;
         let mut index = CodeIndex { db, folders };
         index.ensure_schema()?;
         let renames = index.sync()?;
