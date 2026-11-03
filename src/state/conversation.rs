@@ -3,7 +3,10 @@
 //! An agent runs every tool call in a fresh shell, so pg's parent changes
 //! from call to call, but the first ancestor that is not a shell is the
 //! agent itself and stays the same for the whole conversation. Its name and
-//! pid are the conversation's key. $PARAGMA_SESSION overrides it.
+//! pid are the conversation's key. Agents that name the conversation in the
+//! environment of the commands they run (Claude Code, Codex) are known by
+//! that name instead: the same one their hooks are given, and it lasts when
+//! a conversation is resumed. $PARAGMA_SESSION overrides both.
 
 use std::sync::OnceLock;
 
@@ -33,6 +36,14 @@ const SHELLS: &[&str] = &[
     "time",
 ];
 
+/// The variables agents name their conversation in: (agent, variable).
+const AGENT_SESSIONS: &[(&str, &str)] = &[("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID")];
+
+/// The key of an agent's conversation known by its id (as hooks know it).
+pub fn of_agent(agent: &str, id: &str) -> String {
+    format!("{agent}:{id}")
+}
+
 /// The calling conversation's key, "" when it cannot be told.
 pub fn key() -> &'static str {
     static KEY: OnceLock<String> = OnceLock::new();
@@ -41,6 +52,13 @@ pub fn key() -> &'static str {
             && !k.is_empty()
         {
             return k;
+        }
+        for (agent, var) in AGENT_SESSIONS {
+            if let Ok(id) = std::env::var(var)
+                && !id.is_empty()
+            {
+                return of_agent(agent, &id);
+            }
         }
         let table = process::Table::read();
         let mut pid = table.parent(std::process::id());

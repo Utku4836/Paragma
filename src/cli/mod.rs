@@ -4,6 +4,7 @@
 mod doctor;
 mod find;
 mod finish;
+pub mod hook;
 mod ls;
 mod mv;
 mod open;
@@ -72,6 +73,9 @@ enum Command {
     Setup(setup::Args),
     /// Paragma's instructions for agents: the core, or a skill (coding, projects, knowledge)
     Skill(skill::Args),
+    /// Answers an agent's hook (put in place by pg setup): the event as JSON on stdin
+    #[command(hide = true)]
+    Hook(hook::Args),
 }
 
 /// What every command needs.
@@ -130,6 +134,9 @@ pub fn run() -> ExitCode {
 
 fn dispatch(cli: Cli) -> Result<()> {
     crate::upgrade::run(&Home::locate());
+    if let Command::Hook(a) = cli.command {
+        return hook::run(a);
+    }
     let cx = context(cli.project.as_deref(), cli.budget)?;
     match cli.command {
         Command::Open(a) => open::run(&cx, a),
@@ -145,6 +152,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Doctor(a) => doctor::run(&cx, a),
         Command::Setup(a) => setup::run(&cx, a),
         Command::Skill(a) => skill::run(&cx, a),
+        Command::Hook(_) => unreachable!("answered above"),
     }
 }
 

@@ -1,8 +1,9 @@
 //! What a new version of pg does once, before its first command: brings the
-//! instructions `pg setup` wrote into agents' files, and the skill copies,
-//! up to this version. A stamp in `<home>/version` says which version did
+//! instructions `pg setup` wrote into agents' files, the hooks it put into
+//! their settings, and the skill copies, up to this version. A stamp in `<home>/version` says which version did
 //! it last, so a command costs one small read when nothing changed.
 
+use crate::agents::hooks;
 use crate::project::{Home, files};
 use crate::skills;
 use std::path::PathBuf;
@@ -10,6 +11,8 @@ use std::path::PathBuf;
 const STAMP: &str = "version";
 /// The instruction files `pg setup` wrote to, one per line.
 const SETUP_LIST: &str = "setup.txt";
+/// The settings files `pg setup` put hooks into: agent, tab, file.
+const HOOKS_LIST: &str = "hooks.txt";
 
 /// Runs once per version (and whenever the instructions changed). Never
 /// fails a command: what goes wrong is said on stderr.
@@ -37,6 +40,16 @@ pub fn run(home: &Home) {
             eprintln!("pg: could not update Paragma's instructions in {}: {e:#}", file.display());
         }
     }
+    // the hooks run this pg, wherever this version was put
+    if let Ok(exe) = std::env::current_exe() {
+        for (agent, file) in hooks_list(home) {
+            if hooks::installed(&file)
+                && let Err(e) = hooks::install(&agent, &file, &exe)
+            {
+                eprintln!("pg: could not update Paragma's hooks in {}: {e:#}", file.display());
+            }
+        }
+    }
     let _ = files::write_atomic(&path, format!("{stamp}\n").as_bytes());
 }
 
@@ -48,6 +61,26 @@ pub fn remember_setup(home: &Home, file: &std::path::Path) {
         let text: String = all.iter().map(|p| format!("{}\n", p.display())).collect();
         let _ = files::write_atomic(&home.root.join(SETUP_LIST), text.as_bytes());
     }
+}
+
+/// Keeps the agent's settings file among the ones whose hooks a new
+/// version updates.
+pub fn remember_hooks(home: &Home, agent: &str, file: &std::path::Path) {
+    let mut all = hooks_list(home);
+    if !all.iter().any(|(a, p)| a == agent && p == file) {
+        all.push((agent.to_string(), file.to_path_buf()));
+        let text: String = all.iter().map(|(a, p)| format!("{a}\t{}\n", p.display())).collect();
+        let _ = files::write_atomic(&home.root.join(HOOKS_LIST), text.as_bytes());
+    }
+}
+
+fn hooks_list(home: &Home) -> Vec<(String, PathBuf)> {
+    std::fs::read_to_string(home.root.join(HOOKS_LIST))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(a, p)| (a.to_string(), PathBuf::from(p)))
+        .collect()
 }
 
 fn set_up_list(home: &Home) -> Vec<PathBuf> {

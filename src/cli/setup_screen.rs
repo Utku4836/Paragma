@@ -1,10 +1,11 @@
-//! The screen of `pg setup` in a terminal: choose an agent, then where
-//! Paragma goes (every conversation, one conversation's folder, this
-//! folder), then confirm. Arrow keys move, Enter goes on, Esc goes back.
+//! The screen of `pg setup` in a terminal: choose instructions or hooks,
+//! then an agent (with hooks: Claude Code or Codex), then where Paragma
+//! goes (every conversation, one conversation's folder, this folder), then
+//! confirm. Arrow keys move, Enter goes on, Esc goes back.
 
 use super::Context;
 use super::setup::{Style, connect};
-use crate::agents::{self, Agent, Conversation};
+use crate::agents::{self, Agent, Conversation, hooks};
 use crate::output;
 use crate::terminal::{self, Key};
 use anyhow::Result;
@@ -23,8 +24,15 @@ const BANNER: [&str; 6] = [
 /// The choices on the scope screen, in order.
 const SCOPES: [&str; 4] = ["Every conversation", "One conversation", "This folder", "Back"];
 
+/// The choices on the first screen: (name, what it does).
+const MODES: [(&str, &str); 2] = [
+    ("Instructions", "a short section in the agent's instructions file; the agent calls pg when it needs it"),
+    ("Hooks", "the same, and the agent runs Paragma by itself: the brief, known fixes, the handoff"),
+];
+
 #[derive(Clone, Copy, PartialEq)]
 enum Screen {
+    Mode,
     Agents,
     Scope,
     Conversations,
@@ -35,7 +43,10 @@ struct Setup<'a> {
     home: &'a crate::project::Home,
     style: &'a Style,
     cwd: PathBuf,
+    /// The agents listed: the ones found, and with hooks only those that have them.
     agents: Vec<Agent>,
+    /// Hooks chosen on the first screen.
+    hooks: bool,
     screen: Screen,
     /// The highlighted row of the current list.
     cur: usize,
@@ -53,18 +64,20 @@ struct Setup<'a> {
     message: Option<String>,
     /// What was set up, said again after the screen closes.
     done: Vec<String>,
+    /// Codex hooks were set up: they wait to be trusted in Codex.
+    trust_codex: bool,
     quit: bool,
 }
 
 /// Runs the screen; false when the terminal cannot read keys one at a time.
 pub fn run(cx: &Context, style: &Style) -> Result<bool> {
-    let agents: Vec<Agent> = agents::known().into_iter().filter(|a| a.installed).collect();
     let mut s = Setup {
         home: &cx.home,
         style,
         cwd: cx.cwd.clone(),
-        agents,
-        screen: Screen::Agents,
+        agents: Vec::new(),
+        hooks: false,
+        screen: Screen::Mode,
         cur: 0,
         top: 0,
         agent: 0,
@@ -75,6 +88,7 @@ pub fn run(cx: &Context, style: &Style) -> Result<bool> {
         back: Screen::Agents,
         message: None,
         done: Vec::new(),
+        trust_codex: false,
         quit: false,
     };
     {
@@ -170,16 +184,30 @@ impl Setup<'_> {
         let mut out = String::new();
         self.banner(&mut out, width);
         let hint = match self.screen {
+            Screen::Mode => {
+                out.push_str(&format!("  {}\n\n", st.bold("How should agents use Paragma?")));
+                for (i, (name, about)) in MODES.iter().enumerate() {
+                    let line = format!("{} {}", fit(name, 14), st.dim(about));
+                    self.row(&mut out, i == self.cur, &line);
+                }
+                "↑↓ move   enter choose   q quit"
+            }
             Screen::Agents => {
-                out.push_str(&format!("  {}\n\n", st.bold("Connect Paragma to an agent")));
+                let title =
+                    if self.hooks { "Connect Paragma to an agent, with hooks" } else { "Connect Paragma to an agent" };
+                out.push_str(&format!("  {}\n\n", st.bold(title)));
                 if self.agents.is_empty() {
-                    out.push_str(&format!(
-                        "  {}\n",
-                        st.dim("No agent found on this computer (Claude Code, Codex, Antigravity, OpenCode).")
-                    ));
+                    let none = if self.hooks {
+                        "Neither Claude Code nor Codex was found on this computer."
+                    } else {
+                        "No agent found on this computer (Claude Code, Codex, Antigravity, OpenCode)."
+                    };
+                    out.push_str(&format!("  {}\n", st.dim(none)));
                 }
                 for (i, a) in self.agents.iter().enumerate() {
-                    let state = if crate::skills::installed(&a.global) {
+                    let state = if self.hooks && hooks::installed(&hooks::file(a.id, None)) {
+                        format!("  {}", st.ok("✓ hooks, every conversation"))
+                    } else if !self.hooks && crate::skills::installed(&a.global) {
                         format!("  {}", st.ok("✓ every conversation"))
                     } else {
                         String::new()
@@ -188,13 +216,25 @@ impl Setup<'_> {
                     let line = format!("{} {}{state}", fit(a.name, 13), st.dim(&apps));
                     self.row(&mut out, i == self.cur, &line);
                 }
-                "↑↓ move   enter choose   q quit"
+                if self.hooks {
+                    out.push_str(&format!(
+                        "\n  {} {}\n",
+                        st.accent("◆"),
+                        st.dim("Hooks work with Claude Code and Codex only, for now.")
+                    ));
+                }
+                "↑↓ move   enter choose   esc back   q quit"
             }
             Screen::Scope => {
                 let a = &self.agents[self.agent];
                 out.push_str(&format!("  {}  {}\n\n", st.bold(a.name), st.dim("where should Paragma be read?")));
+                let global = if self.hooks {
+                    format!("{} + {}", agents::short(&a.global), agents::short(&hooks::file(a.id, None)))
+                } else {
+                    agents::short(&a.global)
+                };
                 let about = [
-                    agents::short(&a.global),
+                    global,
                     format!("pick one; Paragma goes into its folder ({})", a.folder_file),
                     agents::short(&self.cwd.join(a.folder_file)),
                     String::new(),
@@ -236,7 +276,11 @@ impl Setup<'_> {
                 let now = output::now();
                 for (row, &i) in shown.iter().enumerate().skip(self.top).take(rows) {
                     let c = &self.conversations[i];
-                    let set = crate::skills::installed(&c.folder.join(a.folder_file));
+                    let set = if self.hooks {
+                        hooks::installed(&hooks::file(a.id, Some(&c.folder)))
+                    } else {
+                        crate::skills::installed(&c.folder.join(a.folder_file))
+                    };
                     let mark = if set { st.ok("✓") } else { " ".into() };
                     let line = format!(
                         "{} {mark} {} {}",
@@ -253,19 +297,34 @@ impl Setup<'_> {
             }
             Screen::Confirm => {
                 let a = &self.agents[self.agent];
+                let with = if self.hooks { ", with hooks" } else { "" };
                 out.push_str(&format!(
                     "  {}\n\n",
-                    st.bold(&format!("Set up Paragma for {} in {}?", a.name, self.place))
+                    st.bold(&format!("Set up Paragma for {} in {}{with}?", a.name, self.place))
                 ));
                 out.push_str(&format!(
                     "  {} {}\n",
                     st.dim("Adds a \"Memory (Paragma)\" section to"),
                     agents::short(&self.target)
                 ));
+                if let Some(file) = self.hooks_file() {
+                    out.push_str(&format!("  {} {}\n", st.dim("Adds Paragma's hooks to"), agents::short(&file)));
+                    out.push_str(&format!(
+                        "  {}\n",
+                        st.dim("At the start: the project's brief. A test fails: the fix memory has. Work left without a handoff: one reminder.")
+                    ));
+                }
                 out.push_str(&format!(
                     "  {}\n",
-                    st.dim("The rest of the file stays as it is; running setup again only updates the section.")
+                    st.dim("The rest of each file stays as it is; running setup again only updates Paragma's part.")
                 ));
+                if self.hooks && a.id == "codex" {
+                    out.push_str(&format!(
+                        "  {} {}\n",
+                        st.accent("◆"),
+                        st.dim("Codex runs new hooks once you trust them: in Codex, type /hooks.")
+                    ));
+                }
                 "enter / y set up   esc / n back"
             }
         };
@@ -290,6 +349,7 @@ impl Setup<'_> {
 
     fn rows(&self) -> usize {
         match self.screen {
+            Screen::Mode => MODES.len(),
             Screen::Agents => self.agents.len(),
             Screen::Scope => SCOPES.len(),
             Screen::Conversations => self.matching().len(),
@@ -326,9 +386,27 @@ impl Setup<'_> {
         let back = matches!(k, Key::Esc | Key::Left | Key::Backspace) || (k == Key::Char('q') && !searching);
         let enter = matches!(k, Key::Enter | Key::Right);
         match self.screen {
-            Screen::Agents => {
+            Screen::Mode => {
                 if matches!(k, Key::Esc | Key::Char('q')) {
                     self.quit = true;
+                } else if enter {
+                    self.hooks = self.cur == 1;
+                    let hooks = self.hooks;
+                    self.agents = agents::known()
+                        .into_iter()
+                        .filter(|a| a.installed && (!hooks || hooks::AGENTS.contains(&a.id)))
+                        .collect();
+                    self.message = None;
+                    self.go(Screen::Agents, 0);
+                }
+            }
+            Screen::Agents => {
+                if k == Key::Char('q') {
+                    self.quit = true;
+                } else if back {
+                    let mode = usize::from(self.hooks);
+                    self.message = None;
+                    self.go(Screen::Mode, mode);
                 } else if enter && n > 0 {
                     self.agent = self.cur;
                     self.message = None;
@@ -405,12 +483,26 @@ impl Setup<'_> {
         if self.target == self.agents[self.agent].global { 0 } else { 2 }
     }
 
-    fn install(&mut self) {
+    /// The settings file the hooks go into, when hooks were chosen.
+    fn hooks_file(&self) -> Option<PathBuf> {
+        if !self.hooks {
+            return None;
+        }
         let a = &self.agents[self.agent];
-        self.message = Some(match connect(self.home, self.style, a, &self.target) {
-            Ok(line) => {
-                self.done.push(line.clone());
-                line.trim_start().to_string()
+        let folder = if self.target == a.global { None } else { self.target.parent() };
+        Some(hooks::file(a.id, folder))
+    }
+
+    fn install(&mut self) {
+        let hooks_file = self.hooks_file();
+        let a = &self.agents[self.agent];
+        self.message = Some(match connect(self.home, self.style, a, &self.target, hooks_file.as_deref()) {
+            Ok(lines) => {
+                self.done.extend(lines.iter().cloned());
+                if hooks_file.is_some() && a.id == "codex" {
+                    self.trust_codex = true;
+                }
+                lines.iter().map(|l| l.trim_start()).collect::<Vec<_>>().join("\n  ")
             }
             Err(e) => self.style.bad(&format!("✗ {}: {e}", a.name)),
         });
@@ -438,6 +530,12 @@ impl Setup<'_> {
             st.bold("pg open")
         );
         println!("  {}", st.dim("Skills: pg skill coding | projects | knowledge"));
+        if self.trust_codex {
+            println!(
+                "  {} Codex runs the new hooks once you trust them: in Codex, type /hooks and trust Paragma's.",
+                st.accent("◆")
+            );
+        }
         println!();
     }
 }
@@ -445,6 +543,58 @@ impl Setup<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn screen<'a>(home: &'a crate::project::Home, style: &'a Style) -> Setup<'a> {
+        Setup {
+            home,
+            style,
+            cwd: PathBuf::from("."),
+            agents: Vec::new(),
+            hooks: false,
+            screen: Screen::Mode,
+            cur: 0,
+            top: 0,
+            agent: 0,
+            conversations: Vec::new(),
+            search: String::new(),
+            target: PathBuf::new(),
+            place: String::new(),
+            back: Screen::Agents,
+            message: None,
+            done: Vec::new(),
+            trust_codex: false,
+            quit: false,
+        }
+    }
+
+    #[test]
+    fn hooks_list_only_the_agents_that_have_them() {
+        let home = crate::project::Home { root: PathBuf::from("unused") };
+        let style = Style::plain();
+        let mut s = screen(&home, &style);
+        let first = s.view();
+        assert!(first.contains("How should agents use Paragma?"), "{first}");
+        assert!(first.contains("› Instructions") && first.contains("Hooks"), "{first}");
+
+        s.key(Key::Down).unwrap();
+        s.key(Key::Enter).unwrap();
+        assert!(s.screen == Screen::Agents && s.hooks);
+        assert!(s.agents.iter().all(|a| hooks::AGENTS.contains(&a.id)));
+        let agents = s.view();
+        assert!(agents.contains("Hooks work with Claude Code and Codex only, for now."), "{agents}");
+
+        // back to the first screen, on the row chosen; instructions list every agent found
+        s.key(Key::Esc).unwrap();
+        assert!(s.screen == Screen::Mode && s.cur == 1);
+        s.key(Key::Up).unwrap();
+        s.key(Key::Enter).unwrap();
+        assert!(!s.hooks);
+        let found = agents::known().into_iter().filter(|a| a.installed).count();
+        assert_eq!(s.agents.len(), found);
+        assert!(!s.view().contains("only, for now"));
+        s.key(Key::Char('q')).unwrap();
+        assert!(s.quit);
+    }
 
     #[test]
     fn fit_cuts_and_pads() {

@@ -3,6 +3,7 @@
 //! conversation's folder.
 
 mod conversations;
+pub mod hooks;
 
 pub use conversations::Conversation;
 

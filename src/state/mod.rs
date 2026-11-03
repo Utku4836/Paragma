@@ -121,6 +121,19 @@ impl State {
         Ok(rows)
     }
 
+    /// Whether this conversation was shown a note or rule since `since`.
+    pub fn shown_to_me(&self, r: &str, since: i64) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT 1 FROM shown WHERE conversation = ?1 AND ref = ?2 AND at >= ?3",
+                params![conversation::key(), r, since],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     /// When a note or rule was last shown to any conversation.
     pub fn last_shown(&self, r: &str) -> Result<Option<i64>> {
         Ok(self.db.query_row("SELECT MAX(at) FROM shown WHERE ref = ?1", [r], |r| r.get(0)).optional()?.flatten())

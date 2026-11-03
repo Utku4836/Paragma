@@ -195,7 +195,7 @@ fn tail(b: &mut Budget, output: &str, lines: usize) {
 }
 
 /// The note memory has about an error line, with its fix.
-fn known(index: &Index, project: &crate::project::Project, line: &str) -> Result<Option<String>> {
+pub(super) fn known(index: &Index, project: &crate::project::Project, line: &str) -> Result<Option<String>> {
     let Some(path) = record::known_error(index, line)? else { return Ok(None) };
     let note = Note::parse(&files::read_text(&project.dir.join(&path))?);
     let id = note.id().unwrap_or("?").to_string();
@@ -209,7 +209,7 @@ fn known(index: &Index, project: &crate::project::Project, line: &str) -> Result
 /// The fix another project's memory has for an error line: environment
 /// errors (a locked database, line endings, a busy port) repeat across
 /// projects.
-fn known_elsewhere(cx: &Context, here: &crate::project::Project, line: &str) -> Result<Option<String>> {
+pub(super) fn known_elsewhere(cx: &Context, here: &crate::project::Project, line: &str) -> Result<Option<String>> {
     for p in cx.home.projects().iter().filter(|p| p.name != here.name) {
         let index = Index::open(p)?;
         if let Some(k) = known(&index, p, line)? {
@@ -224,7 +224,7 @@ fn known_elsewhere(cx: &Context, here: &crate::project::Project, line: &str) -> 
 }
 
 /// Files changed (by git) in the project's code folders, as output shows them.
-fn changed_files(code: &CodeIndex) -> Vec<String> {
+pub(super) fn changed_files(code: &CodeIndex) -> Vec<String> {
     code.folders.iter().flat_map(|f| git::changed(&f.dir).into_iter().map(|(p, _)| code.display(&f.key, &p))).collect()
 }
 

@@ -138,6 +138,16 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     Ok(())
 }
 
+/// The brief of the project linked to this folder, for a conversation that
+/// starts (a hook): what `pg open` with no name prints, and the
+/// conversation counts as having opened the project.
+pub fn brief_at_start(cx: &Context, project: &Project) -> Result<String> {
+    let state = State::open(project)?;
+    state.touch_session(&work_folder(cx, &project.name))?;
+    state.event("open", &project.name, "")?;
+    brief(cx, project, &state, &first_line(&project.name, &How::Continued), &How::Continued, &[])
+}
+
 /// The project a name means (see project/names.rs).
 fn choose(
     cx: &Context,
