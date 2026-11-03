@@ -125,6 +125,8 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         Ok((closed, left, open))
     })?;
     state.set(&mine, &heading)?;
+    // fixes shown whose tests still fail did not help (state/outcome.rs)
+    state.outcomes_at_handoff()?;
     state.event("finish", &project.name, summary.lines().next().unwrap_or(""))?;
 
     let mut out = format!("ok {}: {} closed", project.name, count(closed as i64, "step"));

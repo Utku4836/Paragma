@@ -42,6 +42,29 @@ pub fn describe(r: &Run) -> String {
     format!("{} failed{failing}, {when}", r.command)
 }
 
+/// A command as its runs are kept: without the folder it changes to first,
+/// its output redirections and a filter it is piped into, which do not
+/// change what runs.
+pub fn normalized(command: &str) -> String {
+    let mut c = command.trim();
+    // `cd app && go test`: the last part runs the tests
+    if let Some((first, rest)) = c.split_once("&&")
+        && first.trim_start().starts_with("cd ")
+    {
+        c = rest.trim();
+    }
+    if let Some((head, tail)) = c.split_once('|') {
+        let filter = tail.split_whitespace().next().unwrap_or("");
+        if ["head", "tail", "grep", "tee", "less", "more", "Select-Object", "Out-String", "Select-String"]
+            .contains(&filter)
+        {
+            c = head;
+        }
+    }
+    let words: Vec<&str> = c.split_whitespace().filter(|w| !matches!(*w, "2>&1" | "2>/dev/null" | "*>&1")).collect();
+    words.join(" ")
+}
+
 /// Earlier runs looked at for flaky tests.
 const FLAKY_WINDOW: usize = 6;
 
@@ -94,6 +117,18 @@ pub fn broken_by(runs: &[Run], files: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_history_for_the_same_command() {
+        assert_eq!(normalized("go test ./..."), "go test ./...");
+        assert_eq!(normalized("go test ./... 2>&1 | head -100"), "go test ./...");
+        assert_eq!(normalized("cd \"C:/dev/app\" && go test ./... 2>&1"), "go test ./...");
+        assert_eq!(normalized("go test ./...  |  tail -20"), "go test ./...");
+        assert_eq!(normalized("npm test | Select-Object -Last 30"), "npm test");
+        // a pipe into something else, or a chain that is not a cd: as given
+        assert_eq!(normalized("cat log | sort"), "cat log | sort");
+        assert_eq!(normalized("make build && make test"), "make build && make test");
+    }
 
     fn run(failing: &[&str], exit: i32) -> Run {
         Run { failing: failing.iter().map(|s| s.to_string()).collect(), exit, passed: 3, ..Default::default() }

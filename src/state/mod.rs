@@ -4,6 +4,7 @@
 pub mod conversation;
 pub mod links;
 pub mod migrate;
+pub mod outcome;
 
 use crate::output::now;
 use crate::project::Project;

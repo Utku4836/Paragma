@@ -47,9 +47,15 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     };
     let several = projects.len() > 1;
     let mut hits: Vec<(String, Hit)> = Vec::new();
-    for p in &projects {
+    // each project's state, opened once: outcomes now, what was shown below
+    let states: Vec<Option<State>> = projects.iter().map(|p| State::open(p).ok()).collect();
+    for (p, state) in projects.iter().zip(&states) {
         let index = Index::open(p)?;
-        hits.extend(search::find(&index, &query)?.into_iter().map(|h| (p.name.clone(), h)));
+        let mut found = search::find(&index, &query)?;
+        if let Some(state) = state {
+            search::weigh_outcomes(&mut found, state);
+        }
+        hits.extend(found.into_iter().map(|h| (p.name.clone(), h)));
     }
     hits.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
     let mut code = if several { Vec::new() } else { secret_lines(&projects[0], &query) };
@@ -69,9 +75,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         b.add(line);
     }
     let mut seen = std::collections::HashSet::new();
-    for p in &projects {
+    for (p, state) in projects.iter().zip(&states) {
         let since = crate::output::now() - STILL_IN_CONTEXT;
-        if let Ok(ids) = State::open(p).and_then(|s| s.shown_in_full(since)) {
+        if let Some(ids) = state.as_ref().and_then(|s| s.shown_in_full(since).ok()) {
             seen.extend(ids.into_iter().map(|id| (p.name.clone(), id)));
         }
     }

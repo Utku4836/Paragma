@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// The steps, in order: step `i` moves the data from version `i` to `i + 1`.
 /// Only add steps at the end; each one adds tables or columns, or copies.
-const STEPS: &[fn(&Transaction) -> Result<()>] = &[v1_tables];
+const STEPS: &[fn(&Transaction) -> Result<()>] = &[v1_tables, v2_outcomes];
 
 /// The version this pg writes.
 pub const VERSION: i64 = STEPS.len() as i64;
@@ -62,6 +62,25 @@ CREATE INDEX IF NOT EXISTS runs_command ON runs(command, at);
     if !has_column(tx, "shown", "full_at")? {
         tx.execute_batch("ALTER TABLE shown ADD COLUMN full_at INTEGER NOT NULL DEFAULT 0")?;
     }
+    Ok(())
+}
+
+/// Whether what memory showed helped: a known fix shown, then the test it
+/// was for passing in the same conversation (1), or still failing at its
+/// handoff (0).
+fn v2_outcomes(tx: &Transaction) -> Result<()> {
+    tx.execute_batch(
+        "
+CREATE TABLE IF NOT EXISTS outcomes(
+    ref TEXT,
+    at INTEGER,
+    conversation TEXT,
+    command TEXT,
+    helped INTEGER
+);
+CREATE INDEX IF NOT EXISTS outcomes_ref ON outcomes(ref, at);
+",
+    )?;
     Ok(())
 }
 
@@ -227,6 +246,28 @@ mod tests {
         // opening again changes nothing
         run(&mut db, &path).unwrap();
         assert_eq!(backups(d.path()).len(), 1);
+    }
+
+    #[test]
+    fn version_1_gets_the_outcomes_table_and_keeps_its_data() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("state.db");
+        {
+            let mut db = open(&path);
+            let tx = db.transaction().unwrap();
+            v1_tables(&tx).unwrap();
+            tx.execute("INSERT INTO events VALUES (1, 'c1', 'finish', '', 'Handed off.')", []).unwrap();
+            tx.pragma_update(None, "user_version", 1).unwrap();
+            tx.commit().unwrap();
+        }
+        let mut db = open(&path);
+        run(&mut db, &path).unwrap();
+        assert_eq!(version(&db).unwrap(), VERSION);
+        assert!(has_column(&db, "outcomes", "helped").unwrap());
+        let n: i64 = db.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        let names = backups(d.path());
+        assert!(names.len() == 1 && names[0].starts_with("state-v1-"), "{names:?}");
     }
 
     #[test]

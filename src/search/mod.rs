@@ -99,6 +99,21 @@ pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
     Ok(dedup::fold(hits))
 }
 
+/// Moves error records by how their fixes did when shown before
+/// (state/outcome.rs): at most a fifth either way, and not at all before
+/// two outcomes. Then sorts again.
+pub fn weigh_outcomes(hits: &mut [Hit], state: &crate::state::State) {
+    if !state.has_outcomes() {
+        return; // nothing learned yet: one small read
+    }
+    for h in hits.iter_mut().filter(|h| h.kind == Kind::Error) {
+        if let Ok(t) = state.track(&h.id) {
+            h.score *= t.factor();
+        }
+    }
+    hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+}
+
 /// Rules and decisions bind the work; errors carry fixes; plain notes last.
 fn kind_weight(k: Kind) -> f64 {
     match k {

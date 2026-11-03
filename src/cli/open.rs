@@ -271,10 +271,11 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
     let query: String =
         std::iter::once(goal.as_str()).chain(open.iter().map(|s| s.text.as_str())).collect::<Vec<_>>().join(". ");
     if !query.trim().is_empty() {
-        let found: Vec<search::Hit> = search::find(&index, &query)?
+        let mut found: Vec<search::Hit> = search::find(&index, &query)?
             .into_iter()
             .filter(|h| matches!(h.kind, Kind::Rule | Kind::Decision | Kind::Error))
             .collect();
+        search::weigh_outcomes(&mut found, state);
         // rules first and apart (short and binding, they must not lose their
         // place to decisions), then decisions and errors; each list only what
         // stands near its best match: a long goal touches many notes a little

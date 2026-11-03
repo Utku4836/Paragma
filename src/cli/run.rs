@@ -113,6 +113,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     if !verdict.fixed.is_empty() {
         b.add(&format!("fixed since the last run: {}", list(&verdict.fixed)));
+        state.tests_fixed(&command, &verdict.fixed)?;
     }
 
     let index = Index::open(project)?;
@@ -146,6 +147,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             match known {
                 Some(k) => {
                     b.add(&format!("  known: {k}"));
+                    if let Some(id) = known_id(&k) {
+                        state.fix_shown(id, &command, &run.failing)?;
+                    }
                 }
                 None if unexplained.is_none() => unexplained = Some((line.clone(), files_hit)),
                 None => {}
@@ -204,7 +208,18 @@ pub(super) fn known(index: &Index, project: &crate::project::Project, line: &str
         note.props.text("seen").and_then(|s| s.parse::<i64>().ok()).map(|n| format!(" (seen {})", count(n, "time")));
     // the fix is what the agent needs: in full, up to a short paragraph
     let fix = note.section("Fix").map(|f| one_line(&f, 300)).unwrap_or_else(|| one_line(&note.body, 300));
-    Ok(Some(format!("{id}{}: fix: {fix} (pg read {id})", seen.unwrap_or_default())))
+    // how the fix did when it was shown before (state/outcome.rs)
+    let track = State::open(project).and_then(|s| s.track(&id)).ok().and_then(|t| t.describe());
+    let track = track.map(|t| format!("{t}; ")).unwrap_or_default();
+    Ok(Some(format!("{id}{}: fix: {fix} ({track}pg read {id})", seen.unwrap_or_default())))
+}
+
+/// The record id a `known` line is about, when it is in this project.
+pub(super) fn known_id(known: &str) -> Option<&str> {
+    if known.starts_with("in project ") {
+        return None;
+    }
+    known.split([' ', ':']).next().filter(|id| !id.is_empty())
 }
 
 /// The fix another project's memory has for an error line: environment

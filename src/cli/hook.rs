@@ -398,7 +398,7 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         return Ok(None); // not a test run or a build that failed
     }
     // one history for `go test ./...`, `cd app && go test ./... 2>&1 | head`
-    let command = &normalized(command);
+    let command = &testrun::normalized(command);
     let code = crate::code::notes::open(&cx.home, project)?;
     let run = Run {
         at: now(),
@@ -416,6 +416,10 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
     state.record_run(&run)?;
     state.event("run", &run.command, if exit == 0 { "pass" } else { "fail" })?;
     let index = Index::open(project)?;
+    if !verdict.fixed.is_empty() {
+        // the fixes shown for these tests helped (state/outcome.rs)
+        state.tests_fixed(&run.command, &verdict.fixed)?;
+    }
     if exit == 0 {
         return fixed_here(cx, project, (&state, &index, code.as_ref()), &verdict, history.first());
     }
@@ -436,6 +440,9 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
             continue;
         }
         state.shown(std::slice::from_ref(&id), false)?;
+        if let Some(own) = super::run::known_id(&k) {
+            state.fix_shown(own, &run.command, &run.failing)?;
+        }
         lines.push(format!("{line}\n  known: {k}"));
     }
     if lines.is_empty() {
@@ -620,29 +627,6 @@ fn exit_in(text: &str) -> Option<i32> {
     lines.or_else(|| text.find("\"exit_code\":").and_then(|i| number(&text[i + "\"exit_code\":".len()..])))
 }
 
-/// A command as its runs are kept: without the folder it changes to first,
-/// its output redirections and a filter it is piped into, which do not
-/// change what runs.
-fn normalized(command: &str) -> String {
-    let mut c = command.trim();
-    // `cd app && go test`: the last part runs the tests
-    if let Some((first, rest)) = c.split_once("&&")
-        && first.trim_start().starts_with("cd ")
-    {
-        c = rest.trim();
-    }
-    if let Some((head, tail)) = c.split_once('|') {
-        let filter = tail.split_whitespace().next().unwrap_or("");
-        if ["head", "tail", "grep", "tee", "less", "more", "Select-Object", "Out-String", "Select-String"]
-            .contains(&filter)
-        {
-            c = head;
-        }
-    }
-    let words: Vec<&str> = c.split_whitespace().filter(|w| !matches!(*w, "2>&1" | "2>/dev/null" | "*>&1")).collect();
-    words.join(" ")
-}
-
 /// Whether a command line runs pg itself.
 fn calls_pg(command: &str) -> bool {
     command
@@ -765,18 +749,6 @@ mod tests {
         assert_eq!(folder, key);
         assert_eq!(rel, "Payments/Refund.go");
         assert_eq!(relative(&[key], &d.path().join("ShopX").join("a.go")), None);
-    }
-
-    #[test]
-    fn one_history_for_the_same_command() {
-        assert_eq!(normalized("go test ./..."), "go test ./...");
-        assert_eq!(normalized("go test ./... 2>&1 | head -100"), "go test ./...");
-        assert_eq!(normalized("cd \"C:/dev/app\" && go test ./... 2>&1"), "go test ./...");
-        assert_eq!(normalized("go test ./...  |  tail -20"), "go test ./...");
-        assert_eq!(normalized("npm test | Select-Object -Last 30"), "npm test");
-        // a pipe into something else, or a chain that is not a cd: as given
-        assert_eq!(normalized("cat log | sort"), "cat log | sort");
-        assert_eq!(normalized("make build && make test"), "make build && make test");
     }
 
     #[test]
