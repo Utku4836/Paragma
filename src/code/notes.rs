@@ -78,6 +78,40 @@ impl CodeNotes {
             .map(|(l, _, _)| l)
             .collect()
     }
+
+    /// Notes and rules about a part of a file: a note naming functions or
+    /// types counts only where it names one of `touched` (those the part is
+    /// in; its files, when it has them, say where they are); a note naming
+    /// only files or folders counts for any part of them.
+    pub fn about_part(&self, path: &str, touched: &[String]) -> Vec<&Linked> {
+        self.entries
+            .iter()
+            .filter(|(_, files, symbols)| {
+                if symbols.is_empty() {
+                    files.iter().any(|f| covers(f, path))
+                } else {
+                    (files.is_empty() || files.iter().any(|f| covers(f, path)))
+                        && touched.iter().any(|s| symbols.iter().any(|x| names(x, path, s)))
+                }
+            })
+            .map(|(l, _, _)| l)
+            .collect()
+    }
+}
+
+/// The notes and rules about the part of a file an edit touches: the file
+/// itself, and the functions and types holding the touched lines (`lines`
+/// None: the whole file). `source`: the file as it is before the edit.
+pub fn about_lines<'a>(notes: &'a CodeNotes, rel: &str, source: &str, lines: Option<&[usize]>) -> Vec<&'a Linked> {
+    let touched: Vec<String> = match super::lang::Lang::of(rel) {
+        Some(lang) => super::parse::symbols(lang, source)
+            .into_iter()
+            .filter(|s| lines.is_none_or(|ls| ls.iter().any(|&l| s.start <= l && l <= s.end)))
+            .map(|s| s.qualified)
+            .collect(),
+        None => Vec::new(),
+    };
+    notes.about_part(rel, &touched)
 }
 
 /// "[2 rules: r1, r3; 1 error: e45]" for notes about some code (ids while

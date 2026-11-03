@@ -211,6 +211,19 @@ impl State {
         }
     }
 
+    /// When this conversation last did `action` (an "open": its start, or
+    /// its brief again after it was compacted).
+    pub fn my_last(&self, action: &str) -> Option<i64> {
+        self.db
+            .query_row(
+                "SELECT MAX(at) FROM events WHERE conversation = ?1 AND action = ?2",
+                params![conversation::key(), action],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten()
+    }
+
     /// When the last `pg finish` of any conversation was.
     pub fn last_finish(&self) -> Option<i64> {
         self.db.query_row("SELECT MAX(at) FROM events WHERE action = 'finish'", [], |r| r.get(0)).ok().flatten()

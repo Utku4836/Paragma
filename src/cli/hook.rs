@@ -7,20 +7,25 @@
 //!
 //! ```text
 //! SessionStart            the brief of the project linked to the folder
+//! PreToolUse, an edit     the rules and notes tied to the code it touches
 //! PostToolUse, a command  a failing test or build: the fix memory has for it
 //! PostToolUse, an edit    remembers the files the conversation changed
 //! Stop                    work done but no handoff: asks once for pg finish
 //! ```
 
 use super::Context;
+use crate::code::notes::{CodeNotes, Linked, about_lines};
 use crate::index::Index;
-use crate::output::now;
+use crate::note::{Kind, Note};
+use crate::output::{now, one_line};
+use crate::project::files;
+use crate::state::links::{Links, folder_key};
 use crate::state::{State, conversation};
 use crate::testrun::{self, Run, parse};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -56,6 +61,8 @@ impl Agent {
 const EXPLAINED: usize = 3;
 /// A known fix shown to a conversation is not shown again for this long.
 const SHOWN_AGAIN: i64 = 30 * 60;
+/// Most notes shown before an edit.
+const JUST_IN_TIME: usize = 5;
 /// Most bytes of `hook.log` kept.
 const LOG_SIZE: u64 = 200_000;
 
@@ -92,6 +99,7 @@ pub fn answer(agent: Agent, input: &str) -> Result<Option<String>> {
     let Some(project) = &cx.project else { return Ok(None) };
     let text = match name {
         "SessionStart" => Some(session_start(&cx, project, event["source"].as_str().unwrap_or(""))?),
+        "PreToolUse" => before_edit(&cx, project, &event)?,
         "PostToolUse" | "PostToolUseFailure" => after_tool(&cx, project, &event)?,
         "Stop" if event["stop_hook_active"].as_bool() != Some(true) => stop(project)?,
         _ => None,
@@ -104,6 +112,13 @@ fn reply(agent: Agent, event: &str, text: &str) -> String {
     let v = match (event, agent) {
         // Codex goes on after Stop only for a block with a reason
         ("Stop", Agent::Codex) => json!({ "decision": "block", "reason": text }),
+        // context given before a tool reaches the model only with the tool's
+        // result, after the edit: the edit waits until the memory is read
+        ("PreToolUse", _) => json!({ "hookSpecificOutput": {
+            "hookEventName": event,
+            "permissionDecision": "deny",
+            "permissionDecisionReason": text,
+        } }),
         _ => json!({ "hookSpecificOutput": { "hookEventName": event, "additionalContext": text } }),
     };
     v.to_string()
@@ -116,6 +131,236 @@ fn session_start(cx: &Context, project: &crate::project::Project, source: &str) 
         "{why}Paragma: this folder belongs to project {}. Its brief, as `pg open` gives it (no need to run it again):\n{brief}",
         project.name
     ))
+}
+
+/// Before an edit: the rules and notes tied to the code it touches (the
+/// file, the functions and types around the changed lines), each once a
+/// conversation. Only what names that code: nothing found by likeness.
+fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -> Result<Option<String>> {
+    let cwd = cx.cwd.clone();
+    let targets = edit_targets(event["tool_name"].as_str().unwrap_or(""), &event["tool_input"], &cwd);
+    if targets.is_empty() {
+        return Ok(None);
+    }
+    let folders = Links::load(&cx.home).folders_of(&project.name);
+    let index = Index::open(project)?;
+    let notes = CodeNotes::load(&index)?;
+    let state = State::open(project)?;
+    // since this conversation started, or was compacted and lost what it saw
+    let since = state.my_last("open").unwrap_or(0);
+    let mut shown: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    let mut more = 0;
+    for t in &targets {
+        let Some(rel) = relative(&folders, &t.file) else { continue };
+        let mut about = about_lines(&notes, &rel.1, &t.source, t.lines.as_deref());
+        if folders.len() > 1 {
+            // notes in a project of many folders may name the folder too
+            let name = rel.0.rsplit('/').next().unwrap_or("");
+            about.extend(about_lines(&notes, &format!("{name}/{}", rel.1), &t.source, t.lines.as_deref()));
+        }
+        for l in about {
+            if shown.contains(&l.id) || state.shown_to_me(&l.id, since)? {
+                continue;
+            }
+            shown.push(l.id.clone());
+            if lines.len() >= JUST_IN_TIME {
+                more += 1;
+                continue;
+            }
+            lines.push(describe(project, &index, l)?);
+        }
+    }
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    if more > 0 {
+        lines.push(format!("+{more} more about this code: pg tree <file>"));
+    }
+    let listed: Vec<String> = shown.iter().take(JUST_IN_TIME).cloned().collect();
+    state.shown(&listed, false)?;
+    let files: Vec<String> = targets.iter().filter_map(|t| relative(&folders, &t.file).map(|r| r.1)).collect();
+    Ok(Some(format!(
+        "Not a refusal: Paragma holds memory about the code this edit touches ({}), shown once before the first edit there:\n{}\nIf the edit still fits, make it again unchanged; otherwise change it to fit.",
+        files.join(", "),
+        lines.join("\n")
+    )))
+}
+
+/// One line about a linked note: an error with its fix, the others with
+/// where to read them.
+fn describe(project: &crate::project::Project, index: &Index, l: &Linked) -> Result<String> {
+    let text = one_line(&l.text, 200);
+    if l.kind == Kind::Rule {
+        return Ok(format!("{} rule: {text}", l.id));
+    }
+    // what the note says, not only its title: an error's fix, a decision's
+    // or note's first lines
+    let more = match index.note_by_ref(&l.id)? {
+        Some(row) => {
+            let note = Note::parse(&files::read_text(&project.dir.join(&row.path)).unwrap_or_default());
+            match l.kind {
+                Kind::Error => note.section("Fix").map(|f| format!("; fix: {}", one_line(&f, 200))),
+                _ => Some(note.body.trim()).filter(|b| !b.is_empty()).map(|b| format!(": {}", one_line(b, 240))),
+            }
+            .unwrap_or_default()
+        }
+        None => String::new(),
+    };
+    Ok(format!("{} {}: {text}{more} (pg read {})", l.id, l.kind.as_str(), l.id))
+}
+
+/// A file an edit is about to change: as it is now, and the lines the edit
+/// touches in it (None: all of it).
+struct Target {
+    file: PathBuf,
+    source: String,
+    lines: Option<Vec<usize>>,
+}
+
+/// What an edit is about to change. Claude Code's Edit and MultiEdit give
+/// the text they replace, Write the whole file; Codex's apply_patch gives a
+/// patch, whose removed lines (or, for a pure addition, the line before
+/// it) are found in the file.
+fn edit_targets(tool: &str, input: &Value, cwd: &Path) -> Vec<Target> {
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+    let abs = |p: &str| {
+        let p = PathBuf::from(p);
+        if p.is_absolute() { p } else { cwd.join(p) }
+    };
+    match tool {
+        "Edit" | "MultiEdit" => {
+            let Some(path) = input["file_path"].as_str() else { return Vec::new() };
+            let file = abs(path);
+            let source = read(&file);
+            let mut edits: Vec<(&str, bool)> = Vec::new();
+            if let Some(old) = input["old_string"].as_str() {
+                edits.push((old, input["replace_all"].as_bool() == Some(true)));
+            }
+            for e in input["edits"].as_array().into_iter().flatten() {
+                if let Some(old) = e["old_string"].as_str() {
+                    edits.push((old, e["replace_all"].as_bool() == Some(true)));
+                }
+            }
+            let mut lines = Vec::new();
+            for (old, all) in edits {
+                lines.extend(lines_of(&source, old, all));
+            }
+            vec![Target { file, source, lines: Some(lines) }]
+        }
+        "Write" => {
+            let Some(path) = input["file_path"].as_str() else { return Vec::new() };
+            let file = abs(path);
+            let source = read(&file);
+            vec![Target { file, source, lines: None }]
+        }
+        "apply_patch" => {
+            let patch = input["command"].as_str().or_else(|| input["input"].as_str()).unwrap_or("");
+            let mut out: Vec<Target> = Vec::new();
+            let mut anchors: Vec<String> = Vec::new();
+            let mut context: Option<String> = None;
+            let mut removed = false;
+            let finish = |out: &mut Vec<Target>, anchors: &mut Vec<String>| {
+                if let Some(t) = out.last_mut() {
+                    t.lines = Some(find_lines(&t.source, anchors));
+                }
+                anchors.clear();
+            };
+            for line in patch.lines() {
+                if let Some(p) = line.strip_prefix("*** Update File: ") {
+                    finish(&mut out, &mut anchors);
+                    let file = abs(p.trim());
+                    let source = read(&file);
+                    out.push(Target { file, source, lines: Some(Vec::new()) });
+                } else if let Some(p) =
+                    line.strip_prefix("*** Add File: ").or_else(|| line.strip_prefix("*** Delete File: "))
+                {
+                    finish(&mut out, &mut anchors);
+                    let file = abs(p.trim());
+                    let source = read(&file);
+                    out.push(Target { file, source, lines: Some(Vec::new()) });
+                    anchors.clear();
+                } else if line.starts_with("***") {
+                    // End Patch, Move to: nothing to find
+                } else if let Some(h) = line.strip_prefix("@@") {
+                    context = Some(h.trim().to_string()).filter(|h| !h.is_empty());
+                    removed = false;
+                } else if let Some(r) = line.strip_prefix('-') {
+                    anchors.push(r.to_string());
+                    removed = true;
+                } else if line.starts_with('+') {
+                    if !removed && let Some(c) = context.take() {
+                        anchors.push(c);
+                    }
+                } else if let Some(c) = line.strip_prefix(' ') {
+                    context = Some(c.to_string());
+                    removed = false;
+                }
+            }
+            finish(&mut out, &mut anchors);
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The lines (1-based) the text `old` covers where it stands in `source`:
+/// the first place, or every place with `all`. None found: no lines.
+fn lines_of(source: &str, old: &str, all: bool) -> Vec<usize> {
+    let mut lines = Vec::new();
+    if old.is_empty() {
+        return lines;
+    }
+    // a file with Windows line endings, an edit written with \n
+    let crlf;
+    let old = if !source.contains(old) && source.contains("\r\n") {
+        crlf = old.replace('\n', "\r\n");
+        crlf.as_str()
+    } else {
+        old
+    };
+    for (at, _) in source.match_indices(old) {
+        let first = source[..at].matches('\n').count() + 1;
+        let last = first + old.trim_end_matches(['\n', '\r']).matches('\n').count();
+        lines.extend(first..=last);
+        if !all {
+            break;
+        }
+    }
+    lines
+}
+
+/// The lines of `source` holding the given lines of a patch, in order: each
+/// is looked for after the one before.
+fn find_lines(source: &str, wanted: &[String]) -> Vec<usize> {
+    let file: Vec<&str> = source.lines().collect();
+    let mut from = 0;
+    let mut found = Vec::new();
+    for w in wanted {
+        let w = w.trim();
+        if w.is_empty() {
+            continue;
+        }
+        if let Some(i) = (from..file.len()).find(|&i| file[i].trim() == w) {
+            found.push(i + 1);
+            from = i + 1;
+        }
+    }
+    found
+}
+
+/// A file as (the code folder it is in, its path there), when it is in one
+/// of the project's folders.
+fn relative(folders: &[String], file: &Path) -> Option<(String, String)> {
+    let key = folder_key(file);
+    let original =
+        std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf()).to_string_lossy().replace('\\', "/");
+    folders.iter().find_map(|f| {
+        let rest = key.strip_prefix(f.as_str())?.strip_prefix('/')?;
+        // the path as written (the key is lower case on Windows)
+        let tail = original.get(original.len() - rest.len()..).filter(|t| t.eq_ignore_ascii_case(rest)).unwrap_or(rest);
+        Some((f.clone(), tail.to_string()))
+    })
 }
 
 /// After a tool: an edit is remembered, a failing test run is explained.
@@ -382,6 +627,46 @@ mod tests {
         assert_eq!(tool_output(&flat).1, Some(1));
         let unified = json!({ "hook_event_name": "PostToolUse", "tool_response": "Chunk ID: 1\nWall time: 0.2 seconds\nProcess exited with code 3\nOutput:\nx" });
         assert_eq!(tool_output(&unified).1, Some(3));
+    }
+
+    #[test]
+    fn the_lines_an_edit_touches() {
+        let src = "package p\n\nfunc A() {\n\tx := 1\n\ty := 2\n}\n\nfunc B() {\n\tx := 1\n}\n";
+        assert_eq!(lines_of(src, "\tx := 1\n\ty := 2", false), [4, 5]);
+        assert_eq!(lines_of(src, "\tx := 1\n", false), [4]);
+        assert_eq!(lines_of(src, "\tx := 1", true), [4, 9]);
+        assert!(lines_of(src, "nowhere", false).is_empty());
+        let crlf = src.replace('\n', "\r\n");
+        assert_eq!(lines_of(&crlf, "\tx := 1\n\ty := 2", false), [4, 5]);
+        // a patch's lines are found in order, each after the one before
+        let wanted = ["func B() {".to_string(), "x := 1".to_string()];
+        assert_eq!(find_lines(src, &wanted), [8, 9]);
+    }
+
+    #[test]
+    fn a_patch_names_its_files_and_lines() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.go"), "package p\n\nfunc A() {\n\told()\n}\n\nfunc B() {\n}\n").unwrap();
+        let patch = "*** Begin Patch\n*** Update File: a.go\n@@ func A() {\n-\told()\n+\tnew()\n@@\n func B() {\n+\tmore()\n*** Add File: b.go\n+package p\n*** End Patch\n";
+        let t = edit_targets("apply_patch", &json!({ "command": patch }), d.path());
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].file, d.path().join("a.go"));
+        assert_eq!(t[0].lines.as_deref(), Some(&[4, 7][..]));
+        assert_eq!(t[1].file, d.path().join("b.go"));
+        assert_eq!(t[1].lines.as_deref(), Some(&[][..]));
+        let w = edit_targets("Write", &json!({ "file_path": d.path().join("a.go").to_string_lossy() }), d.path());
+        assert_eq!(w[0].lines, None);
+    }
+
+    #[test]
+    fn files_inside_the_projects_folders() {
+        let d = tempfile::tempdir().unwrap();
+        let shop = d.path().join("Shop");
+        let key = folder_key(&shop);
+        let (folder, rel) = relative(std::slice::from_ref(&key), &shop.join("Payments").join("Refund.go")).unwrap();
+        assert_eq!(folder, key);
+        assert_eq!(rel, "Payments/Refund.go");
+        assert_eq!(relative(&[key], &d.path().join("ShopX").join("a.go")), None);
     }
 
     #[test]
