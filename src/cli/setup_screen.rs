@@ -27,7 +27,10 @@ const SCOPES: [&str; 4] = ["Every conversation", "One conversation", "This folde
 /// The choices on the first screen: (name, what it does).
 const MODES: [(&str, &str); 2] = [
     ("Instructions", "a short section in the agent's instructions file; the agent calls pg when it needs it"),
-    ("Hooks", "the same, and the agent runs Paragma by itself: the brief, known fixes, the handoff; for agents that forget it, at more tokens"),
+    (
+        "Hooks",
+        "the same, and the agent runs Paragma by itself: the brief, known fixes, the handoff; for agents that forget it, at more tokens",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq)]
