@@ -187,6 +187,17 @@ fn choose(
             Ok((linked[0].clone(), How::OfThisFolder))
         }
         Match::Close(e) => Ok((e, How::Close(given.to_string()))),
+        // a new name in a folder that already has its project: most likely
+        // a name made up for the task, which would start an empty project
+        // and hide the project's memory; a new one only when asked
+        Match::Similar(_) | Match::None if !linked.is_empty() => Err(fail(
+            USAGE,
+            format!(
+                "this folder belongs to project {}: pg open {} continues it (the same --goal, --step and --decision work there); a separate project {slug}: pg open {slug} --new",
+                linked.join(", "),
+                linked[0]
+            ),
+        )),
         Match::Similar(similar) => Ok((slug, How::New { similar })),
         Match::None => Ok((slug, How::New { similar: Vec::new() })),
     }
