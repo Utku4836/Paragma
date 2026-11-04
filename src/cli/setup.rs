@@ -40,7 +40,7 @@ pub struct Args {
     #[arg(long, value_name = "FOLDER")]
     dir: Option<PathBuf>,
 
-    /// Also Paragma's hooks (Claude Code and Codex): the agent runs Paragma by itself
+    /// Also Paragma's hooks (Claude Code and Codex): the agent runs Paragma by itself (helps agents that forget it; costs more tokens)
     #[arg(long, conflicts_with = "no_hooks")]
     hooks: bool,
 
