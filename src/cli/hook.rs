@@ -7,15 +7,18 @@
 //!
 //! ```text
 //! SessionStart            the brief of the project linked to the folder
-//! PreToolUse, an edit     the rules and notes tied to the code it touches
+//! PreToolUse, an edit     the rules, decisions and notes binding the code it
+//!                         touches: the edit waits once until they are read
 //! PostToolUse, a command  a failing test or build: the fix memory has for it
-//! PostToolUse, an edit    remembers the files the conversation changed
-//! UserPromptSubmit        a lasting rule in the user's words: asks to keep it
+//! PostToolUse, an edit    the other notes about that code (past errors of the
+//!                         file), and remembers the files changed
+//! UserPromptSubmit        a lasting rule in the user's words: asks to keep it;
+//!                         decisions or a plan: asks to record them first
 //! Stop                    work done but no handoff: asks once for pg finish
 //! ```
 
 use super::Context;
-use crate::code::notes::{CodeNotes, Linked, about_lines};
+use crate::code::notes::{CodeNotes, Linked, about_lines_by};
 use crate::index::Index;
 use crate::note::{Kind, Note};
 use crate::output::{now, one_line};
@@ -101,7 +104,7 @@ pub fn answer(agent: Agent, input: &str) -> Result<Option<String>> {
     let text = match name {
         "SessionStart" => Some(session_start(&cx, project, event["source"].as_str().unwrap_or(""))?),
         "PreToolUse" => before_edit(&cx, project, &event)?,
-        "UserPromptSubmit" => said_rule(project, event["prompt"].as_str().unwrap_or(""))?,
+        "UserPromptSubmit" => user_said(project, event["prompt"].as_str().unwrap_or(""))?,
         "PostToolUse" | "PostToolUseFailure" => after_tool(&cx, project, &event)?,
         "Stop" if event["stop_hook_active"].as_bool() != Some(true) => stop(project)?,
         _ => None,
@@ -138,6 +141,11 @@ fn session_start(cx: &Context, project: &crate::project::Project, source: &str) 
 /// Before an edit: the rules and notes tied to the code it touches (the
 /// file, the functions and types around the changed lines), each once a
 /// conversation. Only what names that code: nothing found by likeness.
+///
+/// The edit waits (once: everything found counts as shown) only for what
+/// binds it: a rule or decision on that code, or a note naming the
+/// function it changes. Notes that only name the file (past errors there)
+/// come after the edit instead, with no turn lost.
 fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -> Result<Option<String>> {
     let cwd = cx.cwd.clone();
     let targets = edit_targets(event["tool_name"].as_str().unwrap_or(""), &event["tool_input"], &cwd);
@@ -150,42 +158,101 @@ fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -
     let state = State::open(project)?;
     // since this conversation started, or was compacted and lost what it saw
     let since = state.my_last("open").unwrap_or(0);
-    let mut shown: Vec<String> = Vec::new();
-    let mut lines: Vec<String> = Vec::new();
-    let mut more = 0;
+    let mut found: Vec<(&Linked, bool)> = Vec::new();
     for t in &targets {
         let Some(rel) = relative(&folders, &t.file) else { continue };
-        let mut about = about_lines(&notes, &rel.1, &t.source, t.lines.as_deref());
+        let mut about = about_lines_by(&notes, &rel.1, &t.source, t.lines.as_deref());
         if folders.len() > 1 {
             // notes in a project of many folders may name the folder too
             let name = rel.0.rsplit('/').next().unwrap_or("");
-            about.extend(about_lines(&notes, &format!("{name}/{}", rel.1), &t.source, t.lines.as_deref()));
+            about.extend(about_lines_by(&notes, &format!("{name}/{}", rel.1), &t.source, t.lines.as_deref()));
         }
-        for l in about {
-            if shown.contains(&l.id) || state.shown_to_me(&l.id, since)? {
+        for (l, by_symbol) in about {
+            if found.iter().any(|f| f.0.id == l.id) || state.shown_to_me(&l.id, since)? {
                 continue;
             }
-            shown.push(l.id.clone());
-            if lines.len() >= JUST_IN_TIME {
-                more += 1;
-                continue;
-            }
-            lines.push(describe(project, &index, l)?);
+            found.push((l, by_symbol));
         }
     }
-    if lines.is_empty() {
+    if found.is_empty() {
         return Ok(None);
     }
-    if more > 0 {
-        lines.push(format!("+{more} more about this code: pg tree <file>"));
-    }
-    let listed: Vec<String> = shown.iter().take(JUST_IN_TIME).cloned().collect();
-    state.shown(&listed, false)?;
+    let binds = |(l, by_symbol): &(&Linked, bool)| matches!(l.kind, Kind::Rule | Kind::Decision) || *by_symbol;
     let files: Vec<String> = targets.iter().filter_map(|t| relative(&folders, &t.file).map(|r| r.1)).collect();
+    // everything found counts as shown: the next edit here goes through
+    let ids: Vec<String> = found.iter().map(|f| f.0.id.clone()).collect();
+    state.shown(&ids, false)?;
+    if !found.iter().any(binds) {
+        // only the file's past errors and notes: after the edit, no turn lost
+        state.event("after-edit", &files.join(" "), &ids.join(" "))?;
+        return Ok(None);
+    }
     Ok(Some(format!(
         "Not a refusal: Paragma holds memory about the code this edit touches ({}), shown once before the first edit there:\n{}\nIf the edit still fits, make it again unchanged; otherwise change it to fit.",
         files.join(", "),
-        lines.join("\n")
+        listing(project, &index, found)?.join("\n")
+    )))
+}
+
+/// The notes found, most binding first (rules, decisions, what names the
+/// changed function, then the newest), notes saying the same in one line,
+/// at most JUST_IN_TIME lines.
+fn listing(project: &crate::project::Project, index: &Index, mut found: Vec<(&Linked, bool)>) -> Result<Vec<String>> {
+    let rank = |(l, by_symbol): &(&Linked, bool)| {
+        let kind = match l.kind {
+            Kind::Rule => 0,
+            Kind::Decision => 1,
+            _ if *by_symbol => 2,
+            _ => 3,
+        };
+        let number: i64 = l.id.trim_start_matches(|c: char| c.is_alphabetic()).parse().unwrap_or(0);
+        (kind, -number)
+    };
+    found.sort_by_key(rank);
+    let mut lines: Vec<(Vec<String>, String)> = Vec::new(); // ids, what they say
+    for (l, _) in &found {
+        let line = describe(project, index, l)?;
+        // the same words under another id: one line, both ids
+        let said = line.replacen(&l.id, "", 1).replace(&format!("(pg read {})", l.id), "");
+        match lines.iter_mut().find(|(_, s)| *s == said) {
+            Some((ids, _)) => ids.push(l.id.clone()),
+            None => lines.push((vec![l.id.clone()], said)),
+        }
+    }
+    let more = lines.len().saturating_sub(JUST_IN_TIME);
+    let mut out: Vec<String> = lines
+        .into_iter()
+        .take(JUST_IN_TIME)
+        .map(|(ids, said)| {
+            let first = &ids[0];
+            let line = format!("{}{}", ids.join(", "), said.trim_end());
+            if line.contains("(pg read") || !said.contains(": ") || ids.len() == 1 && said.starts_with(" rule") {
+                line
+            } else {
+                format!("{line} (pg read {first})")
+            }
+        })
+        .map(|l| l.replace("  ", " "))
+        .collect();
+    if more > 0 {
+        out.push(format!("+{more} more about this code: pg tree <file>"));
+    }
+    Ok(out)
+}
+
+/// After an edit: the notes found before it that did not bind it (the
+/// file's past errors), now that it is made.
+fn after_edit(project: &crate::project::Project, state: &State) -> Result<Option<String>> {
+    let Some((files, ids)) = state.take_after_edit()? else { return Ok(None) };
+    let index = Index::open(project)?;
+    let notes = CodeNotes::load(&index)?;
+    let found: Vec<(&Linked, bool)> = notes.linked().filter(|l| ids.contains(&l.id)).map(|l| (l, false)).collect();
+    if found.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "Paragma: memory about the code just changed ({files}), in case it bears on the change:\n{}",
+        listing(project, &index, found)?.join("\n")
     )))
 }
 
@@ -374,7 +441,7 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         for f in &edited {
             state.event("edit", f, "")?;
         }
-        return Ok(None);
+        return after_edit(project, &state);
     }
     if tool != "Bash" {
         return Ok(None);
@@ -501,6 +568,35 @@ fn fixed_here(
 /// The user's message gives the project a lasting rule: the agent is asked
 /// to keep it, if the user meant it so (record/said_rule.rs). Each sentence
 /// once a conversation.
+/// What the user's message holds that memory should keep: a lasting rule,
+/// decisions or a plan of steps.
+fn user_said(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
+    let parts: Vec<String> = [said_plan(project, prompt)?, said_rule(project, prompt)?].into_iter().flatten().collect();
+    Ok((!parts.is_empty()).then(|| {
+        parts.join(
+            "
+",
+        )
+    }))
+}
+
+/// Decisions or a plan for work that goes on after this conversation:
+/// asks once a conversation to record them first, in the user's words.
+fn said_plan(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
+    if !crate::record::plan::gives_plan(prompt) {
+        return Ok(None);
+    }
+    let state = State::open(project)?;
+    if state.my_last("plan-offered").is_some() {
+        return Ok(None);
+    }
+    state.event("plan-offered", &project.name, "")?;
+    Ok(Some(
+        "Paragma: the user's message gives decisions or a plan. Before the work, record them in the user's words:          pg open --goal \"...\" --step \"...\" --decision \"...\" (one --step per step, also the ones for later; one          --decision per decision). A later conversation knows only what is recorded."
+            .to_string(),
+    ))
+}
+
 fn said_rule(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
     let Some(sentence) = crate::record::said_rule::find(prompt) else { return Ok(None) };
     let sentence = one_line(&sentence, 300);

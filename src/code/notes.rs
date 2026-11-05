@@ -79,22 +79,29 @@ impl CodeNotes {
             .collect()
     }
 
+    /// Every note and rule tied to code.
+    pub fn linked(&self) -> impl Iterator<Item = &Linked> {
+        self.entries.iter().map(|(l, _, _)| l)
+    }
+
     /// Notes and rules about a part of a file: a note naming functions or
     /// types counts only where it names one of `touched` (those the part is
     /// in; its files, when it has them, say where they are); a note naming
     /// only files or folders counts for any part of them.
-    pub fn about_part(&self, path: &str, touched: &[String]) -> Vec<&Linked> {
+    /// Each with whether it names one of the touched functions or types
+    /// (not only the file).
+    pub fn about_part_by(&self, path: &str, touched: &[String]) -> Vec<(&Linked, bool)> {
         self.entries
             .iter()
-            .filter(|(_, files, symbols)| {
+            .filter_map(|(l, files, symbols)| {
                 if symbols.is_empty() {
-                    files.iter().any(|f| covers(f, path))
+                    files.iter().any(|f| covers(f, path)).then_some((l, false))
                 } else {
-                    (files.is_empty() || files.iter().any(|f| covers(f, path)))
-                        && touched.iter().any(|s| symbols.iter().any(|x| names(x, path, s)))
+                    ((files.is_empty() || files.iter().any(|f| covers(f, path)))
+                        && touched.iter().any(|s| symbols.iter().any(|x| names(x, path, s))))
+                    .then_some((l, true))
                 }
             })
-            .map(|(l, _, _)| l)
             .collect()
     }
 }
@@ -102,7 +109,13 @@ impl CodeNotes {
 /// The notes and rules about the part of a file an edit touches: the file
 /// itself, and the functions and types holding the touched lines (`lines`
 /// None: the whole file). `source`: the file as it is before the edit.
-pub fn about_lines<'a>(notes: &'a CodeNotes, rel: &str, source: &str, lines: Option<&[usize]>) -> Vec<&'a Linked> {
+/// Each with whether it names a touched function or type.
+pub fn about_lines_by<'a>(
+    notes: &'a CodeNotes,
+    rel: &str,
+    source: &str,
+    lines: Option<&[usize]>,
+) -> Vec<(&'a Linked, bool)> {
     let touched: Vec<String> = match super::lang::Lang::of(rel) {
         Some(lang) => super::parse::symbols(lang, source)
             .into_iter()
@@ -111,7 +124,7 @@ pub fn about_lines<'a>(notes: &'a CodeNotes, rel: &str, source: &str, lines: Opt
             .collect(),
         None => Vec::new(),
     };
-    notes.about_part(rel, &touched)
+    notes.about_part_by(rel, &touched)
 }
 
 /// "[2 rules: r1, r3; 1 error: e45]" for notes about some code (ids while

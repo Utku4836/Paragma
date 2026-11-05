@@ -237,6 +237,22 @@ impl State {
             .flatten()
     }
 
+    /// The notes kept for after this conversation's edit (hook.rs), taken:
+    /// (the files, the note ids); None when nothing waits.
+    pub fn take_after_edit(&self) -> Result<Option<(String, Vec<String>)>> {
+        let row: Option<(i64, String, String)> = self
+            .db
+            .query_row(
+                "SELECT rowid, target, detail FROM events WHERE conversation = ?1 AND action = 'after-edit' ORDER BY rowid DESC LIMIT 1",
+                [conversation::key()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok();
+        let Some((rowid, files, ids)) = row else { return Ok(None) };
+        self.db.execute("UPDATE events SET action = 'after-edit-shown' WHERE rowid = ?1", [rowid])?;
+        Ok(Some((files, ids.split_whitespace().map(str::to_string).collect())))
+    }
+
     /// When the last `pg finish` of any conversation was.
     pub fn last_finish(&self) -> Option<i64> {
         self.db.query_row("SELECT MAX(at) FROM events WHERE action = 'finish'", [], |r| r.get(0)).ok().flatten()

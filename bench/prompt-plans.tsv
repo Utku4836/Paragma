@@ -1,0 +1,45 @@
+# Messages a user sends an agent, labeled: does it give decisions or a plan
+# of several steps that a later conversation would need (plan), or not (no)?
+# Written before the detector, and not changed for it. "dev" is looked at
+# while building; "held" is measured once.
+# split	label	message
+dev	plan	We are adding discounts to the cart. My decisions: 1. Two kinds: percentage and fixed. 2. At most 50%. 3. Applied before VAT. Plan: (a) the Discount type (b) use it in Total (c) tests. Do only (a) now.
+dev	plan	Plan for the export: 1) add a CSV writer 2) wire it to the admin page 3) document the columns. Start with 1, we continue tomorrow.
+dev	plan	Decisions so far: we keep Postgres, ids are ULIDs, and money stays in cents. Next we build the orders table.
+dev	plan	Let's split the migration into steps: - move users first - then orders - then drop the old tables. Today only the users part.
+dev	plan	Bugün sadece ilk adımı yap. Plan: 1. yeni bir Cache tipi 2. servise bağla 3. testler. Kalanını başka bir konuşmada yaparız.
+dev	plan	Kararlarım: indirim KDV'den önce uygulanır, toplam sıfırın altına düşmez, yüzde indirim en fazla %50 olur.
+dev	plan	We agreed on three things: the API is versioned under /v2, old clients get a 410, and the change ships behind a flag. Please set up the router part first.
+dev	plan	Here's the roadmap: (1) parse the config (2) validate it (3) hot reload. Do (1) and (2) in this session.
+dev	plan	Adımlar: a) şemayı değiştir b) eski veriyi taşı c) raporu güncelle. Şimdilik a ile b yeterli, c'yi sonra konuşuruz.
+dev	plan	I decided that refunds go back to the original payment method only, and that partial refunds are allowed. Implement the first version now.
+dev	no	Fix the failing test in catalog_test.go.
+dev	no	Why does the build fail on Windows?
+dev	no	Add a --verbose flag to the CLI.
+dev	no	The tests fail with: 1. TestA: got 3 want 4 2. TestB: timeout. Can you look?
+dev	no	Rename Cart.Sum to Cart.Total everywhere.
+dev	no	Bu fonksiyon neden yavaş çalışıyor?
+dev	no	Testleri çalıştırıp sonucu söyler misin?
+dev	no	Look at these files: - cart.go - pricing.go and tell me where the total is computed.
+dev	no	Can you explain the difference between the two approaches you mentioned?
+dev	no	README'deki yazım hatalarını düzelt.
+held	plan	My plan: first write the parser, then the evaluator, then a REPL on top. Only the parser today; the rest in later sessions.
+held	plan	Decisions: logs go to stdout as JSON, the level comes from LOG_LEVEL, and errors carry a request id. Now add the logger package.
+held	plan	Three steps: 1. extract the payment client 2. add retries with backoff 3. add metrics. Let's do step 1 only.
+held	plan	Önce veritabanı katmanını yaz, sonra API uçlarını, en son da arayüzü. Bu konuşmada sadece veritabanı katmanı.
+held	plan	Şunlara karar verdik: tarih alanları UTC tutulur, gösterimde yerel saate çevrilir, saat dilimi kullanıcı ayarından gelir.
+held	plan	For the search feature: (a) index the products (b) add the query endpoint (c) rank by popularity. We'll do (a) now and the others next week.
+held	plan	We decided to drop Python 3.8 support and to require type hints in new code. Update the CI config accordingly as the first step.
+held	plan	Planım şu: 1) kimlik doğrulamayı ayır 2) oturumları Redis'e taşı 3) eski tabloyu sil. Şimdi 1. adımı yap.
+held	plan	The rules of the game for this feature: no new dependencies, keep the public API, and every handler gets a test. First, add the health handler.
+held	plan	Roadmap for the release: freeze the API, write the migration guide, then tag 2.0. Start with the API freeze checklist.
+held	no	Please make the button blue.
+held	no	What does this regex match?
+held	no	Run go vet and fix what it reports.
+held	no	Hata şu: panic: nil map. Nereden geliyor?
+held	no	Steps to reproduce: 1. open the app 2. click save 3. it crashes. Can you find the cause?
+held	no	Update the dependencies to their latest versions.
+held	no	Şu iki dosyayı karşılaştır: a.go ve b.go.
+held	no	Is it better to use a mutex or a channel here?
+held	no	Write a unit test for the Refund function.
+held	no	Bu commit mesajını daha kısa yaz.
