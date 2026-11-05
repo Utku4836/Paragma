@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Runs the native pg binary for this computer, downloading it first when
 // the install did not (install scripts turned off, or no network then).
+// On Windows the first call also points npm's shims at the binary, so the
+// calls after it do not go through Node (see install.js, direct).
 "use strict";
 const { spawnSync } = require("child_process");
 const fs = require("fs");
-const { install, binaryPath } = require("../install.js");
+const { install, binaryPath, direct } = require("../install.js");
 
 async function main() {
   let exe = binaryPath();
@@ -21,6 +23,11 @@ async function main() {
       console.error("Download pg by hand from https://github.com/Utku4836/Paragma/releases");
       process.exit(7);
     }
+  }
+  try {
+    direct(exe);
+  } catch {
+    // the shims stay as npm wrote them: pg still works, through Node
   }
   const r = spawnSync(exe, process.argv.slice(2), { stdio: "inherit" });
   if (r.error) {
