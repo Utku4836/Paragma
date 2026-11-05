@@ -56,11 +56,16 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let started = Instant::now();
     let secrets = cx.project.as_ref().map(crate::project::env::load).unwrap_or_default();
     let line = crate::project::env::substitute(&command, &secrets);
+    crate::output::mark("run: secrets");
     let (exit, output, timed_out) = execute(&line, &cx.cwd, &secrets, a.timeout)?;
     let output = crate::project::env::hide(&output, &secrets);
     // as shown and kept in the history of runs: without any value typed in it
     let command = crate::project::env::hide(&command, &secrets);
     let parsed = parse::parse(&output);
+    crate::output::mark("run: command done");
+    if let Some(p) = &cx.project {
+        crate::code::git::changed_ahead(crate::state::links::Links::load(&cx.home).folders_of(&p.name));
+    }
     let code = match &cx.project {
         Some(p) => notes::open(&cx.home, p)?,
         None => None,
@@ -75,6 +80,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         errors: parsed.errors.clone(),
         changed: code.as_ref().map(changed_files).unwrap_or_default(),
     };
+    crate::output::mark("run: code index and changes");
 
     let mut b = Budget::new(cx.budget);
     let tests = if run.failing.is_empty() && run.passed == 0 {
@@ -327,7 +333,10 @@ fn execute(
             kill_tree(&mut child);
             break (child.wait().ok(), true);
         }
-        std::thread::sleep(std::time::Duration::from_millis(25));
+        // most commands pg runs end within a moment: looked at often then
+        let waited = deadline.saturating_duration_since(Instant::now());
+        let early = std::time::Duration::from_secs(timeout.max(1)).saturating_sub(waited).as_millis() < 200;
+        std::thread::sleep(std::time::Duration::from_millis(if early { 2 } else { 25 }));
     };
     for r in readers {
         let _ = r.join();

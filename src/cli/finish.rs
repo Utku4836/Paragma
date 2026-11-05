@@ -56,6 +56,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     }
     let state = State::open(project)?;
     let last_finish = state.my_last("finish").unwrap_or(0);
+    crate::code::git::changed_ahead(crate::state::links::Links::load(&cx.home).folders_of(&project.name));
     let code = crate::code::notes::open(&cx.home, project)?;
     let changes = match &code {
         Some(c) => work::changed(c)?,

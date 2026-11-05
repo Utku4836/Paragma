@@ -18,5 +18,6 @@ mod testrun;
 mod upgrade;
 
 fn main() -> std::process::ExitCode {
+    output::mark("start");
     cli::run()
 }

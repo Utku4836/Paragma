@@ -17,13 +17,49 @@ pub fn is_repo(dir: &Path) -> bool {
 /// The changed line ranges of a file; None for a new file (all of it).
 pub type Lines = Option<Vec<(usize, usize)>>;
 
+/// What changed in a folder: files with their changed lines.
+pub type Changed = Vec<(String, Lines)>;
+
+/// Finding what changed, started early for a `changed` later in this run
+/// of pg: git runs while the code index is brought up to date.
+static AHEAD: std::sync::Mutex<Vec<(std::path::PathBuf, std::thread::JoinHandle<Changed>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Starts finding what changed in these folders. Only where `changed` is
+/// sure to follow, and after anything that could change the files.
+pub fn changed_ahead<P: AsRef<Path>>(dirs: impl IntoIterator<Item = P>) {
+    let Ok(mut ahead) = AHEAD.lock() else { return };
+    for d in dirs {
+        let d = d.as_ref().to_path_buf();
+        if !is_repo(&d) || ahead.iter().any(|(x, _)| *x == d) {
+            continue;
+        }
+        let dir = d.clone();
+        ahead.push((d, std::thread::spawn(move || find_changed(&dir))));
+    }
+}
+
 /// Files changed since the last commit, with their changed lines.
-pub fn changed(dir: &Path) -> Vec<(String, Lines)> {
+pub fn changed(dir: &Path) -> Changed {
+    let started = AHEAD.lock().ok().and_then(|mut a| a.iter().position(|(x, _)| x == dir).map(|i| a.swap_remove(i).1));
+    if let Some(Ok(found)) = started.map(|h| h.join()) {
+        return found;
+    }
+    find_changed(dir)
+}
+
+fn find_changed(dir: &Path) -> Changed {
     if !is_repo(dir) {
         return Vec::new();
     }
+    // the two run side by side
+    let (diff, untracked) = std::thread::scope(|s| {
+        let untracked = s.spawn(|| git(dir, &["ls-files", "--others", "--exclude-standard"]));
+        let diff = git(dir, &["diff", "HEAD", "-U0", "--no-color", "--no-ext-diff"]);
+        (diff, untracked.join().ok().flatten())
+    });
     let mut out: Vec<(String, Lines)> = Vec::new();
-    if let Some(diff) = git(dir, &["diff", "HEAD", "-U0", "--no-color", "--no-ext-diff"]) {
+    if let Some(diff) = diff {
         let mut file: Option<String> = None;
         for line in diff.lines() {
             if let Some(f) = line.strip_prefix("+++ b/") {
@@ -40,7 +76,7 @@ pub fn changed(dir: &Path) -> Vec<(String, Lines)> {
             }
         }
     }
-    if let Some(untracked) = git(dir, &["ls-files", "--others", "--exclude-standard"]) {
+    if let Some(untracked) = untracked {
         out.extend(untracked.lines().filter(|l| !l.is_empty()).map(|l| (l.to_string(), None)));
     }
     out

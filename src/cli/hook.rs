@@ -466,6 +466,7 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
     }
     // one history for `go test ./...`, `cd app && go test ./... 2>&1 | head`
     let command = &testrun::normalized(command);
+    crate::code::git::changed_ahead(Links::load(&cx.home).folders_of(&project.name));
     let code = crate::code::notes::open(&cx.home, project)?;
     let run = Run {
         at: now(),

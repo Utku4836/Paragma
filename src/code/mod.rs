@@ -177,7 +177,10 @@ impl CodeIndex {
                 let (p, m, s) = r?;
                 known.insert(p, (m, s as u64));
             }
-            for path in files::list(&f.dir) {
+            crate::output::mark("code: listing");
+            let listed = files::list(&f.dir);
+            crate::output::mark("code: listed");
+            for path in listed {
                 let Ok(meta) = std::fs::metadata(f.dir.join(&path)) else { continue };
                 if meta.len() > files::MAX_SIZE {
                     continue;
@@ -197,6 +200,7 @@ impl CodeIndex {
         if changed.is_empty() {
             return Ok(Vec::new());
         }
+        crate::output::mark("code: changed found");
         let parsed = parse_all(&self.folders, &changed);
         let tx = self.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mut removed: Vec<(String, String, String, i64)> = Vec::new(); // folder, path, qualified, hash

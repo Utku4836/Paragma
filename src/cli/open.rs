@@ -221,6 +221,7 @@ fn linkable(cx: &Context) -> bool {
 }
 
 fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How, others: &[String]) -> Result<String> {
+    crate::output::mark("brief: start");
     let mut b = Budget::new(cx.budget);
     b.add(first);
     if let How::New { similar } = how {
@@ -261,6 +262,7 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
         b.add(&format!("earlier ({}): {}", h.heading, one_line(&h.text, 90)));
     }
     let now = now();
+    crate::output::mark("brief: before since_last");
     if let Some(line) = since_last(cx, project, state, now)? {
         b.add(&line);
     }
@@ -282,6 +284,7 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
     let query: String =
         std::iter::once(goal.as_str()).chain(open.iter().map(|s| s.text.as_str())).collect::<Vec<_>>().join(". ");
     if !query.trim().is_empty() {
+        crate::output::mark("brief: search");
         let mut found: Vec<search::Hit> = search::find(&index, &query)?
             .into_iter()
             .filter(|h| matches!(h.kind, Kind::Rule | Kind::Decision | Kind::Error))
@@ -315,8 +318,12 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
             state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(), false)?;
         }
     }
+    crate::output::mark("brief: code index");
+    crate::code::git::changed_ahead(Links::load(&cx.home).folders_of(&project.name));
     if let Some(code) = crate::code::notes::open(&cx.home, project)? {
+        crate::output::mark("brief: code part");
         code_part(&mut b, &code, state, &query)?;
+        crate::output::mark("brief: code part done");
     }
     if let Some(s) = crate::project::env::summary(project) {
         b.add(&s);

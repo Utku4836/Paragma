@@ -49,19 +49,23 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let mut hits: Vec<(String, Hit)> = Vec::new();
     // each project's state, opened once: outcomes now, what was shown below
     let states: Vec<Option<State>> = projects.iter().map(|p| State::open(p).ok()).collect();
-    for (p, state) in projects.iter().zip(&states) {
-        let index = Index::open(p)?;
-        let mut found = search::find(&index, &query)?;
+    let indexes: Vec<(String, Index)> =
+        projects.iter().map(|p| Ok((p.name.clone(), Index::open(p)?))).collect::<Result<_>>()?;
+    for ((p, state), (_, index)) in projects.iter().zip(&states).zip(&indexes) {
+        let mut found = search::find(index, &query)?;
         if let Some(state) = state {
             search::weigh_outcomes(&mut found, state);
         }
         hits.extend(found.into_iter().map(|h| (p.name.clone(), h)));
     }
     hits.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+    crate::output::mark("find: notes searched");
     let mut code = if several { Vec::new() } else { secret_lines(&projects[0], &query) };
     if !several {
         code.extend(code_lines(cx, &projects[0], &query)?);
+        crate::output::mark("find: code lines");
         code.extend(doc_lines(cx, &projects[0], &query));
+        crate::output::mark("find: doc lines");
     }
     if hits.is_empty() && code.is_empty() {
         return Err(fail(NOTHING_FOUND, format!("no results for {query:?}")));
@@ -86,8 +90,6 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let mut in_full = Vec::new();
     let mut stale: Vec<(String, crate::code::stale::Staleness)> =
         projects.iter().map(|p| (p.name.clone(), crate::code::stale::Staleness::new(&cx.home, p))).collect();
-    let indexes: Vec<(String, Index)> =
-        projects.iter().map(|p| Ok((p.name.clone(), Index::open(p)?))).collect::<Result<_>>()?;
     for (project, h) in &hits {
         let id = if several { format!("{project}:{}", h.id) } else { h.id.clone() };
         let block = if seen.contains(&(project.clone(), h.id.clone())) {
@@ -122,7 +124,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     print!("{}", b.out);
     // what was shown, per project: what is still in the agent's context,
     // and what upkeep keeps as used (record/upkeep.rs)
-    for p in &projects {
+    for (p, state) in projects.iter().zip(&states) {
         let full: Vec<String> = in_full.iter().filter(|(n, _)| *n == p.name).map(|(_, id)| id.clone()).collect();
         let lines: Vec<String> = hits
             .iter()
@@ -131,7 +133,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             .map(|(_, h)| h.id.clone())
             .collect();
         // a search that found something never fails over bookkeeping
-        if let Ok(state) = State::open(p) {
+        if let Some(state) = state {
             let _ = state.shown(&full, true);
             let _ = state.shown(&lines, false);
         }

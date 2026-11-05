@@ -51,8 +51,9 @@ fn from_git(dir: &Path) -> Option<Vec<String>> {
     }
     let mut v: Vec<String> =
         String::from_utf8_lossy(&o.stdout).split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect();
+    // a file deleted but still in the git index is found gone when it is
+    // read (code/mod.rs), not looked up here a second time
     v.dedup();
-    v.retain(|p| dir.join(p).is_file()); // deleted but still in the git index
     Some(v)
 }
 

@@ -133,11 +133,14 @@ pub fn run() -> ExitCode {
 }
 
 fn dispatch(cli: Cli) -> Result<()> {
+    crate::output::mark("parsed");
     crate::upgrade::run(&Home::locate());
+    crate::output::mark("upgrade checked");
     if let Command::Hook(a) = cli.command {
         return hook::run(a);
     }
     let cx = context(cli.project.as_deref(), cli.budget)?;
+    crate::output::mark("context");
     match cli.command {
         Command::Open(a) => open::run(&cx, a),
         Command::Finish(a) => finish::run(&cx, a),

@@ -139,3 +139,13 @@ mod tests {
         assert_eq!(one_line("abcdefghij", 4), "abcd...");
     }
 }
+
+/// With $PG_PROFILE set, how long pg has been running at a point of its
+/// work, on stderr: to see where the time goes.
+pub fn mark(what: &str) {
+    static START: std::sync::OnceLock<(std::time::Instant, bool)> = std::sync::OnceLock::new();
+    let (start, on) = START.get_or_init(|| (std::time::Instant::now(), std::env::var_os("PG_PROFILE").is_some()));
+    if *on {
+        eprintln!("profile {:7.1} ms  {what}", start.elapsed().as_secs_f64() * 1000.0);
+    }
+}
