@@ -9,6 +9,7 @@ pub mod lang;
 pub mod notes;
 pub mod parse;
 pub mod stale;
+pub mod text;
 pub mod work;
 
 use crate::embed;
@@ -21,7 +22,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Bumped whenever the tables or the parsing change.
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION: &str = "3";
 
 const SCHEMA: &str = "
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
@@ -121,6 +122,29 @@ impl CodeIndex {
         index.ensure_schema()?;
         let renames = index.sync()?;
         Ok(Some((index, renames)))
+    }
+
+    /// The project's code index as it was last brought up to date, without
+    /// looking for changes: for what may lag a little (documents in search).
+    /// None when there is none yet.
+    pub fn open_as_is(home: &Home, project: &Project) -> Result<Option<CodeIndex>> {
+        let path = project.meta_dir().join("code.db");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let folders: Vec<Folder> = Links::load(home)
+            .folders_of(&project.name)
+            .into_iter()
+            .map(|key| {
+                let dir = PathBuf::from(&key);
+                let name = key.rsplit('/').next().unwrap_or(&key).to_string();
+                Folder { key, dir, name }
+            })
+            .collect();
+        let db = crate::db::open(&path)?;
+        let wanted = format!("{SCHEMA_VERSION}/{}", embed::fingerprint());
+        let have: Option<String> = db.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| r.get(0)).ok();
+        Ok((have.as_deref() == Some(wanted.as_str())).then_some(CodeIndex { db, folders }))
     }
 
     fn ensure_schema(&mut self) -> Result<()> {
@@ -311,8 +335,17 @@ impl CodeIndex {
 
     /// Symbols closest in meaning to a text, with their similarity.
     pub fn nearest(&self, text: &str, n: usize) -> Result<Vec<(Sym, f32)>> {
+        self.nearest_where(text, n, "kind != 'section'")
+    }
+
+    /// Sections of the project's Markdown files closest in meaning to a text.
+    pub fn nearest_docs(&self, text: &str, n: usize) -> Result<Vec<(Sym, f32)>> {
+        self.nearest_where(text, n, "kind = 'section'")
+    }
+
+    fn nearest_where(&self, text: &str, n: usize, filter: &str) -> Result<Vec<(Sym, f32)>> {
         let q = embed::encoder().encode(text);
-        let mut st = self.db.prepare("SELECT rowid, vec FROM symbols")?;
+        let mut st = self.db.prepare(&format!("SELECT rowid, vec FROM symbols WHERE {filter}"))?;
         let mut scored: Vec<(i64, f32)> = st
             .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?
             .filter_map(|r| r.ok())
@@ -377,7 +410,11 @@ fn parse_all(folders: &[Folder], changed: &[Stale]) -> Vec<Vec<(parse::Symbol, V
                     .into_iter()
                     .map(|s| {
                         let words = crate::search::words_of(&s.qualified).join(" ");
-                        let v = enc.encode(&format!("{words}. {}. {file}", s.doc));
+                        let v = enc.encode(&format!(
+                            "{words}. {}. {}{file}",
+                            s.doc,
+                            if s.about.is_empty() { String::new() } else { format!("{}. ", s.about) }
+                        ));
                         (s, v)
                     })
                     .collect()

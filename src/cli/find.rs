@@ -61,6 +61,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let mut code = if several { Vec::new() } else { secret_lines(&projects[0], &query) };
     if !several {
         code.extend(code_lines(cx, &projects[0], &query)?);
+        code.extend(doc_lines(cx, &projects[0], &query));
     }
     if hits.is_empty() && code.is_empty() {
         return Err(fail(NOTHING_FOUND, format!("no results for {query:?}")));
@@ -136,6 +137,62 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// How close in meaning a section of the project's documents must be to
+/// be listed.
+const DOC_MIN: f32 = 0.45;
+/// Sections listed.
+const DOCS: usize = 3;
+/// What a query word in a section's heading adds.
+const DOC_BY_NAME: f32 = 0.15;
+/// Sections this far below the best one are left out.
+const DOC_MARGIN: f32 = 0.06;
+
+/// The sections of the project's Markdown files (README, docs/) a query is
+/// about, by meaning: where to read, not the text.
+fn doc_lines(cx: &Context, project: &Project, query: &str) -> Vec<String> {
+    if search::classify(query) == QueryKind::Code || query.split_whitespace().count() < 2 {
+        return Vec::new();
+    }
+    let Ok(Some(code)) = crate::code::CodeIndex::open_as_is(&cx.home, project) else { return Vec::new() };
+    docs_about(&code, query, DOCS)
+        .into_iter()
+        .map(|s| {
+            format!(
+                "[doc] {}#{} {}-{}{}",
+                code.display(&s.folder, &s.path),
+                s.qualified,
+                s.start,
+                s.end,
+                if s.doc.is_empty() { String::new() } else { format!(": {}", one_line(&s.doc, 90)) }
+            )
+        })
+        .collect()
+}
+
+/// The sections of the project's documents closest to a text: by meaning,
+/// and a little for a word of it in the heading.
+pub(super) fn docs_about(code: &crate::code::CodeIndex, query: &str, n: usize) -> Vec<crate::code::Sym> {
+    let Ok(mut near) = code.nearest_docs(query, 30) else { return Vec::new() };
+    // a word of the query in the heading counts too ("folders" for "Folders")
+    let words: Vec<String> = search::words_of(query).into_iter().filter(|w| w.chars().count() >= 4).collect();
+    for (s, sim) in near.iter_mut() {
+        let heading: Vec<String> = search::words_of(&s.name);
+        if words.iter().any(|w| {
+            heading.iter().any(|h| h.starts_with(w.as_str()) || w.starts_with(h.as_str()) && h.chars().count() >= 4)
+        }) {
+            *sim += DOC_BY_NAME;
+        }
+    }
+    near.sort_by(|a, b| b.1.total_cmp(&a.1));
+    if std::env::var_os("PG_EXPLAIN").is_some() {
+        for (s, sim) in near.iter().take(6) {
+            eprintln!("explain: doc {}#{} {sim:.3}", s.path, s.qualified);
+        }
+    }
+    let top = near.first().map(|n| n.1).unwrap_or(0.0);
+    near.into_iter().filter(|(_, sim)| *sim >= DOC_MIN && *sim >= top - DOC_MARGIN).take(n).map(|(s, _)| s).collect()
 }
 
 /// The project's secrets a query asks for, by title; never their values.

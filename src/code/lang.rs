@@ -1,5 +1,8 @@
-//! The languages pg reads code in, by file extension. Files in other
-//! languages still show in `pg tree`, without their symbols.
+//! The languages pg reads code in, by file extension (or name). Files in
+//! other languages still show in `pg tree`, without their symbols.
+//!
+//! Most have a tree-sitter grammar. SQL, Markdown, YAML and the script
+//! blocks of Vue and Svelte files are read without one (code/text.rs).
 
 use tree_sitter::Language;
 
@@ -25,11 +28,27 @@ pub enum Lang {
     Lua,
     Luau,
     GdScript,
+    Wgsl,
+    Glsl,
+    Hlsl,
+    Sql,
+    GraphQl,
+    Proto,
+    Dockerfile,
+    Markdown,
+    Yaml,
+    Vue,
+    Svelte,
 }
 
 impl Lang {
     pub fn of(path: &str) -> Option<Lang> {
-        let ext = path.rsplit_once('.')?.1.to_ascii_lowercase();
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        let lower = name.to_ascii_lowercase();
+        if lower == "dockerfile" || lower == "containerfile" || lower.starts_with("dockerfile.") {
+            return Some(Lang::Dockerfile);
+        }
+        let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
         Some(match ext.as_str() {
             "py" | "pyi" => Lang::Python,
             "js" | "jsx" | "mjs" | "cjs" => Lang::JavaScript,
@@ -51,6 +70,17 @@ impl Lang {
             "lua" => Lang::Lua,
             "luau" => Lang::Luau,
             "gd" => Lang::GdScript,
+            "wgsl" => Lang::Wgsl,
+            "glsl" | "vert" | "frag" | "comp" | "geom" | "tesc" | "tese" | "rgen" | "rchit" | "rmiss" => Lang::Glsl,
+            "hlsl" | "hlsli" | "fxh" => Lang::Hlsl,
+            "sql" => Lang::Sql,
+            "graphql" | "graphqls" | "gql" => Lang::GraphQl,
+            "proto" => Lang::Proto,
+            "dockerfile" | "containerfile" => Lang::Dockerfile,
+            "md" | "markdown" | "mdx" => Lang::Markdown,
+            "yml" | "yaml" => Lang::Yaml,
+            "vue" => Lang::Vue,
+            "svelte" => Lang::Svelte,
             _ => return None,
         })
     }
@@ -77,11 +107,36 @@ impl Lang {
             Lang::Lua => "lua",
             Lang::Luau => "luau",
             Lang::GdScript => "gdscript",
+            Lang::Wgsl => "wgsl",
+            Lang::Glsl => "glsl",
+            Lang::Hlsl => "hlsl",
+            Lang::Sql => "sql",
+            Lang::GraphQl => "graphql",
+            Lang::Proto => "protobuf",
+            Lang::Dockerfile => "dockerfile",
+            Lang::Markdown => "markdown",
+            Lang::Yaml => "yaml",
+            Lang::Vue => "vue",
+            Lang::Svelte => "svelte",
         }
     }
 
-    pub fn grammar(self) -> Language {
-        match self {
+    /// The language of code embedded in another file's strings, by the
+    /// marker it is written with: /* wgsl */ `...` or wgsl`...`.
+    pub fn of_marker(marker: &str) -> Option<Lang> {
+        Some(match marker.trim().to_ascii_lowercase().as_str() {
+            "wgsl" => Lang::Wgsl,
+            "glsl" | "vert" | "frag" => Lang::Glsl,
+            "hlsl" => Lang::Hlsl,
+            "sql" => Lang::Sql,
+            "graphql" | "gql" => Lang::GraphQl,
+            _ => return None,
+        })
+    }
+
+    /// Its tree-sitter grammar; None for the languages read without one.
+    pub fn grammar(self) -> Option<Language> {
+        Some(match self {
             Lang::Python => tree_sitter_python::LANGUAGE.into(),
             Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
             Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
@@ -102,6 +157,14 @@ impl Lang {
             Lang::Lua => tree_sitter_lua::LANGUAGE.into(),
             Lang::Luau => tree_sitter_luau::LANGUAGE.into(),
             Lang::GdScript => tree_sitter_gdscript::LANGUAGE.into(),
-        }
+            Lang::Wgsl => tree_sitter_wgsl_bevy::LANGUAGE.into(),
+            Lang::Glsl => tree_sitter_glsl::LANGUAGE_GLSL.into(),
+            // C++ reads HLSL well enough (its constant buffers: code/text.rs)
+            Lang::Hlsl => tree_sitter_cpp::LANGUAGE.into(),
+            Lang::GraphQl => tree_sitter_graphql::LANGUAGE.into(),
+            Lang::Proto => tree_sitter_proto::LANGUAGE.into(),
+            Lang::Dockerfile => tree_sitter_containerfile::LANGUAGE.into(),
+            Lang::Sql | Lang::Markdown | Lang::Yaml | Lang::Vue | Lang::Svelte => return None,
+        })
     }
 }

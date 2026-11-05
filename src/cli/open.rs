@@ -419,11 +419,13 @@ fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Re
     let top = best.first().map(|e| e.3).unwrap_or(0.0);
     best.retain(|e| e.3 >= LIKELY_MIN && e.3 >= top * 0.8);
     if best.is_empty() {
+        docs_part(b, code, query);
         return Ok(());
     }
     let shown: Vec<String> =
         best.iter().take(LIKELY).map(|(f, p, s, _)| format!("{}#{s}", code.display(f, p))).collect();
     b.add(&format!("likely code: {}", shown.join(", ")));
+    docs_part(b, code, query);
     let first = best.first().map(|(f, p, _, _)| (code.folders.iter().find(|x| x.key == *f), p.as_str()));
     if let Some((Some(folder), path)) = first
         && let Some(cmd) = work::test_command(&folder.dir)
@@ -444,6 +446,18 @@ fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Re
         b.add(&format!("{} usually changes with: {}", code.display(folder, path), with.join(", ")));
     }
     Ok(())
+}
+
+/// The sections of the project's documents the work is about: where to read.
+fn docs_part(b: &mut Budget, code: &CodeIndex, query: &str) {
+    let docs = super::find::docs_about(code, query, 2);
+    if !docs.is_empty() {
+        let shown: Vec<String> = docs
+            .iter()
+            .map(|s| format!("{}#{} ({}-{})", code.display(&s.folder, &s.path), s.qualified, s.start, s.end))
+            .collect();
+        b.add(&format!("docs: {}", shown.join(", ")));
+    }
 }
 
 /// Where the project's code is: the linked folder at or above this one,
