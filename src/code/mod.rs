@@ -21,8 +21,9 @@ use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Bumped whenever the tables or the parsing change.
-const SCHEMA_VERSION: &str = "3";
+/// Bumped whenever the tables, the parsing or the files read change
+/// (4: files marked linguist-vendored or -generated are left out).
+const SCHEMA_VERSION: &str = "4";
 
 const SCHEMA: &str = "
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
