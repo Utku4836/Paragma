@@ -36,7 +36,7 @@ pub struct Args {
     done: Vec<String>,
 
     /// A step left for later (repeat for more)
-    #[arg(long = "left", value_name = "STEP")]
+    #[arg(long = "left", value_name = "STEP", allow_hyphen_values = true)]
     left: Vec<String>,
 }
 

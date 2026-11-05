@@ -32,15 +32,15 @@ pub struct Args {
     name: Vec<String>,
 
     /// What the work is for (replaces the goal)
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     goal: Option<String>,
 
     /// A step of the work (repeat for more)
-    #[arg(long = "step", value_name = "STEP")]
+    #[arg(long = "step", value_name = "STEP", allow_hyphen_values = true)]
     steps: Vec<String>,
 
     /// A decision the user made for the work (repeat for more): kept as a decision record
-    #[arg(long = "decision", value_name = "DECISION")]
+    #[arg(long = "decision", value_name = "DECISION", allow_hyphen_values = true)]
     decisions: Vec<String>,
 
     /// Start a new project even when the name is close to an existing one

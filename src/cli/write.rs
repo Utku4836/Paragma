@@ -49,7 +49,7 @@ pub struct Args {
     secret: Option<String>,
 
     /// Record a rule (to rules.md)
-    #[arg(long, value_name = "TEXT", conflicts_with_all = ["decision", "error"])]
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["decision", "error"], allow_hyphen_values = true)]
     rule: Option<String>,
 
     /// The rule's group in rules.md (default: General)
@@ -57,15 +57,15 @@ pub struct Args {
     group: Option<String>,
 
     /// Record a decision (to decisions/)
-    #[arg(long, value_name = "TEXT", conflicts_with = "error")]
+    #[arg(long, value_name = "TEXT", conflicts_with = "error", allow_hyphen_values = true)]
     decision: Option<String>,
 
     /// Why it was decided
-    #[arg(long, requires = "decision")]
+    #[arg(long, requires = "decision", allow_hyphen_values = true)]
     why: Option<String>,
 
     /// What else was considered
-    #[arg(long, requires = "decision")]
+    #[arg(long, requires = "decision", allow_hyphen_values = true)]
     alternatives: Option<String>,
 
     /// The decision this one replaces (its id)
@@ -73,19 +73,19 @@ pub struct Args {
     supersedes: Option<String>,
 
     /// A short title (default: the first sentence)
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     title: Option<String>,
 
     /// Record an error: the error line as printed (to errors/)
-    #[arg(long, value_name = "LINE")]
+    #[arg(long, value_name = "LINE", allow_hyphen_values = true)]
     error: Option<String>,
 
     /// What caused the error
-    #[arg(long, requires = "error")]
+    #[arg(long, requires = "error", allow_hyphen_values = true)]
     cause: Option<String>,
 
     /// How it was fixed
-    #[arg(long, requires = "error")]
+    #[arg(long, requires = "error", allow_hyphen_values = true)]
     fix: Option<String>,
 
     /// Files the error is about, comma separated

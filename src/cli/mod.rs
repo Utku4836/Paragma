@@ -201,3 +201,44 @@ impl Context {
         self.project.as_ref().ok_or_else(|| fail(USAGE, "no project here: pass --project <name> (projects: pg ls)"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_values_may_start_with_a_dash() {
+        let parsed = |args: &[&str]| Cli::try_parse_from(args).map(|_| ()).map_err(|e| e.to_string());
+        let ok = [
+            &[
+                "pg",
+                "write",
+                "--error",
+                "--locked failed",
+                "--cause",
+                "--ignore-user-config loads no hooks",
+                "--fix",
+                "-c hooks={...}",
+            ][..],
+            &[
+                "pg",
+                "write",
+                "--decision",
+                "-O2 for release",
+                "--why",
+                "--release alone was slow",
+                "--alternatives",
+                "-O3",
+            ],
+            &["pg", "write", "--rule", "--force is never used", "--group", "Git"],
+            &["pg", "open", "x", "--goal", "--json output", "--step", "- first", "--decision", "--no-default-features"],
+            &["pg", "finish", "done", "--left", "--check in CI"],
+        ];
+        for a in ok {
+            assert_eq!(parsed(a), Ok(()), "{a:?}");
+        }
+        // flags after a text value are still flags
+        assert_eq!(parsed(&["pg", "write", "--error", "e", "--cause", "c", "--files", "a.rs"]), Ok(()));
+        assert!(parsed(&["pg", "write", "--error", "e", "--cause", "c", "--fix"]).is_err());
+    }
+}
