@@ -1,0 +1,5 @@
+Germany has its own VAT rate. Change `pricing.WithTax` to take the country:
+
+    func WithTax(net int64, country string) int64
+
+"DE" uses 19%; every other country keeps 20%, rounding as today. Give `cart.Cart` a `Country string` field and use it in `Total`. Update all the code that uses `WithTax`, and the tests. `go test ./...` must pass.

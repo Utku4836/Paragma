@@ -1,0 +1,1 @@
+Implement `count_functions` in src/lib.rs: parse the Rust source with the `tree-sitter` and `tree-sitter-rust` crates (already in Cargo.toml, at the versions in Cargo.lock) and count every function it defines: free functions, functions in modules, and methods in impl blocks. Add unit tests. `cargo test` must pass. Do not add or change dependencies; there is no network.
