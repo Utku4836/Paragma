@@ -630,7 +630,11 @@ mod tests {
             cur: 0,
             top: 0,
             account: None,
-            repos: vec![repo("Utku4836/Basalt", true), repo("Utku-Private/Qwen", true), repo("Utku4836/Paragma", false)],
+            repos: vec![
+                repo("me/notes-app", true),
+                repo("acme-org/billing", true),
+                repo("me/website", false),
+            ],
             search: String::new(),
             found: None,
             chosen: None,
@@ -656,20 +660,20 @@ mod tests {
         let mut p = page(&cx, &style);
         let list = p.view();
         assert!(list.contains("New private repository: paragma-memory"), "{list}");
-        assert!(list.contains("Utku4836/Basalt") && list.contains("Utku-Private/Qwen"), "{list}");
-        let public = list.lines().find(|l| l.contains("Utku4836/Paragma")).unwrap();
+        assert!(list.contains("me/notes-app") && list.contains("acme-org/billing"), "{list}");
+        let public = list.lines().find(|l| l.contains("me/website")).unwrap();
         assert!(public.contains("Public"), "{public}");
 
         // typing searches
         let mut raw = None;
-        for c in "qwen".chars() {
+        for c in "billing".chars() {
             p.key(Key::Char(c), &mut raw).unwrap();
         }
         assert_eq!(p.matching(), vec![Some(1)]);
         p.key(Key::Esc, &mut raw).unwrap();
 
         // a public repository: asked first, and "no" is where the cursor starts
-        p.choose(Some(repo("Utku4836/Paragma", false))).unwrap();
+        p.choose(Some(repo("me/website", false))).unwrap();
         assert_eq!(p.screen, Screen::Ask(Ask::Public));
         assert_eq!(p.cur, 1, "the safe answer first");
         let ask = p.view();
@@ -678,7 +682,7 @@ mod tests {
         assert_eq!(p.screen, Screen::Repos);
 
         // a repository with other things: its own branch is asked, then the .env files
-        p.choose(Some(repo("Utku4836/Basalt", true))).unwrap();
+        p.choose(Some(repo("me/notes-app", true))).unwrap();
         assert_eq!(p.screen, Screen::Ask(Ask::Branch));
         assert_eq!(p.prefix, "Paragma");
         assert_eq!(p.cur, 0, "its own branch is recommended");

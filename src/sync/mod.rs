@@ -113,7 +113,7 @@ impl Config {
         )
     }
 
-    /// Where, for people: "Utku4836/paragma-memory", "Utku4836/app (Paragma/, branch paragma)".
+    /// Where, for people: "me/paragma-memory", "me/app (Paragma/, branch paragma)".
     pub fn place(&self) -> String {
         let name = if self.repo.is_empty() { self.remote.clone() } else { self.repo.clone() };
         match (self.prefix.is_empty(), self.branch == BRANCH) {
