@@ -10,6 +10,8 @@ use anyhow::Result;
 pub const CANDIDATES: usize = 100;
 /// A word in more than this share of the pieces says nothing (the, how, is).
 const COMMON_WORD: f64 = 0.35;
+/// ... and in at least this many pieces.
+const COMMON_MIN: i64 = 6;
 /// Pieces less similar than this in meaning are not candidates.
 const MIN_SIMILARITY: f32 = 0.15;
 
@@ -21,10 +23,13 @@ pub fn by_words(index: &Index, query: &str) -> Result<Vec<i64>> {
     let mut df = index.db.prepare_cached("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH ?1")?;
     let mut candidates = query::words(query);
     candidates.extend(glossary::related_words(query, &candidates));
+    // in a small memory every word is in a large share of the pieces: a
+    // word says nothing only when it is in many of them too
     let words: Vec<String> = candidates
         .into_iter()
         .filter(|w| {
-            df.query_row([format!("\"{w}\"*")], |r| r.get::<_, i64>(0)).unwrap_or(0) as f64 / total <= COMMON_WORD
+            let n = df.query_row([format!("\"{w}\"*")], |r| r.get::<_, i64>(0)).unwrap_or(0);
+            n < COMMON_MIN || n as f64 / total <= COMMON_WORD
         })
         .collect();
     if words.is_empty() {
