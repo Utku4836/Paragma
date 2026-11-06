@@ -50,7 +50,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     {
         b.add(&format!("[{id} rule] {}#{}\n{}", row.path.trim_end_matches(".md"), c.heading, c.text));
         print!("{}", b.out);
-        let _ = State::open(&project).and_then(|s| s.shown(&[id.to_string()], true));
+        shown_in_full(&project, id);
         return Ok(());
     }
     b.add(&format!(
@@ -89,10 +89,16 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     print!("{}", b.out);
     if !row.id.is_empty() {
-        // later searches in this conversation show it as one line
-        let _ = State::open(&project).and_then(|s| s.shown(std::slice::from_ref(&row.id), true));
+        shown_in_full(&project, &row.id);
     }
     Ok(())
+}
+
+/// Later searches in this conversation show it as one line, while it does
+/// not change.
+fn shown_in_full(project: &Project, id: &str) {
+    let version = Index::open(project).ok().and_then(|i| i.versions([id]).ok()).and_then(|v| v.get(id).copied());
+    let _ = State::open(project).and_then(|s| s.shown_in_full(&[(id.to_string(), version.unwrap_or(0))]));
 }
 
 /// The note a target names: "e45", "shop:e45", "physics/collisions" or

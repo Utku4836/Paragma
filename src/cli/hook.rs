@@ -181,7 +181,7 @@ fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -
     let files: Vec<String> = targets.iter().filter_map(|t| relative(&folders, &t.file).map(|r| r.1)).collect();
     // everything found counts as shown: the next edit here goes through
     let ids: Vec<String> = found.iter().map(|f| f.0.id.clone()).collect();
-    state.shown(&ids, false)?;
+    state.shown(&ids)?;
     if !found.iter().any(binds) {
         // only the file's past errors and notes: after the edit, no turn lost
         state.event("after-edit", &files.join(" "), &ids.join(" "))?;
@@ -507,7 +507,7 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         if state.shown_to_me(&id, since)? {
             continue;
         }
-        state.shown(std::slice::from_ref(&id), false)?;
+        state.shown(std::slice::from_ref(&id))?;
         if let Some(own) = super::run::known_id(&k) {
             state.fix_shown(own, &run.command, &run.failing)?;
         }

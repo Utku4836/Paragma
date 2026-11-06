@@ -315,7 +315,7 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
                     one_line(&h.text, if h.kind == Kind::Rule { 240 } else { 110 })
                 ));
             }
-            state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(), false)?;
+            state.shown(&hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>())?;
         }
     }
     crate::output::mark("brief: code index");

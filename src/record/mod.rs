@@ -437,7 +437,7 @@ fn contradicts(a: &str, b: &str) -> bool {
 
 /// A short title: the first sentence, cut at a word near 60 characters.
 fn title_of(text: &str) -> String {
-    let first = text.split(['.', ';', '\n']).map(str::trim).find(|s| !s.is_empty()).unwrap_or("");
+    let first = sentences(text).map(str::trim).find(|s| !s.is_empty()).unwrap_or("");
     if first.chars().count() <= 60 {
         return first.to_string();
     }
@@ -452,6 +452,30 @@ fn title_of(text: &str) -> String {
         out.push_str(w);
     }
     out
+}
+
+/// The sentences of a text: each ends at ';', a line's end, or '.', '!',
+/// '?' before a space or the end. A dot inside a word or number (3.0,
+/// state.db, v0.2.7) does not end one.
+fn sentences(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let mut chars = rest.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            let next = chars.peek().map(|(_, n)| *n);
+            let ends =
+                matches!(c, ';' | '\n') || (matches!(c, '.' | '!' | '?') && next.is_none_or(char::is_whitespace));
+            if ends {
+                let (s, after) = (&rest[..i], &rest[i + c.len_utf8()..]);
+                rest = after;
+                return Some(s);
+            }
+        }
+        Some(std::mem::take(&mut rest))
+    })
 }
 
 /// A file for a new record in `folder`, named after its title and not
@@ -486,5 +510,12 @@ mod tests {
         assert_eq!(title_of("Use ULIDs for public IDs. They sort by time."), "Use ULIDs for public IDs");
         let long = "Discount codes are validated on the server only and the client never computes any price at all";
         assert!(title_of(long).chars().count() <= 60);
+        // a dot inside a word or number is not a sentence's end
+        assert_eq!(title_of("3.0 ships git, library API and impact"), "3.0 ships git, library API and impact");
+        assert_eq!(title_of("state.db is not synced. A new computer starts empty."), "state.db is not synced");
+        assert_eq!(title_of("Pin tree-sitter to v0.27.1; newer breaks grammars"), "Pin tree-sitter to v0.27.1");
+        assert_eq!(title_of("Is it fast? Yes."), "Is it fast");
+        assert_eq!(title_of("Use rustls.\nNot openssl."), "Use rustls");
+        assert_eq!(title_of("Ends with a dot."), "Ends with a dot");
     }
 }

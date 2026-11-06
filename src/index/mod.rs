@@ -11,6 +11,7 @@ use crate::note::Kind;
 use crate::project::Project;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::HashMap;
 
 /// Bumped whenever the tables change; an index of another version, or
 /// built with another model, is rebuilt.
@@ -129,6 +130,33 @@ impl Index {
             Some(p) => self.note_by_path(&p),
             None => Ok(None),
         }
+    }
+
+    /// Each note's or rule's version: a number that changes with its text
+    /// or its status. What a conversation was shown of it is current while
+    /// the version is the same. A ref memory does not have is left out.
+    pub fn versions<'a>(&self, refs: impl IntoIterator<Item = &'a str>) -> Result<HashMap<String, i64>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT c.text, n.status FROM chunks c JOIN notes n ON n.path = c.path WHERE c.ref = ?1 ORDER BY c.rowid",
+        )?;
+        let mut out = HashMap::new();
+        for r in refs {
+            let mut text = String::new();
+            for row in st.query_map([r], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))? {
+                let (t, status) = row?;
+                // the hash leaves out spacing: '|' keeps the parts apart
+                if text.is_empty() {
+                    text.push_str(status.as_deref().unwrap_or(""));
+                    text.push('|');
+                }
+                text.push_str(&t);
+                text.push('|');
+            }
+            if !text.is_empty() {
+                out.insert(r.to_string(), crate::code::parse::hash(&text) as i64);
+            }
+        }
+        Ok(out)
     }
 
     /// Every piece of a kind: what a new record is compared with.

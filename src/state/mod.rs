@@ -100,25 +100,41 @@ impl State {
         Ok(rows)
     }
 
-    /// Remembers that results were shown to this conversation, in full or
-    /// as one line.
-    pub fn shown(&self, refs: &[String], full: bool) -> Result<()> {
-        let at = now();
-        let full_at = if full { at } else { 0 };
+    /// Remembers that results were shown to this conversation as one line.
+    pub fn shown(&self, refs: &[String]) -> Result<()> {
         let mut st = self.db.prepare_cached(
-            "INSERT INTO shown(conversation, ref, at, full_at) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(conversation, ref) DO UPDATE SET at = ?3, full_at = MAX(full_at, ?4)",
+            "INSERT INTO shown(conversation, ref, at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(conversation, ref) DO UPDATE SET at = ?3",
         )?;
+        let at = now();
         for r in refs {
-            st.execute(params![conversation::key(), r, at, full_at])?;
+            st.execute(params![conversation::key(), r, at])?;
         }
         Ok(())
     }
 
-    /// What this conversation was shown in full since `since`.
-    pub fn shown_in_full(&self, since: i64) -> Result<std::collections::HashSet<String>> {
-        let mut st = self.db.prepare_cached("SELECT ref FROM shown WHERE conversation = ?1 AND full_at >= ?2")?;
-        let rows = st.query_map(params![conversation::key(), since], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    /// Remembers that notes or rules were shown to this conversation in
+    /// full, each with its version (`Index::versions`).
+    pub fn shown_in_full(&self, refs: &[(String, i64)]) -> Result<()> {
+        let mut st = self.db.prepare_cached(
+            "INSERT INTO shown(conversation, ref, at, full_at, version) VALUES (?1, ?2, ?3, ?3, ?4)
+             ON CONFLICT(conversation, ref) DO UPDATE SET at = ?3, full_at = ?3, version = ?4",
+        )?;
+        let at = now();
+        for (r, version) in refs {
+            st.execute(params![conversation::key(), r, at, version])?;
+        }
+        Ok(())
+    }
+
+    /// What this conversation was shown in full since `since`, with the
+    /// version it saw.
+    pub fn seen_in_full(&self, since: i64) -> Result<std::collections::HashMap<String, i64>> {
+        let mut st =
+            self.db.prepare_cached("SELECT ref, version FROM shown WHERE conversation = ?1 AND full_at >= ?2")?;
+        let rows = st
+            .query_map(params![conversation::key(), since], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 

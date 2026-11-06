@@ -79,12 +79,22 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     for line in &code {
         b.add(line);
     }
+    // shown in full lately and not changed since: still in the agent's
+    // context. A note edited or a record updated since is shown again.
     let mut seen = std::collections::HashSet::new();
-    for (p, state) in projects.iter().zip(&states) {
+    let mut versions = std::collections::HashMap::new();
+    for ((p, state), (_, index)) in projects.iter().zip(&states).zip(&indexes) {
+        let refs = hits.iter().filter(|(name, _)| *name == p.name).map(|(_, h)| h.id.as_str());
+        let now = index.versions(refs).unwrap_or_default();
         let since = crate::output::now() - STILL_IN_CONTEXT;
-        if let Some(ids) = state.as_ref().and_then(|s| s.shown_in_full(since).ok()) {
-            seen.extend(ids.into_iter().map(|id| (p.name.clone(), id)));
+        if let Some(saw) = state.as_ref().and_then(|s| s.seen_in_full(since).ok()) {
+            for (id, v) in &now {
+                if saw.get(id) == Some(v) {
+                    seen.insert((p.name.clone(), id.clone()));
+                }
+            }
         }
+        versions.insert(p.name.clone(), now);
     }
     let mut shown = 0;
     let mut in_full = Vec::new();
@@ -125,17 +135,19 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     // what was shown, per project: what is still in the agent's context,
     // and what upkeep keeps as used (record/upkeep.rs)
     for (p, state) in projects.iter().zip(&states) {
-        let full: Vec<String> = in_full.iter().filter(|(n, _)| *n == p.name).map(|(_, id)| id.clone()).collect();
+        let version = |id: &String| versions.get(&p.name).and_then(|v| v.get(id)).copied().unwrap_or(0);
+        let full: Vec<(String, i64)> =
+            in_full.iter().filter(|(n, _)| *n == p.name).map(|(_, id)| (id.clone(), version(id))).collect();
         let lines: Vec<String> = hits
             .iter()
             .take(shown + ONE_LINERS)
-            .filter(|(name, h)| *name == p.name && !full.contains(&h.id))
+            .filter(|(name, h)| *name == p.name && !full.iter().any(|(id, _)| *id == h.id))
             .map(|(_, h)| h.id.clone())
             .collect();
         // a search that found something never fails over bookkeeping
         if let Some(state) = state {
-            let _ = state.shown(&full, true);
-            let _ = state.shown(&lines, false);
+            let _ = state.shown_in_full(&full);
+            let _ = state.shown(&lines);
         }
     }
     Ok(())
