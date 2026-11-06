@@ -4,22 +4,13 @@
 //! confirm. Arrow keys move, Enter goes on, Esc goes back.
 
 use super::Context;
+use super::screen::{banner, draw, fit, row};
 use super::setup::{Style, connect};
 use crate::agents::{self, Agent, Conversation, hooks};
 use crate::output;
 use crate::terminal::{self, Key};
 use anyhow::Result;
-use std::io::Write;
 use std::path::PathBuf;
-
-const BANNER: [&str; 6] = [
-    "██████╗  █████╗ ██████╗  █████╗  ██████╗ ███╗   ███╗ █████╗ ",
-    "██╔══██╗██╔══██╗██╔══██╗██╔══██╗██╔════╝ ████╗ ████║██╔══██╗",
-    "██████╔╝███████║██████╔╝███████║██║  ███╗██╔████╔██║███████║",
-    "██╔═══╝ ██╔══██║██╔══██╗██╔══██║██║   ██║██║╚██╔╝██║██╔══██║",
-    "██║     ██║  ██║██║  ██║██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║",
-    "╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝",
-];
 
 /// The choices on the scope screen, in order.
 const SCOPES: [&str; 4] = ["Every conversation", "One conversation", "This folder", "Back"];
@@ -114,71 +105,19 @@ pub fn run(cx: &Context, style: &Style) -> Result<bool> {
     Ok(true)
 }
 
-/// Draws over the last frame: each line is written over the old one and
-/// cleared after, so the screen never goes blank between frames.
-fn draw(frame: &str) -> Result<()> {
-    let mut out = std::io::stdout().lock();
-    // raw mode on Unix does not return the carriage at a line end
-    let body = frame.replace('\n', "\x1b[K\r\n");
-    write!(out, "\x1b[H{body}\x1b[K\x1b[J")?;
-    out.flush()?;
-    Ok(())
-}
-
-/// `s` cut or padded to `n` characters.
-fn fit(s: &str, n: usize) -> String {
-    let count = s.chars().count();
-    if count > n {
-        let cut: String = s.chars().take(n.saturating_sub(1)).collect();
-        format!("{cut}…")
-    } else {
-        format!("{s}{}", " ".repeat(n - count))
-    }
-}
-
 impl Setup<'_> {
     fn size(&self) -> (usize, usize) {
         terminal::size().unwrap_or((100, 30))
     }
 
     fn banner(&self, out: &mut String, width: usize) {
-        let st = self.style;
-        out.push('\n');
-        if width < BANNER[0].chars().count() + 4 {
-            out.push_str(&format!("  {}\n", st.accent("◆ PARAGMA")));
-        } else {
-            for row in BANNER {
-                // the blocks in violet, their box-drawn shadow darker
-                let mut line = String::from("  ");
-                let mut run = String::new();
-                let mut solid = None;
-                for ch in row.chars() {
-                    let is_solid = ch == '█';
-                    if solid != Some(is_solid) && !run.is_empty() {
-                        line.push_str(&if solid == Some(true) { st.accent(&run) } else { st.shadow(&run) });
-                        run.clear();
-                    }
-                    solid = Some(is_solid);
-                    run.push(ch);
-                }
-                line.push_str(&if solid == Some(true) { st.accent(&run) } else { st.shadow(&run) });
-                out.push_str(&line);
-                out.push('\n');
-            }
-        }
-        out.push_str(&format!(
-            "  {}\n\n",
-            st.dim(&format!("memory for coding agents · v{}", env!("CARGO_PKG_VERSION")))
-        ));
+        let under = format!("memory for coding agents · v{}", env!("CARGO_PKG_VERSION"));
+        banner(out, width, self.style, &under);
     }
 
     /// One row of a list: highlighted when chosen.
     fn row(&self, out: &mut String, chosen: bool, text: &str) {
-        if chosen {
-            out.push_str(&format!("  {} {}\n", self.style.accent("›"), self.style.bold(text)));
-        } else {
-            out.push_str(&format!("    {text}\n"));
-        }
+        row(out, self.style, chosen, text);
     }
 
     fn view(&mut self) -> String {
@@ -597,12 +536,5 @@ mod tests {
         assert!(!s.view().contains("only, for now"));
         s.key(Key::Char('q')).unwrap();
         assert!(s.quit);
-    }
-
-    #[test]
-    fn fit_cuts_and_pads() {
-        assert_eq!(fit("abc", 5), "abc  ");
-        assert_eq!(fit("abcdef", 4), "abc…");
-        assert_eq!(fit("şğü", 3), "şğü");
     }
 }

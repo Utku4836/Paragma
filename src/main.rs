@@ -13,6 +13,7 @@ mod record;
 mod search;
 mod skills;
 mod state;
+mod sync;
 mod terminal;
 mod testrun;
 mod upgrade;

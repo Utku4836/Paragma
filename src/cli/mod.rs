@@ -4,6 +4,8 @@
 mod doctor;
 mod find;
 mod finish;
+mod git;
+mod git_screen;
 pub mod hook;
 mod ls;
 mod mv;
@@ -11,6 +13,7 @@ mod open;
 mod read;
 mod rm;
 mod run;
+mod screen;
 mod setup;
 mod setup_screen;
 mod skill;
@@ -73,6 +76,8 @@ enum Command {
     Setup(setup::Args),
     /// Paragma's instructions for agents: the core, or a skill (coding, projects, knowledge)
     Skill(skill::Args),
+    /// Back the memory up to GitHub and keep it the same on every computer
+    Git(git::Args),
     /// Answers an agent's hook (put in place by pg setup): the event as JSON on stdin
     #[command(hide = true)]
     Hook(hook::Args),
@@ -141,20 +146,35 @@ fn dispatch(cli: Cli) -> Result<()> {
     }
     let cx = context(cli.project.as_deref(), cli.budget)?;
     crate::output::mark("context");
-    match cli.command {
-        Command::Open(a) => open::run(&cx, a),
-        Command::Finish(a) => finish::run(&cx, a),
-        Command::Find(a) => find::run(&cx, a),
-        Command::Read(a) => read::run(&cx, a),
-        Command::Write(a) => write::run(&cx, *a),
-        Command::Run(a) => run::run(&cx, a),
-        Command::Tree(a) => tree::run(&cx, a),
-        Command::Ls(a) => ls::run(&cx, a),
-        Command::Mv(a) => mv::run(&cx, a),
-        Command::Rm(a) => rm::run(&cx, a),
-        Command::Doctor(a) => doctor::run(&cx, a),
-        Command::Setup(a) => setup::run(&cx, a),
-        Command::Skill(a) => skill::run(&cx, a),
+    // what may change memory, or starts work that should see what other
+    // computers sent: synced in the background afterwards
+    let syncs = matches!(
+        cli.command,
+        Command::Open(_) | Command::Finish(_) | Command::Write(_) | Command::Mv(_) | Command::Rm(_)
+    );
+    let result = run_command(&cx, cli.command);
+    if syncs {
+        crate::sync::trigger(&cx.home);
+    }
+    result
+}
+
+fn run_command(cx: &Context, command: Command) -> Result<()> {
+    match command {
+        Command::Open(a) => open::run(cx, a),
+        Command::Finish(a) => finish::run(cx, a),
+        Command::Find(a) => find::run(cx, a),
+        Command::Read(a) => read::run(cx, a),
+        Command::Write(a) => write::run(cx, *a),
+        Command::Run(a) => run::run(cx, a),
+        Command::Tree(a) => tree::run(cx, a),
+        Command::Ls(a) => ls::run(cx, a),
+        Command::Mv(a) => mv::run(cx, a),
+        Command::Rm(a) => rm::run(cx, a),
+        Command::Doctor(a) => doctor::run(cx, a),
+        Command::Setup(a) => setup::run(cx, a),
+        Command::Skill(a) => skill::run(cx, a),
+        Command::Git(a) => git::run(cx, a),
         Command::Hook(_) => unreachable!("answered above"),
     }
 }

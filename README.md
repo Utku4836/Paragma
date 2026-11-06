@@ -26,6 +26,8 @@ pg setup
 
 That is all. `npm` fetches the build of `pg` for your computer (Windows, macOS or Linux, on x64 or arm64) and checks it against the release's SHA-256 sums. It needs Node 18 or later. `pg setup` then opens a small screen where you pick your coding agents and where Paragma should be read: in every conversation, or only in one project's folder.
 
+A newer npm may warn that `paragma` has install scripts not covered by `allowScripts`. That is fine: the first `pg` call fetches the binary instead.
+
 <details>
 <summary>Without npm</summary>
 
@@ -33,7 +35,7 @@ Download `pg` for your platform from the [releases](https://github.com/Utku4836/
 
 </details>
 
-Your memory lives in `~/.paragma`, outside your repositories. Paragma never opens a network connection; the search model is built into `pg`.
+Your memory lives in `~/.paragma`, outside your repositories. Paragma works offline; the search model is built into `pg`. Only `pg git`, once you connect it, talks to GitHub.
 
 ## Why
 
@@ -157,13 +159,25 @@ pg run -- npm publish --token '$NPM_PUBLISH_TOKEN'
 
 `pg run` puts the value in place itself, on every platform, and prints `$NPM_PUBLISH_TOKEN` again wherever the value would appear in the output. Keys pasted into notes are masked and not kept. In a test with 50 keys and ten requests in plain words, the right key came first every time and was used through `pg run` without its value appearing in any output.
 
+### Backup and sync
+
+```bash
+pg git
+```
+
+Opens a small screen: sign in to GitHub (with the GitHub CLI or the sign-in git already has, else in the browser with a code), then choose where the memory goes: a new private repository (`paragma-memory`), or one you have, in a `Paragma/` folder on its own branch or on its main branch. Choosing a public repository asks first. The `.env` files go only if you say so, and never to a public repository.
+
+From then on every change goes there by itself, a few seconds after it is made, in the background: the agent never waits for it. What other computers sent comes in the same way. On a new computer, `pg git` finds the memory in your repositories (your own and your organizations') and restores it, joined with whatever is already there. The indexes and the short-lived state in `.pg/` never go; they are rebuilt.
+
+Run `pg git` again to see the account, the repository and the last sync, to change the `.env` setting, to move the memory to another repository (other computers follow by themselves) or to disconnect. Without a terminal: `pg git connect --new`, `pg git status`, `pg git sync`, `pg git env on|off`, `pg git move --repo owner/name`, `pg git disconnect`.
+
 ## How it works
 
 - **Plain Markdown.** Each project is a folder in `~/.paragma/projects/`: `project.md` (goal, steps, handoffs), `rules.md`, `decisions/`, `errors/` and any notes you like. Open it in any editor; edits are picked up on the next call.
 - **Hybrid search.** Full-text search (SQLite FTS5) and meaning search with a multilingual embedding model built into the binary ([potion-multilingual-128M](https://huggingface.co/minishlab/potion-multilingual-128M), reduced to Latin scripts and 4-bit), merged by rank. A question in Turkish finds a note written in English.
 - **Code awareness.** Paragma reads 20 programming languages, the shading languages (WGSL, GLSL, HLSL), SQL, GraphQL, Protobuf, Dockerfiles, CI and compose files, Vue and Svelte: files, functions, types, what each function calls. Shaders and queries kept in strings (``/* wgsl */ `...` ``, ``sql`...` ``) are read as their language, and Markdown documents by their sections, so the brief and `pg find` name the section to read. Notes are linked to code by path and symbol, and record the state of the code when they were written, so a note says when it may be out of date.
 - **Records that merge.** Writing a rule, decision or error that is already known updates the existing one instead of adding a copy; a decision that contradicts an earlier one is pointed out.
-- **One binary.** `pg` is written in Rust: no runtime, no server, no network. The indexes next to the notes can be deleted at any time and are rebuilt.
+- **One binary.** `pg` is written in Rust: no runtime, no server, and no network unless you connect `pg git` (it uses git and curl). The indexes next to the notes can be deleted at any time and are rebuilt.
 
 ## How it is tested
 

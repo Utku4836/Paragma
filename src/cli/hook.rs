@@ -82,6 +82,10 @@ pub fn run(a: Args) -> Result<()> {
         Ok(None) => {}
         Err(e) => log(&format!("{} {}: {e:#}", agent.id(), event_name(&input))),
     }
+    // the start brings in what other computers sent; the end sends
+    if matches!(event_name(&input).as_str(), "SessionStart" | "Stop") {
+        crate::sync::trigger(&crate::project::Home::locate());
+    }
     Ok(())
 }
 

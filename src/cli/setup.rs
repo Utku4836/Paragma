@@ -174,7 +174,7 @@ pub struct Style {
 }
 
 impl Style {
-    fn new() -> Style {
+    pub(super) fn new() -> Style {
         let on =
             std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() && terminal::enable_colours();
         Style { on }
