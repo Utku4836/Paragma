@@ -155,6 +155,11 @@ fn dispatch(cli: Cli) -> Result<()> {
         cli.command,
         Command::Open(_) | Command::Finish(_) | Command::Write(_) | Command::Mv(_) | Command::Rm(_)
     );
+    // started before too: a command that stops early (its output closed)
+    // still syncs; the sync waits for a quiet moment anyway
+    if syncs {
+        crate::sync::trigger(&cx.home);
+    }
     let result = run_command(&cx, cli.command);
     if syncs {
         crate::sync::trigger(&cx.home);
