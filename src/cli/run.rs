@@ -168,6 +168,12 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             b.add(&format!("library: {h}"));
         }
     }
+    // a change that left callers as they were, passing or not (pg ripple)
+    if let Some(c) = &code {
+        for w in super::ripple::warnings(project, c, None, false) {
+            b.add(&format!("ripple: {w}"));
+        }
+    }
     let tests_seen = run.passed > 0 || !run.failing.is_empty();
     if exit != 0 && run.errors.is_empty() {
         tail(&mut b, &output, 30); // nothing understood: the output says it best

@@ -11,6 +11,7 @@ mod ls;
 mod mv;
 mod open;
 mod read;
+mod ripple;
 mod rm;
 mod run;
 mod screen;
@@ -63,6 +64,8 @@ enum Command {
     Run(run::Args),
     /// The map of the project's code: files and their symbols, with the notes about them marked
     Tree(tree::Args),
+    /// What a change reaches: callers it left as they were, the tests to run (or what reaches one function)
+    Ripple(ripple::Args),
     /// Projects, or the folders and notes of a project
     Ls(ls::Args),
     /// Rename or move a note, a folder or a project
@@ -168,6 +171,7 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Write(a) => write::run(cx, *a),
         Command::Run(a) => run::run(cx, a),
         Command::Tree(a) => tree::run(cx, a),
+        Command::Ripple(a) => ripple::run(cx, a),
         Command::Ls(a) => ls::run(cx, a),
         Command::Mv(a) => mv::run(cx, a),
         Command::Rm(a) => rm::run(cx, a),

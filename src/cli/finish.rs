@@ -63,6 +63,8 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         None => Vec::new(),
     };
     let last_run = state.my_last_run()?;
+    // a change that left callers as they were: in the handoff too
+    let ripples = code.as_ref().map(|c| super::ripple::warnings(project, c, None, true)).unwrap_or_default();
     let work = super::open::work_folder(cx, &project.name);
     let folder = work.rsplit(['/', '\\']).next().unwrap_or("").to_string();
     let heading = if folder.is_empty() { date_time(now()) } else { format!("{} · {folder}", date_time(now())) };
@@ -113,6 +115,9 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         {
             text.push_str(&format!("\nChanged: {}", list(c, &changes)));
         }
+        if !ripples.is_empty() {
+            text.push_str(&format!("\nLeft as they were after a change: {}", ripples.join("; ")));
+        }
         if let Some(r) = &last_run {
             text.push_str(&format!("\nTests: {}", testrun::describe(r)));
         }
@@ -157,6 +162,12 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             for (l, via) in about.iter().take(NOTES_SHOWN) {
                 println!("{} {}: {}{via}", l.id, l.kind.as_str(), one_line(&l.text, 90));
             }
+        }
+    }
+    if !ripples.is_empty() {
+        println!("not updated after a change (finish it, or say so in the handoff):");
+        for r in &ripples {
+            println!("{r}");
         }
     }
     match &last_run {

@@ -59,7 +59,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     {
         b.add(&format!("[{id} rule] {}#{}\n{}", row.path.trim_end_matches(".md"), c.heading, c.text));
         print!("{}", b.out);
-        shown_in_full(&project, id);
+        if let Ok(index) = Index::open(&project) {
+            shown_in_full(&project, &index, id);
+        }
         return Ok(());
     }
     b.add(&format!(
@@ -68,7 +70,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         row.kind.as_str(),
         row.path.trim_end_matches(".md")
     ));
-    let props = Index::open(&project)?.props_at(&row.path);
+    let index = Index::open(&project)?;
+    let props = index.props_at(&row.path);
     if let Some(w) = crate::code::stale::Staleness::new(&cx.home, &project).check(&props)? {
         b.add(&format!("({w})"));
     }
@@ -98,15 +101,15 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     print!("{}", b.out);
     if !row.id.is_empty() {
-        shown_in_full(&project, &row.id);
+        shown_in_full(&project, &index, &row.id);
     }
     Ok(())
 }
 
 /// Later searches in this conversation show it as one line, while it does
 /// not change.
-fn shown_in_full(project: &Project, id: &str) {
-    let version = Index::open(project).ok().and_then(|i| i.versions([id]).ok()).and_then(|v| v.get(id).copied());
+fn shown_in_full(project: &Project, index: &Index, id: &str) {
+    let version = index.versions([id]).ok().and_then(|v| v.get(id).copied());
     let _ = State::open(project).and_then(|s| s.shown_in_full(&[(id.to_string(), version.unwrap_or(0))]));
 }
 
@@ -172,6 +175,7 @@ fn read_code(cx: &Context, target: &str) -> Result<Option<String>> {
     let Some((folder, path)) = code.file(file)? else { return Ok(None) };
     let shown = code.display(&folder, &path);
     let mut b = Budget::new(cx.budget);
+    let mut after: Vec<String> = Vec::new();
     let (from, to) = match (symbol, range) {
         (Some(name), _) => {
             let symbols = code.symbols_of(&folder, &path)?;
@@ -186,6 +190,14 @@ fn read_code(cx: &Context, target: &str) -> Result<Option<String>> {
             for n in notes.about(&path, Some(&s.qualified)) {
                 b.add(&format!("note {} {}: {}", n.id, n.kind.as_str(), crate::output::one_line(&n.text, 100)));
             }
+            // what calls it and tests it, said after its code
+            if let Ok(r) = crate::code::ripple::of_symbol(&code, s) {
+                after = crate::code::ripple::show(&code, &r, 4)
+                    .into_iter()
+                    .skip(1)
+                    .map(|l| l.trim_start().to_string())
+                    .collect();
+            }
             (s.start, s.end)
         }
         (None, Some(r)) => {
@@ -198,6 +210,9 @@ fn read_code(cx: &Context, target: &str) -> Result<Option<String>> {
         }
     };
     print_lines(&code, &folder, &path, (from, to), &mut b, cx.budget, &shown)?;
+    for l in &after {
+        b.add(l);
+    }
     Ok(Some(b.out))
 }
 

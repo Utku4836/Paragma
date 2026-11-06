@@ -12,6 +12,11 @@ description: Use when changing code with Paragma memory - finding where things a
 - Shaders and queries kept in strings (`/* wgsl */` or `glsl`, `sql`, `gql` tags) are code too: `pg find groundAt` finds `sea.ts#SEA_SHADER.groundAt`. So are SQL, GraphQL and Protobuf files, Dockerfile stages and CI jobs.
 - Documents have sections: `docs:` in the brief and `[doc]` in `pg find` name the one to read; `pg read README.md#Install` reads only it.
 
+## Before and after a change
+- What reaches a function before you change it: `pg ripple Refund` (or `pg ripple payments/refund.go#Refund`): who calls it, which tests reach it, the notes about it. `pg read <file>#Function` shows the callers and tests too.
+- After changing a signature, renaming or removing something: `pg ripple` lists what changed since the last commit and the callers left as they were (`not updated:`), and the tests to run. A shader struct, GraphQL or Protobuf type or SQL table whose fields changed lists the other code that names it or its old fields (possible).
+- `pg run`, the hooks after an edit and `pg finish` say it by themselves once (`ripple: ...`). Update those callers, or say in the handoff why not.
+
 ## Libraries
 - Not sure how a library is called at the version this project locks? `pg find "<library> <names>"` (`pg find "tree_sitter Parser set_language"`): the real signature, its doc and example, the feature it needs and whether it is on, deprecation, its source file. From the source already on this computer (Rust, npm, Go, Python), no guessing from older versions.
 - `pg read <path>` (`pg read tree_sitter::Parser::set_language`) shows it with its code.

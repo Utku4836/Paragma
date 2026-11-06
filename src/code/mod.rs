@@ -8,6 +8,7 @@ pub mod git;
 pub mod lang;
 pub mod notes;
 pub mod parse;
+pub mod ripple;
 pub mod stale;
 pub mod text;
 pub mod work;

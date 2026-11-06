@@ -630,11 +630,7 @@ mod tests {
             cur: 0,
             top: 0,
             account: None,
-            repos: vec![
-                repo("me/notes-app", true),
-                repo("acme-org/billing", true),
-                repo("me/website", false),
-            ],
+            repos: vec![repo("me/notes-app", true), repo("acme-org/billing", true), repo("me/website", false)],
             search: String::new(),
             found: None,
             chosen: None,

@@ -10,6 +10,11 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+/// A file as it was in the last commit; None when it was not there.
+pub fn at_head(dir: &Path, path: &str) -> Option<String> {
+    git(dir, &["show", &format!("HEAD:./{path}")])
+}
+
 pub fn is_repo(dir: &Path) -> bool {
     dir.join(".git").exists()
 }
@@ -39,13 +44,24 @@ pub fn changed_ahead<P: AsRef<Path>>(dirs: impl IntoIterator<Item = P>) {
     }
 }
 
+/// What `changed` found in this run of pg: asked again (the brief, then
+/// pg ripple's warnings), git is not run again.
+static FOUND: std::sync::Mutex<Vec<(std::path::PathBuf, Changed)>> = std::sync::Mutex::new(Vec::new());
+
 /// Files changed since the last commit, with their changed lines.
 pub fn changed(dir: &Path) -> Changed {
-    let started = AHEAD.lock().ok().and_then(|mut a| a.iter().position(|(x, _)| x == dir).map(|i| a.swap_remove(i).1));
-    if let Some(Ok(found)) = started.map(|h| h.join()) {
-        return found;
+    if let Some(known) = FOUND.lock().ok().and_then(|f| f.iter().find(|(d, _)| d == dir).map(|(_, c)| c.clone())) {
+        return known;
     }
-    find_changed(dir)
+    let started = AHEAD.lock().ok().and_then(|mut a| a.iter().position(|(x, _)| x == dir).map(|i| a.swap_remove(i).1));
+    let found = match started.map(|h| h.join()) {
+        Some(Ok(found)) => found,
+        _ => find_changed(dir),
+    };
+    if let Ok(mut f) = FOUND.lock() {
+        f.push((dir.to_path_buf(), found.clone()));
+    }
+    found
 }
 
 fn find_changed(dir: &Path) -> Changed {

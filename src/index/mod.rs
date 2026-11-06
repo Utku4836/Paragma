@@ -41,6 +41,7 @@ CREATE TABLE chunks(
     vec BLOB
 );
 CREATE INDEX chunks_path ON chunks(path);
+CREATE INDEX chunks_ref ON chunks(ref);
 CREATE VIRTUAL TABLE chunks_fts USING fts5(title, heading, text, tokenize = 'unicode61 remove_diacritics 2');
 ";
 
@@ -91,6 +92,8 @@ impl Index {
         };
         let wanted = format!("{SCHEMA_VERSION}/{}", crate::embed::fingerprint());
         if version(&self.db).as_deref() == Some(wanted.as_str()) {
+            // pieces by their id: what a conversation was shown (versions)
+            self.db.execute_batch("CREATE INDEX IF NOT EXISTS chunks_ref ON chunks(ref);")?;
             return Ok(());
         }
         // one process builds it; the others wait for the write lock and find it done

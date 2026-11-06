@@ -445,7 +445,22 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         for f in &edited {
             state.event("edit", f, "")?;
         }
-        return after_edit(project, &state);
+        let mut text = after_edit(project, &state)?;
+        // the edit changed a function's shape and left its callers as they were
+        if let Some(code) = crate::code::notes::open(&cx.home, project)? {
+            let folders = crate::state::links::Links::load(&cx.home).folders_of(&project.name);
+            let files: Vec<(String, String)> =
+                edited.iter().filter_map(|f| relative(&folders, &cx.cwd.join(f))).collect();
+            let left = super::ripple::warnings(project, &code, Some(&files), false);
+            if !left.is_empty() {
+                let said = format!("Paragma: this change leaves code that calls it as it was:\n{}", left.join("\n"));
+                text = Some(match text {
+                    Some(t) => format!("{t}\n{said}"),
+                    None => said,
+                });
+            }
+        }
+        return Ok(text);
     }
     if tool != "Bash" {
         return Ok(None);
