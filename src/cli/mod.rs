@@ -216,6 +216,16 @@ pub fn mask_all<'a>(texts: impl IntoIterator<Item = &'a mut String>) -> Option<S
 }
 
 impl Context {
+    /// The code folders linked to a project.
+    pub fn code_dirs(&self, project: &Project) -> Vec<PathBuf> {
+        Links::load(&self.home)
+            .folders_of(&project.name)
+            .into_iter()
+            .map(PathBuf::from)
+            .filter(|d| d.is_dir())
+            .collect()
+    }
+
     /// The command's project, or an error saying how to pick one.
     pub fn need_project(&self) -> Result<&Project> {
         self.project.as_ref().ok_or_else(|| fail(USAGE, "no project here: pass --project <name> (projects: pg ls)"))

@@ -5,7 +5,7 @@
 
 mod dedup;
 mod glossary;
-mod query;
+pub mod query;
 mod rank;
 
 pub use query::words as words_of;

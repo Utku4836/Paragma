@@ -373,11 +373,39 @@ fn since_last(cx: &Context, project: &Project, state: &State, now: i64) -> Resul
     Ok((!parts.is_empty()).then(|| format!("since the last handoff ({}): {}", ago(at, now), parts.join("; "))))
 }
 
+/// The libraries the goal and steps name, at the versions used here, and
+/// those upgraded since the last brief with what changed in what the code
+/// calls.
+fn libraries_part(b: &mut Budget, code: &CodeIndex, query: &str) {
+    let dirs: Vec<std::path::PathBuf> = code.folders.iter().map(|f| f.dir.clone()).collect();
+    let home = crate::project::Home::locate();
+    let called = code.called().unwrap_or_default();
+    for line in crate::libs::upgrades(&home, &dirs, &called).unwrap_or_default() {
+        b.add(&line);
+    }
+    let deps = crate::libs::of_folders(&dirs);
+    let words: Vec<&str> =
+        query.split(|c: char| c.is_whitespace() || c == ',' || c == '.' || c == '(' || c == ')').collect();
+    let named: Vec<String> = deps
+        .iter()
+        .filter(|d| d.direct && words.iter().any(|w| w.chars().count() >= 3 && d.named_by(w)))
+        .map(|d| format!("{} {}", d.name, d.version))
+        .collect();
+    if let Some(first) = deps.iter().find(|d| named.iter().any(|n| n.starts_with(&format!("{} ", d.name)))) {
+        b.add(&format!(
+            "libraries: {} (their real API at these versions: pg find \"{} <name>\")",
+            named.join(", "),
+            first.code_name()
+        ));
+    }
+}
+
 fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Result<()> {
     let stack: Vec<String> = code.folders.iter().flat_map(|f| work::stack(&f.dir)).collect();
     if !stack.is_empty() {
         b.add(&format!("stack: {}", stack.join("; ")));
     }
+    libraries_part(b, code, query);
     let used = state.commands(4)?;
     if !used.is_empty() {
         let list: Vec<String> = used

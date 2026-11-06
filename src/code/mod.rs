@@ -22,8 +22,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Bumped whenever the tables, the parsing or the files read change
-/// (4: files marked linguist-vendored or -generated are left out).
-const SCHEMA_VERSION: &str = "4";
+/// (4: files marked linguist-vendored or -generated are left out; 5: Rust
+/// constants, statics and macros).
+const SCHEMA_VERSION: &str = "5";
 
 const SCHEMA: &str = "
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
@@ -332,6 +333,16 @@ impl CodeIndex {
     }
 
     /// Symbols that call `name`.
+    /// Every name the code calls.
+    pub fn called(&self) -> Result<std::collections::HashSet<String>> {
+        let mut st = self.db.prepare("SELECT calls FROM symbols WHERE calls != ''")?;
+        let mut out = std::collections::HashSet::new();
+        for r in st.query_map([], |r| r.get::<_, String>(0))? {
+            out.extend(r?.split_whitespace().map(str::to_string));
+        }
+        Ok(out)
+    }
+
     pub fn callers(&self, name: &str) -> Result<Vec<Sym>> {
         let like = format!("% {name} %");
         let rows = self.query(&format!("{SELECT} WHERE ' ' || calls || ' ' LIKE ?1"), params![like])?;

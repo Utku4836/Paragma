@@ -37,7 +37,16 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                 print!("{done}");
                 return Ok(());
             }
-            None => return Err(e),
+            // a library's item: tree_sitter::Parser::new
+            None => {
+                match cx.project.as_ref().map(|p| crate::libs::read(&cx.home, &cx.code_dirs(p), &a.target, cx.budget)) {
+                    Some(Ok(Some(done))) => {
+                        print!("{done}");
+                        return Ok(());
+                    }
+                    _ => return Err(e),
+                }
+            }
         },
     };
     let note = Note::parse(&files::read_text(&project.dir.join(&row.path))?);

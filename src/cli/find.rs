@@ -66,6 +66,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         crate::output::mark("find: code lines");
         code.extend(doc_lines(cx, &projects[0], &query));
         crate::output::mark("find: doc lines");
+        code.extend(lib_lines(cx, &projects[0], &query));
+        crate::output::mark("find: libraries");
     }
     if hits.is_empty() && code.is_empty() {
         return Err(fail(NOTHING_FOUND, format!("no results for {query:?}")));
@@ -152,6 +154,18 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     Ok(())
 }
+
+/// Library items the query names (`tree_sitter Parser new`), at the
+/// version the project uses: the first ones in full.
+fn lib_lines(cx: &Context, project: &Project, query: &str) -> Vec<String> {
+    let dirs = cx.code_dirs(project);
+    let Ok(found) = crate::libs::find(&cx.home, &dirs, query, LIB_ITEMS) else { return Vec::new() };
+    found.iter().enumerate().map(|(i, f)| crate::libs::show(f, i >= LIB_IN_FULL)).collect()
+}
+
+/// Library items listed, and how many of them in full.
+const LIB_ITEMS: usize = 6;
+const LIB_IN_FULL: usize = 2;
 
 /// How close in meaning a section of the project's documents must be to
 /// be listed.

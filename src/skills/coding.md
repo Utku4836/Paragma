@@ -12,6 +12,12 @@ description: Use when changing code with Paragma memory - finding where things a
 - Shaders and queries kept in strings (`/* wgsl */` or `glsl`, `sql`, `gql` tags) are code too: `pg find groundAt` finds `sea.ts#SEA_SHADER.groundAt`. So are SQL, GraphQL and Protobuf files, Dockerfile stages and CI jobs.
 - Documents have sections: `docs:` in the brief and `[doc]` in `pg find` name the one to read; `pg read README.md#Install` reads only it.
 
+## Libraries
+- Not sure how a library is called at the version this project locks? `pg find "<library> <names>"` (`pg find "tree_sitter Parser set_language"`): the real signature, its doc and example, the feature it needs and whether it is on, deprecation, its source file. From the source already on this computer (Rust, npm, Go, Python), no guessing from older versions.
+- `pg read <path>` (`pg read tree_sitter::Parser::set_language`) shows it with its code.
+- A build that fails on a name the library does not have: `pg run` adds `library: ... has no X; it has Y` with the right signature.
+- The brief: `libraries:` the ones the goal names, `upgraded:` what changed in what this code calls after an upgrade.
+
 ## Test
 - `pg run -- <test command>` instead of running it directly: failing tests marked new, failing already or flaky; each error line with the function it points at and the fix memory has (from this project or another). Fixed tests are named too. It exits with the command's exit code.
 - The brief names the tests to run first for the likely code (`go test ./payments/`).

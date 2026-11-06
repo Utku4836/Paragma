@@ -481,6 +481,10 @@ fn kind_of(k: &str) -> Option<&'static str> {
         "module"
     } else if k == "type_spec" || k == "type_item" || has("type_alias") {
         "type"
+    } else if k == "const_item" || k == "static_item" {
+        "const" // Rust: tree_sitter_rust::LANGUAGE
+    } else if k == "macro_definition" {
+        "macro"
     } else {
         return None;
     })

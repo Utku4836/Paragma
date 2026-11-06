@@ -162,6 +162,12 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             }
         }
     }
+    if exit != 0 {
+        // a name the build looked for in a library: what the library has
+        for h in crate::libs::hints(&cx.home, &cx.code_dirs(project), &output).unwrap_or_default() {
+            b.add(&format!("library: {h}"));
+        }
+    }
     let tests_seen = run.passed > 0 || !run.failing.is_empty();
     if exit != 0 && run.errors.is_empty() {
         tail(&mut b, &output, 30); // nothing understood: the output says it best
