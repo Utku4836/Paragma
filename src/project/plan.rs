@@ -101,6 +101,42 @@ pub fn close_number(note: &mut Note, n: usize) -> Option<String> {
     Some(text)
 }
 
+/// Ticks off the one open step whose text holds `part` (in any case): its
+/// text; Err with how many open steps hold it when not exactly one does.
+pub fn close_part(note: &mut Note, part: &str) -> Result<String, usize> {
+    let part = part.trim().to_lowercase();
+    let mut steps = steps(note);
+    let hits: Vec<usize> = (0..steps.len())
+        .filter(|&i| !steps[i].done && !part.is_empty() && steps[i].text.to_lowercase().contains(&part))
+        .collect();
+    let [i] = hits[..] else { return Err(hits.len()) };
+    steps[i].done = true;
+    let text = steps[i].text.clone();
+    set_steps(note, &steps);
+    Ok(text)
+}
+
+/// Takes the step with this number (from 1, done steps counted) out of
+/// the plan: its text, or None when there is no such step. The steps
+/// after it move up one number.
+pub fn drop_number(note: &mut Note, n: usize) -> Option<String> {
+    let mut steps = steps(note);
+    let i = n.checked_sub(1).filter(|&i| i < steps.len())?;
+    let s = steps.remove(i);
+    set_steps(note, &steps);
+    Some(s.text)
+}
+
+/// Rewrites the step with this number: its old text, or None when there
+/// is no such step.
+pub fn edit_number(note: &mut Note, n: usize, text: &str) -> Option<String> {
+    let mut steps = steps(note);
+    let s = steps.get_mut(n.checked_sub(1)?)?;
+    let old = std::mem::replace(&mut s.text, text.trim().to_string());
+    set_steps(note, &steps);
+    Some(old)
+}
+
 /// Handoffs, newest first.
 pub fn handoffs(note: &Note) -> Vec<Handoff> {
     let section = note.section("Handoffs").unwrap_or_default();
@@ -150,6 +186,27 @@ mod tests {
         );
         assert_eq!(goal(&n), "Refunds through the new provider.");
         assert_eq!(steps(&n).iter().filter(|s| !s.done).count(), 1);
+    }
+
+    #[test]
+    fn steps_by_part_dropped_and_rewritten() {
+        let mut n = Note::default();
+        for s in ["Add the client", "Move refunds to the client", "Remove the old provider", "x"] {
+            add_step(&mut n, s);
+        }
+        // a part two open steps hold closes none
+        assert_eq!(close_part(&mut n, "the client"), Err(2));
+        assert_eq!(close_part(&mut n, "nothing like it"), Err(0));
+        assert_eq!(close_part(&mut n, "MOVE REFUNDS").as_deref(), Ok("Move refunds to the client"));
+        assert_eq!(close_part(&mut n, "the client").as_deref(), Ok("Add the client"));
+        assert_eq!(drop_number(&mut n, 4).as_deref(), Some("x"));
+        assert_eq!(drop_number(&mut n, 4), None);
+        assert_eq!(
+            edit_number(&mut n, 3, "Remove the old provider and its keys").as_deref(),
+            Some("Remove the old provider")
+        );
+        let texts: Vec<String> = steps(&n).into_iter().map(|s| s.text).collect();
+        assert_eq!(texts, ["Add the client", "Move refunds to the client", "Remove the old provider and its keys"]);
     }
 
     #[test]

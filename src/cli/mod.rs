@@ -18,6 +18,7 @@ mod screen;
 mod setup;
 mod setup_screen;
 mod skill;
+mod steps;
 mod target;
 mod tree;
 mod write;
@@ -32,6 +33,7 @@ use std::process::ExitCode;
 #[derive(Parser)]
 #[command(
     name = "pg",
+    bin_name = "pg",
     version,
     about = "Paragma: project memory for coding agents (rules, decisions, errors and their fixes, notes)"
 )]
@@ -54,6 +56,8 @@ enum Command {
     Open(open::Args),
     /// End this conversation's work: tick off its steps, save its handoff for the next one
     Finish(finish::Args),
+    /// The project's steps with their numbers (as pg finish --done takes them); --drop or --edit one
+    Steps(steps::Args),
     /// Search memory: a topic, a question, an error line, a file or a code name
     Find(find::Args),
     /// Print a note (id, path), one rule, or code: file#Function, file:10-20
@@ -154,7 +158,7 @@ fn dispatch(cli: Cli) -> Result<()> {
     let syncs = matches!(
         cli.command,
         Command::Open(_) | Command::Finish(_) | Command::Write(_) | Command::Mv(_) | Command::Rm(_)
-    );
+    ) || matches!(&cli.command, Command::Steps(a) if a.changes());
     // started before too: a command that stops early (its output closed)
     // still syncs; the sync waits for a quiet moment anyway
     if syncs {
@@ -171,6 +175,7 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
     match command {
         Command::Open(a) => open::run(cx, a),
         Command::Finish(a) => finish::run(cx, a),
+        Command::Steps(a) => steps::run(cx, a),
         Command::Find(a) => find::run(cx, a),
         Command::Read(a) => read::run(cx, a),
         Command::Write(a) => write::run(cx, *a),

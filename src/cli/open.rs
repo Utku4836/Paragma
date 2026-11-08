@@ -251,7 +251,7 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
             b.add(&format!("- [ ] {}. {}", i + 1, s.text));
         }
         if open.len() > STEPS_SHOWN {
-            b.add(&format!("+{} more: pg read {}/project", open.len() - STEPS_SHOWN, project.name));
+            b.add(&format!("+{} more: pg steps", open.len() - STEPS_SHOWN));
         }
     }
     let handoffs = plan::handoffs(&note);

@@ -28,6 +28,14 @@ use anyhow::Result;
 use std::io::Read;
 
 #[derive(clap::Args)]
+#[command(after_help = "Examples:
+  pg write setup/dev-server \"How the dev server starts: ...\"   a note (made or replaced)
+  pg write setup/dev-server --append \"One more thing\"
+  pg write setup/dev-server --file notes.md
+  pg write --rule \"Tests run with --release\" --group Tests
+  pg write --decision \"Postgres, not SQLite\" --why \"several writers\"
+  pg write --error \"<the error line>\" --cause \"...\" --fix \"...\"
+  pg write --secret \"Stripe key\" sk_test_...   then $STRIPE_KEY in pg run")]
 pub struct Args {
     /// Where: note, folder/ or project/ (a name ending in '/' is a folder)
     path: Option<String>,

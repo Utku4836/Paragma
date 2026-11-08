@@ -13,11 +13,11 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - A short question or one-off task needs no project: `pg find` searches every project.
 
 ## While working
-- More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`.
+- More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`. All steps with their numbers: `pg steps` (`--all` with the done ones); one gone stale or wrong: `pg steps --drop 7` or `pg steps --edit 7 "new text"`.
 - Decisions, rules, errors as you learn them: `pg skill knowledge`.
 
 ## Finish
-- `pg finish "<what was done; what is next>" --done 1,2 --left "<new step for later>"`: ticks off the steps you finished (their numbers in the brief; `--done all`), adds new steps for later, writes this conversation's handoff with what it wrote, the code it changed and the last test run. Steps not done stay open for the next conversation. Finishing again replaces this conversation's handoff; other conversations' are kept.
+- `pg finish "<what was done; what is next>" --done 1,2 --left "<new step for later>"`: ticks off the steps you finished (their numbers from the brief or `pg steps`, words only that step has, or `--done all`; one that closes nothing is said), adds new steps for later, writes this conversation's handoff with what it wrote, the code it changed and the last test run. Steps not done stay open for the next conversation. Finishing again replaces this conversation's handoff; other conversations' are kept.
 
 ## Notes and folders
 - A note: `pg write <folder>/<name> "text"` (`--append` adds below; `-` reads stdin, `--file PATH` a file). A folder: `pg write <folder>/`. In another project: `pg write <project>/<path> "..."`.

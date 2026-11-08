@@ -142,6 +142,7 @@ pg write --decision "..." --why "..." --alternatives "..."
 pg write --error "<error line>" --cause "..." --fix "..."
 pg write payments/provider --file notes.md      # a note; long text from a file or stdin (-)
 pg finish --done 1 "what changed, what is next"  # tick off steps, leave the handoff
+pg steps                             # the steps with their numbers (--drop 4, --edit 4 "text")
 pg ripple                            # what a change reaches: callers left as they were, tests to run
 pg tree                              # the code: files and symbols, with the notes about them marked
 pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor
@@ -166,7 +167,7 @@ pg run -- npm publish --token '$NPM_PUBLISH_TOKEN'
 pg git
 ```
 
-Opens a small screen: sign in to GitHub (with the GitHub CLI or the sign-in git already has, else in the browser with a code), then choose where the memory goes: a new private repository (`paragma-memory`), or one you have, in a `Paragma/` folder on its own branch or on its main branch. Choosing a public repository asks first. The `.env` files go only if you say so, and never to a public repository.
+Opens a small screen: sign in to GitHub (with the GitHub CLI or the sign-in git already has, else in the browser with a code), then choose where the memory goes: a new private repository (`paragma-memory`, of your account or of one of its organizations), or one you have, in a `Paragma/` folder on its own branch or on its main branch. Choosing a public repository asks first. The `.env` files go only if you say so, and never to a public repository.
 
 From then on every change goes there by itself, a few seconds after it is made, in the background: the agent never waits for it. What other computers sent comes in the same way. On a new computer, `pg git` finds the memory in your repositories (your own and your organizations') and restores it, joined with whatever is already there. The indexes and the short-lived state in `.pg/` never go; they are rebuilt.
 
