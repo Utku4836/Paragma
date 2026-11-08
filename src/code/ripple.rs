@@ -61,6 +61,9 @@ pub struct Ripple {
     /// Schemas: other code that names the type or a field it lost, as
     /// file and line (all "possible").
     pub users: Vec<(String, String, usize)>,
+    /// A Rust item that is not `pub`: only its own module (this file and
+    /// the modules under it) can call it.
+    pub private: bool,
 }
 
 impl Ripple {
@@ -161,6 +164,7 @@ pub fn of_changes(code: &CodeIndex, only: Option<&[(String, String)]>) -> Result
                 callers: Vec::new(),
                 tests: Vec::new(),
                 users: Vec::new(),
+                private: rust_private(lang, &before, &b.qualified, &b.signature),
             };
             fill(code, &mut r, &changed_lines)?;
             if let How::Fields { removed, .. } = &r.how {
@@ -176,6 +180,18 @@ pub fn of_changes(code: &CodeIndex, only: Option<&[(String, String)]>) -> Result
 
 /// What reaches one symbol as it is now (`pg ripple Refund`).
 pub fn of_symbol(code: &CodeIndex, s: &Sym) -> Result<Ripple> {
+    let private = match Lang::of(&s.path) {
+        Some(lang @ Lang::Rust) => {
+            let text = code
+                .folders
+                .iter()
+                .find(|f| f.key == s.folder)
+                .and_then(|f| std::fs::read_to_string(f.dir.join(&s.path)).ok())
+                .unwrap_or_default();
+            rust_private(lang, &parse::symbols(lang, &text), &s.qualified, &s.signature)
+        }
+        _ => false,
+    };
     let mut r = Ripple {
         folder: s.folder.clone(),
         path: s.path.clone(),
@@ -186,6 +202,7 @@ pub fn of_symbol(code: &CodeIndex, s: &Sym) -> Result<Ripple> {
         callers: Vec::new(),
         tests: Vec::new(),
         users: Vec::new(),
+        private,
     };
     let mut lines = HashMap::new();
     for f in &code.folders {
@@ -195,6 +212,20 @@ pub fn of_symbol(code: &CodeIndex, s: &Sym) -> Result<Ripple> {
     }
     fill(code, &mut r, &lines)?;
     Ok(r)
+}
+
+/// Whether a Rust item is not `pub` and so not callable from other modules:
+/// not a method of a trait or of a trait's impl, which have no `pub` of
+/// their own.
+fn rust_private(lang: Lang, syms: &[parse::Symbol], qualified: &str, signature: &str) -> bool {
+    if lang != Lang::Rust || signature.trim_start().starts_with("pub") {
+        return false;
+    }
+    match qualified.rsplit_once('.') {
+        None => true,
+        // "Page<'_>.matching"; a trait impl's is "Money Display.fmt"
+        Some((owner, _)) => !owner.contains(' ') && !syms.iter().any(|t| t.kind == "trait" && t.qualified == owner),
+    }
 }
 
 /// The language of a type's fields, when it is a schema: a shader struct
@@ -316,8 +347,20 @@ fn fill(code: &CodeIndex, r: &mut Ripple, changed: &HashMap<(String, String), Ve
     let mut texts: HashMap<(String, String), String> = HashMap::new();
     let definer_stem = r.path.rsplit('/').next().unwrap_or(&r.path).split('.').next().unwrap_or("").to_string();
     let definer_dir = r.path.rsplit_once('/').map(|p| p.0.to_string()).unwrap_or_default();
+    // a Rust item that is not pub: its module and the ones under it (the
+    // folder of a mod.rs, lib.rs or main.rs; the folder named as a file)
+    let under = if definer_stem == "mod" || definer_stem == "lib" || definer_stem == "main" {
+        definer_dir.clone()
+    } else {
+        r.path.rsplit_once('.').map(|p| p.0.to_string()).unwrap_or_default()
+    };
+    let reaches = |s: &Sym| {
+        !r.private
+            || (s.folder == r.folder
+                && (s.path == r.path || under.is_empty() || s.path.starts_with(&format!("{under}/"))))
+    };
     // a method is called by its own name: Refund, but also cart.Refund()
-    for s in code.callers(&r.name)?.into_iter().filter(|s| !itself(s)) {
+    for s in code.callers(&r.name)?.into_iter().filter(|s| !itself(s) && reaches(s)) {
         let updated = changed
             .get(&(s.folder.clone(), s.path.clone()))
             .is_some_and(|ranges| ranges.iter().any(|(a, b)| *a <= s.end && *b >= s.start));
@@ -329,8 +372,11 @@ fn fill(code: &CodeIndex, r: &mut Ripple, changed: &HashMap<(String, String), Ve
                 .and_then(|f| std::fs::read_to_string(f.dir.join(&s.path)).ok())
                 .unwrap_or_default()
         });
+        // the same file; in Go and Java also the same folder (one package,
+        // no import)
+        let package_dir = [".go", ".java", ".kt"].iter().any(|e| r.path.ends_with(e));
         let same_place = s.folder == r.folder
-            && (s.path == r.path || s.path.rsplit_once('/').map(|p| p.0).unwrap_or("") == definer_dir);
+            && (s.path == r.path || (package_dir && s.path.rsplit_once('/').map(|p| p.0).unwrap_or("") == definer_dir));
         // called through its package or module: pricing.WithTax, tax::with_tax
         let package = definer_dir.rsplit('/').next().unwrap_or("");
         let qualified_call = [package, definer_stem.as_str()]
