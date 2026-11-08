@@ -204,11 +204,43 @@ impl Account {
         }
     }
 
+    /// Where a new repository can be made: the account, then its
+    /// organizations (those GitHub lists, else those of the repositories).
+    pub fn owners(&self, repos: &[Repo]) -> Vec<String> {
+        let mut out = vec![self.login.clone()];
+        let mut add = |o: &str| {
+            if !o.is_empty() && !out.iter().any(|x| x.eq_ignore_ascii_case(o)) {
+                out.push(o.to_string());
+            }
+        };
+        match self.api("GET", "/user/orgs?per_page=100", None) {
+            Ok((200, v)) => {
+                for o in v.as_array().into_iter().flatten() {
+                    add(o["login"].as_str().unwrap_or(""));
+                }
+            }
+            // a sign-in that may not read organizations
+            _ => {
+                for r in repos.iter().filter(|r| !r.own) {
+                    add(r.full_name.split('/').next().unwrap_or(""));
+                }
+            }
+        }
+        out
+    }
+
     /// Makes a private repository for the memory, marked so it is found
-    /// again (`find_memory`).
+    /// again (`find_memory`). `name`: NAME (the account's) or OWNER/NAME
+    /// (an organization's).
     pub fn create(&self, name: &str) -> Result<Repo> {
+        let (owner, name) = name.split_once('/').unwrap_or((self.login.as_str(), name));
+        let path = if owner.eq_ignore_ascii_case(&self.login) {
+            "/user/repos".to_string()
+        } else {
+            format!("/orgs/{owner}/repos")
+        };
         let body = json!({ "name": name, "private": true, "description": "Paragma: project memory for coding agents", "auto_init": false });
-        let (code, v) = self.api("POST", "/user/repos", Some(body))?;
+        let (code, v) = self.api("POST", &path, Some(body))?;
         if code != 201 {
             bail!("GitHub: {}", error_of(&v, "could not make the repository"));
         }

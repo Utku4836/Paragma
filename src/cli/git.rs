@@ -5,6 +5,7 @@
 //! pg git                          the screen (in a terminal), else the status
 //! pg git connect                  sign in, find or choose the repository
 //! pg git connect --new            a new private repository: paragma-memory
+//! pg git connect --new acme-org/paragma-memory   a new one in an organization
 //! pg git connect --repo me/app    a Paragma/ folder in a repository (--no-branch: on its main branch)
 //! pg git status | sync | disconnect
 //! pg git env on|off               whether the .env files go too
@@ -53,8 +54,8 @@ pub struct Target {
     /// A repository you can push to: owner/name
     #[arg(long, value_name = "OWNER/NAME", conflicts_with = "new")]
     repo: Option<String>,
-    /// A new private repository (default name: paragma-memory)
-    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = NEW_REPO)]
+    /// A new private repository (default name: paragma-memory); OWNER/NAME makes it in an organization
+    #[arg(long, value_name = "[OWNER/]NAME", num_args = 0..=1, default_missing_value = NEW_REPO)]
     new: Option<String>,
     /// In a repository that holds other things: the memory on its own branch (paragma); default
     #[arg(long, conflicts_with = "no_branch")]

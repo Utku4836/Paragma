@@ -34,6 +34,14 @@ enum Screen {
     Done,
 }
 
+/// A row of the repository list.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Row {
+    /// A new private repository of this owner (in `owners`).
+    New(usize),
+    Repo(usize),
+}
+
 /// The rows of the connected screen.
 const ACTIONS: [&str; 5] = ["Sync now", ".env files", "Move to another repository", "Disconnect", "Quit"];
 
@@ -45,11 +53,15 @@ struct Page<'a> {
     top: usize,
     account: Option<Account>,
     repos: Vec<Repo>,
+    /// Where a new repository can be made: the account, its organizations.
+    owners: Vec<String>,
     search: String,
     /// The memory found in a repository, offered to restore.
     found: Option<(Repo, String, String)>,
-    /// Being chosen: the repository (None: a new one), its folder and branch.
+    /// Being chosen: the repository (None: a new one of `owner`), its
+    /// folder and branch.
     chosen: Option<Repo>,
+    owner: String,
     prefix: String,
     branch: String,
     /// What was answered about the .env files; None: not asked.
@@ -70,9 +82,11 @@ pub fn run(cx: &Context) -> Result<()> {
         top: 0,
         account: None,
         repos: Vec::new(),
+        owners: Vec::new(),
         search: String::new(),
         found: None,
         chosen: None,
+        owner: String::new(),
         prefix: String::new(),
         branch: String::new(),
         env: None,
@@ -161,8 +175,8 @@ impl Page<'_> {
                 let name_w = 44.min(width.saturating_sub(24)).max(20);
                 for (r, item) in shown.iter().enumerate().skip(self.top).take(rows) {
                     let text = match item {
-                        None => format!("{} {}", st.accent("+"), format_args!("New private repository: {NEW_REPO}")),
-                        Some(i) => {
+                        Row::New(_) => format!("{} New private repository: {}", st.accent("+"), self.new_name(*item)),
+                        Row::Repo(i) => {
                             let repo = &self.repos[*i];
                             let vis = if repo.private { st.dim("Private") } else { st.bad("Public") };
                             format!("{} {vis}", fit(&repo.full_name, name_w))
@@ -199,7 +213,7 @@ impl Page<'_> {
     }
 
     fn question(&self, a: Ask) -> (String, Vec<String>) {
-        let name = self.chosen.as_ref().map(|r| r.full_name.clone()).unwrap_or_else(|| NEW_REPO.to_string());
+        let name = self.chosen.as_ref().map(|r| r.full_name.clone()).unwrap_or_else(|| self.new_full_name());
         match a {
             Ask::SignIn => (
                 "Sign in to GitHub?".into(),
@@ -249,21 +263,49 @@ impl Page<'_> {
         }
     }
 
-    /// The rows of the repository list: None is "a new repository".
-    fn matching(&self) -> Vec<Option<usize>> {
+    /// The rows of the repository list: a new repository of each owner
+    /// first, then the repositories.
+    fn matching(&self) -> Vec<Row> {
         let words: Vec<String> = self.search.to_lowercase().split_whitespace().map(str::to_string).collect();
-        let mut out = Vec::new();
-        if words.is_empty() || "new private repository".contains(&self.search.to_lowercase()) {
-            out.push(None);
-        }
+        let fits = |text: &str| words.iter().all(|w| text.to_lowercase().contains(w.as_str()));
         let current = Config::load(&self.cx.home).map(|c| c.repo).unwrap_or_default();
+        let mut out = Vec::new();
+        for i in 0..self.owners.len().max(1) {
+            let full = self.owner_new(i);
+            // moving: not to the repository it is in
+            if fits(&format!("new private repository {full}")) && !(self.moving && full.eq_ignore_ascii_case(&current))
+            {
+                out.push(Row::New(i));
+            }
+        }
         for (i, r) in self.repos.iter().enumerate() {
-            let name = r.full_name.to_lowercase();
-            if (!self.moving || r.full_name != current) && words.iter().all(|w| name.contains(w.as_str())) {
-                out.push(Some(i));
+            if (!self.moving || r.full_name != current) && fits(&r.full_name) {
+                out.push(Row::Repo(i));
             }
         }
         out
+    }
+
+    /// OWNER/paragma-memory (paragma-memory when no owner is known).
+    fn owner_new(&self, i: usize) -> String {
+        match self.owners.get(i) {
+            Some(o) => format!("{o}/{NEW_REPO}"),
+            None => NEW_REPO.to_string(),
+        }
+    }
+
+    /// What a new repository row shows: its owner when there is more than
+    /// one to choose from.
+    fn new_name(&self, row: Row) -> String {
+        match row {
+            Row::New(i) if self.owners.len() > 1 => self.owner_new(i),
+            _ => NEW_REPO.to_string(),
+        }
+    }
+
+    /// The new repository being made, as `Account::create` takes it.
+    fn new_full_name(&self) -> String {
+        if self.owner.is_empty() { NEW_REPO.to_string() } else { format!("{}/{NEW_REPO}", self.owner) }
     }
 
     fn working(&mut self, what: &str) -> Result<()> {
@@ -308,6 +350,7 @@ impl Page<'_> {
     fn list_and_find(&mut self, a: &Account) -> Result<()> {
         self.working("reading your repositories…")?;
         self.repos = a.repos()?;
+        self.owners = a.owners(&self.repos);
         if !self.moving {
             self.working("looking for your Paragma memory…")?;
             self.found = a.find_memory(&self.repos)?;
@@ -386,7 +429,7 @@ impl Page<'_> {
                 }
                 _ if enter && n > 0 => {
                     let item = self.matching()[self.cur];
-                    self.choose(item.map(|i| self.repos[i].clone()))?;
+                    self.choose(item)?;
                 }
                 _ => {}
             },
@@ -450,17 +493,19 @@ impl Page<'_> {
     }
 
     /// A row of the repository list was chosen.
-    fn choose(&mut self, r: Option<Repo>) -> Result<()> {
+    fn choose(&mut self, row: Row) -> Result<()> {
         self.env = None;
-        match &r {
-            None => {
+        match row {
+            Row::New(i) => {
                 self.prefix = String::new();
                 self.branch = "main".into();
                 self.chosen = None;
+                self.owner = self.owners.get(i).cloned().unwrap_or_default();
                 self.go(Screen::Ask(Ask::Env));
             }
-            Some(repo) => {
-                self.chosen = r.clone();
+            Row::Repo(i) => {
+                let repo = &self.repos[i].clone();
+                self.chosen = Some(repo.clone());
                 let own = repo.full_name.rsplit('/').next() == Some(NEW_REPO)
                     || self.account.as_ref().is_some_and(|a| a.is_memory(repo));
                 self.prefix = if own { String::new() } else { FOLDER.to_string() };
@@ -558,13 +603,14 @@ impl Page<'_> {
 
     /// The config of what was chosen; a new repository is made here.
     fn target(&mut self) -> Result<Config> {
+        let new = self.new_full_name();
         if self.chosen.is_none() {
-            self.working(&format!("making the private repository {NEW_REPO}…"))?;
+            self.working(&format!("making the private repository {new}…"))?;
         }
         let Some(a) = self.account.as_ref() else { anyhow::bail!("not signed in to GitHub") };
         let repo = match &self.chosen {
             Some(r) => r.clone(),
-            None => a.create(NEW_REPO)?,
+            None => a.create(&new)?,
         };
         Ok(super::git::config_of(a, &repo, self.prefix.clone(), self.branch.clone(), self.env))
     }
@@ -631,9 +677,11 @@ mod tests {
             top: 0,
             account: None,
             repos: vec![repo("me/notes-app", true), repo("acme-org/billing", true), repo("me/website", false)],
+            owners: vec!["me".into(), "acme-org".into()],
             search: String::new(),
             found: None,
             chosen: None,
+            owner: String::new(),
             prefix: String::new(),
             branch: String::new(),
             env: None,
@@ -655,7 +703,9 @@ mod tests {
         let style = Style::plain();
         let mut p = page(&cx, &style);
         let list = p.view();
-        assert!(list.contains("New private repository: paragma-memory"), "{list}");
+        // a new repository of the account or of its organization
+        assert!(list.contains("New private repository: me/paragma-memory"), "{list}");
+        assert!(list.contains("New private repository: acme-org/paragma-memory"), "{list}");
         assert!(list.contains("me/notes-app") && list.contains("acme-org/billing"), "{list}");
         let public = list.lines().find(|l| l.contains("me/website")).unwrap();
         assert!(public.contains("Public"), "{public}");
@@ -665,11 +715,16 @@ mod tests {
         for c in "billing".chars() {
             p.key(Key::Char(c), &mut raw).unwrap();
         }
-        assert_eq!(p.matching(), vec![Some(1)]);
+        assert_eq!(p.matching(), vec![Row::Repo(1)]);
+        p.key(Key::Esc, &mut raw).unwrap();
+        for c in "acme".chars() {
+            p.key(Key::Char(c), &mut raw).unwrap();
+        }
+        assert_eq!(p.matching(), vec![Row::New(1), Row::Repo(1)]);
         p.key(Key::Esc, &mut raw).unwrap();
 
         // a public repository: asked first, and "no" is where the cursor starts
-        p.choose(Some(repo("me/website", false))).unwrap();
+        p.choose(Row::Repo(2)).unwrap();
         assert_eq!(p.screen, Screen::Ask(Ask::Public));
         assert_eq!(p.cur, 1, "the safe answer first");
         let ask = p.view();
@@ -678,7 +733,7 @@ mod tests {
         assert_eq!(p.screen, Screen::Repos);
 
         // a repository with other things: its own branch is asked, then the .env files
-        p.choose(Some(repo("me/notes-app", true))).unwrap();
+        p.choose(Row::Repo(0)).unwrap();
         assert_eq!(p.screen, Screen::Ask(Ask::Branch));
         assert_eq!(p.prefix, "Paragma");
         assert_eq!(p.cur, 0, "its own branch is recommended");
@@ -689,7 +744,17 @@ mod tests {
         p.key(Key::Esc, &mut raw).unwrap();
 
         // a new repository: the projects at its root, the .env question next
-        p.choose(None).unwrap();
+        p.choose(Row::New(0)).unwrap();
         assert!(p.prefix.is_empty() && p.screen == Screen::Ask(Ask::Env));
+        assert_eq!(p.new_full_name(), "me/paragma-memory");
+        // in the organization
+        p.choose(Row::New(1)).unwrap();
+        assert_eq!(p.new_full_name(), "acme-org/paragma-memory");
+
+        // one owner: the row says only the name
+        p.owners.truncate(1);
+        p.go(Screen::Repos);
+        let one = p.view();
+        assert!(one.contains("New private repository: paragma-memory") && !one.contains("me/paragma"), "{one}");
     }
 }
