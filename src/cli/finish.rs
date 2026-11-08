@@ -88,7 +88,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         let mut closed = 0;
         // what --done named that closed nothing, and why
         let mut missed = Vec::new();
-        for d in a.done.iter().map(|d| d.trim()).filter(|d| !d.is_empty()) {
+        for d in super::steps::numbers_apart(&a.done).iter().map(|d| d.trim()).filter(|d| !d.is_empty()) {
             if d.eq_ignore_ascii_case("all") {
                 let open: Vec<String> = plan::steps(n).into_iter().filter(|s| !s.done).map(|s| s.text).collect();
                 closed += open.iter().filter(|s| plan::close_step(n, s)).count();

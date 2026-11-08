@@ -21,7 +21,7 @@ pub struct Args {
     all: bool,
     /// Take steps out of the plan, by number (4,7); the steps after them move up
     #[arg(long, value_delimiter = ',', value_name = "NUMBERS", conflicts_with = "edit")]
-    drop: Vec<usize>,
+    drop: Vec<String>,
     /// Rewrite a step, by number: pg steps --edit 4 "new text"
     #[arg(long, value_name = "NUMBER", requires = "text")]
     edit: Option<usize>,
@@ -50,7 +50,13 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                 }
             }
             // the highest first: the numbers asked for stay the ones shown
-            let mut drop = a.drop.clone();
+            let mut drop = Vec::new();
+            for d in numbers_apart(&a.drop) {
+                match d.trim().trim_end_matches('.').parse::<usize>() {
+                    Ok(n) => drop.push(n),
+                    Err(_) => return Err(fail(USAGE, format!("--drop takes step numbers (pg steps), not {d:?}"))),
+                }
+            }
             drop.sort_unstable_by(|x, y| y.cmp(x));
             drop.dedup();
             let mut dropped: i64 = 0;
@@ -85,6 +91,21 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         println!("(done: pg finish \"...\" --done <numbers>)");
     }
     Ok(())
+}
+
+/// "1 3" as 1 and 3: PowerShell hands `--done 1,3` on as "1 3" through
+/// a script (npm's pg.ps1 before Paragma rewrites it).
+pub fn numbers_apart(values: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for v in values {
+        let words: Vec<&str> = v.split_whitespace().collect();
+        if words.len() > 1 && words.iter().all(|w| w.trim_end_matches('.').parse::<usize>().is_ok()) {
+            out.extend(words.iter().map(|w| w.to_string()));
+        } else {
+            out.push(v.clone());
+        }
+    }
+    out
 }
 
 impl Args {
