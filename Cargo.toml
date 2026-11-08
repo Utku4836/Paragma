@@ -1,6 +1,6 @@
 [package]
 name = "paragma"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Agent-first memory: project notes as Markdown files, found by hybrid search"
 license = "MIT"
