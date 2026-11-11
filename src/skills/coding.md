@@ -30,7 +30,7 @@ description: Use when changing code with Paragma memory - finding where things a
 
 ## Errors
 - A failure memory knows: `pg run` prints `known: e12 ... fix: ...`. Read it: `pg read e12`.
-- Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated.
+- Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated. When a test that failed passes, `pg run` prints this command with the change that fixed it filled in: say what was wrong and how, then run it.
 - `(code changed since it was written: ...)` on a note: the code it describes changed after it was written. Check before relying on it.
 
 ## Before you finish

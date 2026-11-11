@@ -187,10 +187,41 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             one_line(&line, 120)
         ));
     } else if !verdict.fixed.is_empty()
-        && let Some(line) = history.first().and_then(|r| r.errors.first())
+        && let Some(line) =
+            history.first().and_then(|r| r.errors.iter().find(|l| record::says_something(l)).or(r.errors.first()))
         && known(&index, project, line)?.is_none()
     {
-        b.add(&format!("worth remembering? pg write --error {:?} --cause \"...\" --fix \"...\"", one_line(line, 120)));
+        // a draft: the error, and the change that fixed it; the agent says why
+        let changes = match &code {
+            // the functions it changed (a new file may be anything)
+            Some(c) => crate::code::work::changed(c)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|ch| ch.symbol.is_some())
+                .map(|ch| (ch.show(c), ch.path))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut files: Vec<String> = Vec::new();
+        for (_, p) in &changes {
+            if !files.contains(p) {
+                files.push(p.clone());
+            }
+        }
+        let shown: Vec<&str> = changes.iter().take(5).map(|(s, _)| s.as_str()).collect();
+        if shown.is_empty() {
+            b.add(&format!(
+                "worth remembering? pg write --error {:?} --cause \"...\" --fix \"...\"",
+                one_line(line, 120)
+            ));
+        } else {
+            b.add(&format!(
+                "fixed: remember it (the change is filled in, say what was wrong and how): pg write --error {:?} --cause \"...\" --fix \"...: {}\" --files {}",
+                one_line(line, 120),
+                shown.join(", "),
+                files.iter().take(5).cloned().collect::<Vec<_>>().join(",")
+            ));
+        }
         state.event("fixed", line, &verdict.fixed.join(", "))?;
     }
 

@@ -13,7 +13,9 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - A short question or one-off task needs no project: `pg find` searches every project.
 
 ## While working
-- More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`. All steps with their numbers: `pg steps` (`--all` with the done ones); one gone stale or wrong: `pg steps --drop 7` or `pg steps --edit 7 "new text"`.
+- More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`. All steps with their numbers: `pg steps` (`--all` with the done ones); one gone stale or wrong: `pg steps --drop 7` or `pg steps --edit 7 "new text"`; left for later on purpose: `pg steps --defer 7` (`--resume 7` brings it back).
+- A question only the user can answer, and the work waits on it (an address, a document, a choice): `pg ask "..."` keeps it; the brief lists the open ones under "waiting on the user", so it is neither asked twice nor forgotten. When the user answers: `pg answer <number> "..."`.
+- Inside a project's own folder in memory (`~/.paragma/projects/<name>`), commands work on that project without `-p`.
 - Decisions, rules, errors as you learn them: `pg skill knowledge`.
 
 ## Finish

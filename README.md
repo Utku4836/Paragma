@@ -142,7 +142,8 @@ pg write --decision "..." --why "..." --alternatives "..."
 pg write --error "<error line>" --cause "..." --fix "..."
 pg write payments/provider --file notes.md      # a note; long text from a file or stdin (-)
 pg finish --done 1 "what changed, what is next"  # tick off steps, leave the handoff
-pg steps                             # the steps with their numbers (--drop 4, --edit 4 "text")
+pg steps                             # the steps with their numbers (--defer 4, --drop 4, --edit 4 "text")
+pg ask "Which address on invoices?"  # a question that waits on the user; the brief lists it until pg answer 1 "..."
 pg ripple                            # what a change reaches: callers left as they were, tests to run
 pg tree                              # the code: files and symbols, with the notes about them marked
 pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor
