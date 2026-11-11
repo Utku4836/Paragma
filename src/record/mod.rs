@@ -298,8 +298,67 @@ pub fn known_error(index: &Index, line: &str) -> Result<Option<String>> {
     if let Some(path) = same_signature(index, &signature)? {
         return Ok(Some(path));
     }
+    // a line that is only a frame ("thread 'x' panicked at a.rs:9:5:",
+    // "Traceback (most recent call last):") says nothing to compare
+    if content_words(&signature::message(&signature)) < 2 {
+        return Ok(None);
+    }
     let near = nearest(index, Kind::Error, &signature::message(&signature))?;
     Ok(near.filter(|p| p.1 >= RELATED_ERROR).map(|p| p.0.path))
+}
+
+/// Whether an error line says what went wrong (not only where: "thread
+/// 'x' panicked at a.rs:9:5:" has its message on the next line).
+pub fn says_something(line: &str) -> bool {
+    content_words(&signature::message(&signature::normalize(line))) >= 2
+}
+
+/// The words of an error line that say what went wrong: not the words
+/// every error of its kind has, not names in quotes, paths or numbers.
+fn content_words(message: &str) -> usize {
+    const FRAME: &[&str] = &[
+        "thread",
+        "panicked",
+        "at",
+        "error",
+        "errors",
+        "exception",
+        "traceback",
+        "most",
+        "recent",
+        "call",
+        "last",
+        "fatal",
+        "uncaught",
+        "failed",
+        "failure",
+        "fail",
+        "test",
+        "tests",
+        "in",
+        "the",
+        "of",
+        "a",
+        "an",
+        "on",
+        "main",
+        "caused",
+        "by",
+        "warning",
+        "note",
+        "stack",
+        "backtrace",
+        "line",
+        "file",
+        "mod",
+    ];
+    message
+        .split_whitespace()
+        .filter(|w| !(w.starts_with('\'') || w.starts_with('"') || w.starts_with('`')))
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| w.len() > 1 && !w.chars().all(|c| c.is_ascii_digit()) && !FRAME.contains(&w.as_str()))
+        .filter(|w| !w.contains(['/', '\\', ':']))
+        .count()
 }
 
 /// The error note with this signature, or with the same message (the
@@ -497,6 +556,17 @@ fn free_path(project: &Project, folder: &str, title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frame_only_error_line_says_nothing_to_compare() {
+        let m = |l: &str| content_words(&signature::message(&signature::normalize(l)));
+        // the panic's message is on the next line
+        assert_eq!(m(r"thread 'skills::tests::the_core_stays_short' (12848) panicked at src\skills\mod.rs:98:9:"), 0);
+        assert_eq!(m("Traceback (most recent call last):"), 0);
+        assert!(m("thread 'main' panicked at stdio.rs: failed printing to stdout: Broken pipe (os error 232)") >= 2);
+        assert!(m("error[E0425]: cannot find value `rate` in this scope") >= 2);
+        assert!(m("AssertionError: assert 2 == 3") >= 2);
+    }
 
     #[test]
     fn contradictions() {
