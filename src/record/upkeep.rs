@@ -67,7 +67,7 @@ pub fn daily(project: &Project, state: &State) -> Result<Vec<String>> {
         }
     }
 
-    let mut out = Vec::new();
+    let mut out = super::secrets::in_notes_lines(project);
     if !archived.is_empty() {
         out.push(format!("archived (unused for 3 months; still found when searched for): {}", archived.join(", ")));
     }

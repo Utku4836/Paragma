@@ -44,5 +44,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if without_id > 0 {
         println!("{} without an id (written outside pg) are found by path", count(without_id, "note"));
     }
+    for line in crate::record::secrets::in_notes_lines(project) {
+        println!("{line}");
+    }
     Ok(())
 }

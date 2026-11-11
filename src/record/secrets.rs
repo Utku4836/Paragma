@@ -96,6 +96,36 @@ pub fn warning(found: &[&str]) -> Option<String> {
     ))
 }
 
+/// Notes with a key in them (written into the file outside `pg write`,
+/// which masks them): their paths and what was found. The memory may go
+/// to GitHub with them.
+pub fn in_notes(project: &crate::project::Project) -> Vec<(String, Vec<&'static str>)> {
+    let mut out = Vec::new();
+    for f in crate::project::scan::notes(&project.dir) {
+        let Ok(text) = std::fs::read_to_string(project.dir.join(&f.rel)) else { continue };
+        let (_, mut found) = mask(&text);
+        if !found.is_empty() {
+            found.dedup();
+            out.push((f.rel, found));
+        }
+    }
+    out
+}
+
+/// The lines that say it, for the brief's daily check and pg doctor.
+pub fn in_notes_lines(project: &crate::project::Project) -> Vec<String> {
+    in_notes(project)
+        .into_iter()
+        .take(5)
+        .map(|(rel, found)| {
+            format!(
+                "a key in a note: {rel} ({}): keep it with pg write --secret \"<title>\" <value>, then take it out of the note",
+                found.join(", ")
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
