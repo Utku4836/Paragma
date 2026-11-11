@@ -68,6 +68,7 @@ impl<'a> Mirror<'a> {
             super::remove_clone(&m.dir)?;
             m.setup()?;
         }
+        m.identity()?;
         Ok(m)
     }
 
@@ -104,15 +105,6 @@ impl<'a> Mirror<'a> {
         let info = self.dir.join(".git/info");
         std::fs::create_dir_all(&info)?;
         std::fs::write(info.join("attributes"), "*.md merge=union\n*.env merge=union\n")?;
-        if self.who().is_none() {
-            let email = if c.account.is_empty() {
-                "paragma@localhost".to_string()
-            } else {
-                format!("{}@users.noreply.github.com", c.account)
-            };
-            self.git(&["config", "user.name", if c.account.is_empty() { "Paragma" } else { &c.account }])?;
-            self.git(&["config", "user.email", &email])?;
-        }
         if self.fetch()? {
             self.git(&["checkout", "-q", "-B", &c.branch, &format!("origin/{}", c.branch)])?;
         } else {
@@ -121,9 +113,28 @@ impl<'a> Mirror<'a> {
         Ok(())
     }
 
-    /// Who commits, as git knows it already.
-    fn who(&self) -> Option<String> {
-        self.git(&["config", "user.email"]).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    /// Who commits, kept in the clone itself: the user's own git identity
+    /// may be set or removed later, a commit must not fail on it.
+    fn identity(&self) -> Result<()> {
+        let local =
+            |k: &str| self.git(&["config", "--local", k]).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        if local("user.email").is_some() && local("user.name").is_some() {
+            return Ok(());
+        }
+        let any = |k: &str| self.git(&["config", k]).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let c = self.config;
+        let name = any("user.name")
+            .unwrap_or_else(|| if c.account.is_empty() { "Paragma".to_string() } else { c.account.clone() });
+        let email = any("user.email").unwrap_or_else(|| {
+            if c.account.is_empty() {
+                "paragma@localhost".to_string()
+            } else {
+                format!("{}@users.noreply.github.com", c.account)
+            }
+        });
+        self.git(&["config", "--local", "user.name", &name])?;
+        self.git(&["config", "--local", "user.email", &email])?;
+        Ok(())
     }
 
     /// Runs git in the clone, signing in without asking anyone.
