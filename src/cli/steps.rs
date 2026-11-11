@@ -1,8 +1,9 @@
 //! pg steps: the project's steps, numbered as `pg finish --done` takes them.
 //!
 //! ```text
-//! pg steps                     the open steps
-//! pg steps --all               the done ones too
+//! pg steps                     the open steps (and how many are deferred)
+//! pg steps --all               the done and deferred ones too
+//! pg steps --defer 4,7         left for later on purpose; --resume 4 brings one back
 //! pg steps --drop 4,7          take steps out of the plan
 //! pg steps --edit 4 "text"     rewrite a step
 //! ```
@@ -16,9 +17,15 @@ use anyhow::Result;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// The done steps too
+    /// The done and deferred steps too
     #[arg(long)]
     all: bool,
+    /// Leave steps for later on purpose, by number (4,7): out of the brief's open steps until --resume
+    #[arg(long, value_delimiter = ',', value_name = "NUMBERS")]
+    defer: Vec<String>,
+    /// Bring deferred steps back to the work now, by number
+    #[arg(long, value_delimiter = ',', value_name = "NUMBERS")]
+    resume: Vec<String>,
     /// Take steps out of the plan, by number (4,7); the steps after them move up
     #[arg(long, value_delimiter = ',', value_name = "NUMBERS", conflicts_with = "edit")]
     drop: Vec<String>,
@@ -35,8 +42,11 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if !a.text.is_empty() && a.edit.is_none() {
         return Err(fail(USAGE, "a text is for --edit: pg steps --edit <number> \"new text\""));
     }
-    if !a.drop.is_empty() || a.edit.is_some() {
+    if a.changes() {
         let text = a.text.join(" ");
+        let defer = numbers(&a.defer, "--defer")?;
+        let resume = numbers(&a.resume, "--resume")?;
+        let mut drop = numbers(&a.drop, "--drop")?;
         let (_, said) = update_note(project, plan::FILE, |n, exists, _| {
             if !exists {
                 n.props.set_text("type", Kind::Project.as_str());
@@ -49,18 +59,24 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                     None => return Err(fail(NOT_FOUND, format!("no step {number} (pg steps --all lists them)"))),
                 }
             }
-            // the highest first: the numbers asked for stay the ones shown
-            let mut drop = Vec::new();
-            for d in numbers_apart(&a.drop) {
-                match d.trim().trim_end_matches('.').parse::<usize>() {
-                    Ok(n) => drop.push(n),
-                    Err(_) => return Err(fail(USAGE, format!("--drop takes step numbers (pg steps), not {d:?}"))),
+            for (list, later, what) in [(&defer, true, "deferred"), (&resume, false, "back in the work")] {
+                if list.is_empty() {
+                    continue;
                 }
+                let mut changed: i64 = 0;
+                for &number in list {
+                    match plan::defer_number(n, number, later) {
+                        Some(_) => changed += 1,
+                        None => said.push(format!("no step {number} that is not done")),
+                    }
+                }
+                said.insert(0, format!("ok {} {what}", count(changed, "step")));
             }
+            // the highest first: the numbers asked for stay the ones shown
             drop.sort_unstable_by(|x, y| y.cmp(x));
             drop.dedup();
             let mut dropped: i64 = 0;
-            for number in drop {
+            for &number in &drop {
                 match plan::drop_number(n, number) {
                     Some(_) => dropped += 1,
                     None => said.push(format!("no step {number}")),
@@ -78,19 +94,48 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let note =
         files::read_text(&project.note_file(plan::FILE)).map(|t| crate::note::Note::parse(&t)).unwrap_or_default();
     let steps = plan::steps(&note);
-    let open = steps.iter().filter(|s| !s.done).count();
     if steps.is_empty() {
         println!("no steps yet: pg open --step \"...\"");
         return Ok(());
     }
-    println!("steps of {}: {open} open, {} done", project.name, steps.len() - open);
-    for (i, s) in steps.iter().enumerate().filter(|(_, s)| a.all || !s.done) {
-        println!("- [{}] {}. {}", if s.done { "x" } else { " " }, i + 1, s.text);
+    let open = steps.iter().filter(|s| s.open()).count();
+    let deferred = steps.iter().filter(|s| s.deferred).count();
+    println!(
+        "steps of {}: {open} open, {} done{}",
+        project.name,
+        steps.len() - open - deferred,
+        if deferred > 0 { format!(", {deferred} deferred") } else { String::new() }
+    );
+    for (i, s) in steps.iter().enumerate().filter(|(_, s)| a.all || s.open()) {
+        let mark = if s.done {
+            "x"
+        } else if s.deferred {
+            "~"
+        } else {
+            " "
+        };
+        println!("- [{mark}] {}. {}{}", i + 1, s.text, if s.deferred { " (deferred)" } else { "" });
+    }
+    if deferred > 0 && !a.all {
+        println!("(deferred ones: pg steps --all; back to the work: pg steps --resume <number>)");
     }
     if open > 0 {
         println!("(done: pg finish \"...\" --done <numbers>)");
     }
     Ok(())
+}
+
+/// Step numbers as given (4,7 or "4 7"); a usage error for anything else.
+fn numbers(values: &[String], flag: &str) -> Result<Vec<usize>> {
+    numbers_apart(values)
+        .iter()
+        .map(|d| {
+            d.trim()
+                .trim_end_matches('.')
+                .parse::<usize>()
+                .map_err(|_| fail(USAGE, format!("{flag} takes step numbers (pg steps), not {d:?}")))
+        })
+        .collect()
 }
 
 /// "1 3" as 1 and 3: PowerShell hands `--done 1,3` on as "1 3" through
@@ -111,6 +156,6 @@ pub fn numbers_apart(values: &[String]) -> Vec<String> {
 impl Args {
     /// Whether it changes the plan (memory then syncs).
     pub fn changes(&self) -> bool {
-        !self.drop.is_empty() || self.edit.is_some()
+        !self.drop.is_empty() || self.edit.is_some() || !self.defer.is_empty() || !self.resume.is_empty()
     }
 }

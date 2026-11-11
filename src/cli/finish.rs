@@ -136,7 +136,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         let open: Vec<String> = plan::steps(n)
             .iter()
             .enumerate()
-            .filter(|(_, s)| !s.done)
+            .filter(|(_, s)| s.open())
             .map(|(i, s)| format!("{}. {}", i + 1, one_line(&s.text, 60)))
             .collect();
         Ok((closed, left, open, missed))

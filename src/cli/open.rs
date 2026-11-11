@@ -61,6 +61,8 @@ enum How {
 const RECENT: i64 = 14 * 86_400;
 /// Open steps listed in full.
 const STEPS_SHOWN: usize = 10;
+/// Open questions listed in full.
+const QUESTIONS_SHOWN: usize = 8;
 /// Handoffs before the last one, listed as one line each.
 const EARLIER_HANDOFFS: usize = 2;
 /// Files listed as likely to be touched, or as changed.
@@ -237,21 +239,39 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
     let note = files::read_text(&project.note_file(plan::FILE)).map(|t| Note::parse(&t)).unwrap_or_default();
     let goal = plan::goal(&note);
     let steps = plan::steps(&note);
-    let open: Vec<&plan::Step> = steps.iter().filter(|s| !s.done).collect();
+    let open: Vec<&plan::Step> = steps.iter().filter(|s| s.open()).collect();
     if goal.is_empty() {
         b.add("no goal yet: pg open --goal \"...\" --step \"...\"");
     } else {
         b.add(&format!("goal: {goal}"));
     }
     if !steps.is_empty() {
-        b.add(&format!("steps: {} open, {} done", open.len(), steps.len() - open.len()));
+        let deferred = steps.iter().filter(|s| s.deferred).count();
+        b.add(&format!(
+            "steps: {} open, {} done{}",
+            open.len(),
+            steps.len() - open.len() - deferred,
+            if deferred > 0 { format!(", {deferred} deferred (pg steps --all)") } else { String::new() }
+        ));
         // numbered as pg finish --done takes them
-        let numbered = steps.iter().enumerate().filter(|(_, s)| !s.done).take(STEPS_SHOWN);
+        let numbered = steps.iter().enumerate().filter(|(_, s)| s.open()).take(STEPS_SHOWN);
         for (i, s) in numbered {
             b.add(&format!("- [ ] {}. {}", i + 1, s.text));
         }
         if open.len() > STEPS_SHOWN {
             b.add(&format!("+{} more: pg steps", open.len() - STEPS_SHOWN));
+        }
+    }
+    // what waits on the user: not asked again, not forgotten
+    let questions: Vec<(usize, plan::Question)> =
+        plan::questions(&note).into_iter().enumerate().filter(|(_, q)| q.answer.is_none()).collect();
+    if !questions.is_empty() {
+        b.add(&format!("waiting on the user ({}; answered: pg answer <number> \"...\"):", questions.len()));
+        for (i, q) in questions.iter().take(QUESTIONS_SHOWN) {
+            b.add(&format!("? {}. {}", i + 1, q.text));
+        }
+        if questions.len() > QUESTIONS_SHOWN {
+            b.add(&format!("+{} more: pg ask", questions.len() - QUESTIONS_SHOWN));
         }
     }
     let handoffs = plan::handoffs(&note);
@@ -504,6 +524,6 @@ pub fn work_folder(cx: &Context, project: &str) -> String {
 fn open_steps(project: Option<&Project>) -> i64 {
     project
         .and_then(|p| files::read_text(&p.note_file(plan::FILE)).ok())
-        .map(|t| plan::steps(&Note::parse(&t)).iter().filter(|s| !s.done).count() as i64)
+        .map(|t| plan::steps(&Note::parse(&t)).iter().filter(|s| s.open()).count() as i64)
         .unwrap_or(0)
 }
