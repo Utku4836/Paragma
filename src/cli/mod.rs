@@ -1,6 +1,7 @@
 //! The commands. Each one lives in its own file; this one parses the
 //! command line and works out which project a command is about.
 
+mod ask;
 mod doctor;
 mod find;
 mod finish;
@@ -58,6 +59,10 @@ enum Command {
     Finish(finish::Args),
     /// The project's steps with their numbers (as pg finish --done takes them); --drop or --edit one
     Steps(steps::Args),
+    /// Keep a question that waits on the user (the brief lists the open ones); alone: the open questions
+    Ask(ask::AskArgs),
+    /// The user's answer to a question kept with pg ask: by its number or words only it has
+    Answer(ask::AnswerArgs),
     /// Search memory: a topic, a question, an error line, a file or a code name
     Find(find::Args),
     /// Print a note (id, path), one rule, or code: file#Function, file:10-20
@@ -158,7 +163,9 @@ fn dispatch(cli: Cli) -> Result<()> {
     let syncs = matches!(
         cli.command,
         Command::Open(_) | Command::Finish(_) | Command::Write(_) | Command::Mv(_) | Command::Rm(_)
-    ) || matches!(&cli.command, Command::Steps(a) if a.changes());
+    ) || matches!(&cli.command, Command::Steps(a) if a.changes())
+        || matches!(&cli.command, Command::Answer(_))
+        || matches!(&cli.command, Command::Ask(a) if a.asks());
     // started before too: a command that stops early (its output closed)
     // still syncs; the sync waits for a quiet moment anyway
     if syncs {
@@ -176,6 +183,8 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Open(a) => open::run(cx, a),
         Command::Finish(a) => finish::run(cx, a),
         Command::Steps(a) => steps::run(cx, a),
+        Command::Ask(a) => ask::ask(cx, a),
+        Command::Answer(a) => ask::answer(cx, a),
         Command::Find(a) => find::run(cx, a),
         Command::Read(a) => read::run(cx, a),
         Command::Write(a) => write::run(cx, *a),
@@ -201,7 +210,11 @@ fn context(flag: Option<&str>, budget: usize) -> Result<Context> {
     let env = std::env::var("PARAGMA_PROJECT").ok().filter(|s| !s.is_empty());
     let name = match flag.map(str::to_string).or(env) {
         Some(n) => Some(n),
-        None => Links::load(&home).projects_of(&cwd).into_iter().find(|p| home.project(p).is_some()),
+        None => Links::load(&home)
+            .projects_of(&cwd)
+            .into_iter()
+            .find(|p| home.project(p).is_some())
+            .or_else(|| memory_folder_project(&home, &cwd)),
     };
     let project = match name {
         Some(n) => {
@@ -210,6 +223,29 @@ fn context(flag: Option<&str>, budget: usize) -> Result<Context> {
         None => None,
     };
     Ok(Context { home, project, budget, cwd })
+}
+
+/// In a project's own folder in memory (~/.paragma/projects/shop, or a
+/// folder in it): that project.
+fn memory_folder_project(home: &Home, cwd: &std::path::Path) -> Option<String> {
+    let projects = home.projects_dir();
+    let rest = match cwd.strip_prefix(&projects) {
+        Ok(r) => r.to_path_buf(),
+        // the same folder written another way (case, a link)
+        Err(_) => {
+            let (c, p) = (std::fs::canonicalize(cwd).ok()?, std::fs::canonicalize(&projects).ok()?);
+            let (cl, pl) = (c.to_string_lossy().to_lowercase(), p.to_string_lossy().to_lowercase());
+            if cfg!(windows) && cl.starts_with(&pl) {
+                std::path::PathBuf::from(
+                    &c.to_string_lossy()[p.to_string_lossy().len()..].trim_start_matches(['\\', '/']),
+                )
+            } else {
+                c.strip_prefix(&p).ok()?.to_path_buf()
+            }
+        }
+    };
+    let name = rest.components().next()?.as_os_str().to_str()?.to_string();
+    home.project(&name).map(|p| p.name)
 }
 
 /// Masks the secrets in text an agent hands over (record/secrets.rs),
