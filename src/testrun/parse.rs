@@ -64,7 +64,8 @@ pub fn parse(output: &str) -> Parsed {
     let mut p = Parsed::default();
     let mut with_place = Vec::new();
     let mut without = Vec::new();
-    for raw in output.lines() {
+    let all: Vec<&str> = output.lines().collect();
+    for (k, raw) in all.iter().enumerate() {
         let line = raw.trim();
         if line.is_empty() {
             continue;
@@ -85,7 +86,15 @@ pub fn parse(output: &str) -> Parsed {
         // "file:line: message" is how compilers and test frameworks report
         let at_place = locations(line).first().is_some_and(|(f, _)| line.starts_with(f.as_str()));
         if is_error(line) || at_place {
-            let list = if locations(line).is_empty() { &mut without } else { &mut with_place };
+            // rustc and tsc say where on the next line: "--> src/a.rs:10:5"
+            let mut line = line.to_string();
+            if locations(&line).is_empty()
+                && let Some(at) = all.get(k + 1).map(|n| n.trim()).and_then(|n| n.strip_prefix("--> "))
+                && !locations(at).is_empty()
+            {
+                line = format!("{line} --> {at}");
+            }
+            let list = if locations(&line).is_empty() { &mut without } else { &mut with_place };
             let l: String = line.chars().take(300).collect();
             if !list.contains(&l) {
                 list.push(l);

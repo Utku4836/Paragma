@@ -99,7 +99,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
 
     let Some(project) = &cx.project else {
-        tail(&mut b, &output, if exit == 0 { 3 } else { 40 });
+        tail(&mut b, &output, if exit == 0 { 3 } else { 40 }, None);
         b.add("(no project here: pg open keeps the history of runs and finds known fixes)");
         finish(&b, exit);
     };
@@ -176,9 +176,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     let tests_seen = run.passed > 0 || !run.failing.is_empty();
     if exit != 0 && run.errors.is_empty() {
-        tail(&mut b, &output, 30); // nothing understood: the output says it best
+        tail(&mut b, &output, 30, Some(&project.meta_dir().join("last-run.log"))); // nothing understood: the output says it best
     } else if exit == 0 && !tests_seen {
-        tail(&mut b, &output, 60); // not a test run (an API call, a script): its output is the answer
+        tail(&mut b, &output, 60, Some(&project.meta_dir().join("last-run.log"))); // not a test run (an API call, a script): its output is the answer
     }
     if let Some((line, files)) = unexplained {
         let files = if files.is_empty() { String::new() } else { format!(" --files {}", files.join(",")) };
@@ -238,13 +238,22 @@ fn finish(b: &Budget, exit: i32) -> ! {
     std::process::exit(if exit == 0 { 0 } else { exit.clamp(1, 255) });
 }
 
-/// The last lines of the output that fit.
-fn tail(b: &mut Budget, output: &str, lines: usize) {
-    let all: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
-    let from = all.len().saturating_sub(lines);
-    let mut shown: Vec<&str> = all[from..].to_vec();
+/// The output made short (testrun/compact.rs): its errors wherever they
+/// are, warnings grouped, repeats and progress lines counted, its end; as
+/// much as fits. When some was left out, the whole output is kept in a
+/// file the agent can read.
+fn tail(b: &mut Budget, output: &str, lines: usize, keep: Option<&std::path::Path>) {
+    let mut shown = testrun::compact::compact(output, lines);
+    let total = output.lines().filter(|l| !l.trim().is_empty()).count();
+    let short = shown.len() < total;
     while !shown.is_empty() && !b.add(&format!("output:\n{}", shown.join("\n"))) {
         shown.remove(0);
+    }
+    if short
+        && let Some(path) = keep
+        && std::fs::write(path, output).is_ok()
+    {
+        b.add(&format!("(all {total} lines: {})", path.display()));
     }
 }
 

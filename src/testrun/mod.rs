@@ -3,6 +3,7 @@
 //! failures are new, which were failing already, which come and go (flaky),
 //! which got fixed.
 
+pub mod compact;
 pub mod parse;
 
 /// One run of a command.
