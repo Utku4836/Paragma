@@ -158,24 +158,13 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     Ok(())
 }
 
-/// Sections or words past which a note likely holds several topics.
-const TOPICS_SECTIONS: usize = 3;
-const TOPICS_WORDS: usize = 450;
-
-/// Notes are found and kept up to date one topic at a time: a note that
-/// grew several topics, or a folder holding one note, is said.
+/// A folder is a category of notes: its first note says so, so that the
+/// next topic of it goes in a note of its own.
 pub fn topic_hint(project: &crate::project::Project, rel: &str) -> Option<String> {
     let rel = if rel.ends_with(".md") { rel.to_string() } else { format!("{rel}.md") };
     let text = std::fs::read_to_string(project.dir.join(&rel)).ok()?;
     if !plain_note(&text) {
         return None;
-    }
-    let name = rel.trim_end_matches(".md");
-    if let Some(n) = several_topics(&text) {
-        return Some(format!(
-            "{name} holds {n}: one topic per note is found and updated better: pg write {}/<topic> \"...\" for each, then pg rm this one",
-            name.rsplit_once('/').map(|p| p.0).unwrap_or(name)
-        ));
     }
     let (folder, _) = rel.rsplit_once('/')?;
     let notes = std::fs::read_dir(project.dir.join(folder))
@@ -193,21 +182,6 @@ pub fn topic_hint(project: &crate::project::Project, rel: &str) -> Option<String
 pub fn plain_note(text: &str) -> bool {
     let note = crate::note::Note::parse(text);
     !matches!(note.props.text("type"), Some("project" | "rule" | "rules" | "decision" | "error"))
-}
-
-/// "4 sections" or "620 words" when a note's text looks like several
-/// topics; None for one.
-pub fn several_topics(text: &str) -> Option<String> {
-    let body = crate::note::Note::parse(text).body;
-    let sections = body.lines().filter(|l| l.starts_with("## ")).count();
-    let words = body.split_whitespace().count();
-    if sections >= TOPICS_SECTIONS {
-        Some(format!("{sections} sections"))
-    } else if words >= TOPICS_WORDS {
-        Some(format!("{words} words"))
-    } else {
-        None
-    }
 }
 
 /// A secret to the project's env file, by its title.

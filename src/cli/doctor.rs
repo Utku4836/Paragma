@@ -47,26 +47,6 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     for line in crate::record::secrets::in_notes_lines(project) {
         println!("{line}");
     }
-    // notes that grew several topics
-    let mut wide = Vec::new();
-    for f in crate::project::scan::notes(&project.dir) {
-        if f.rel == "project.md" || f.rel == "rules.md" {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(project.dir.join(&f.rel)) else { continue };
-        if super::write::plain_note(&text)
-            && let Some(n) = super::write::several_topics(&text)
-        {
-            wide.push(format!("{} ({n})", f.rel.trim_end_matches(".md")));
-        }
-    }
-    if !wide.is_empty() {
-        println!(
-            "notes with several topics: {}{}: one topic per note (pg write <folder>/<topic> \"...\"), then pg rm the old one",
-            wide.iter().take(8).cloned().collect::<Vec<_>>().join(", "),
-            if wide.len() > 8 { format!(" (+{})", wide.len() - 8) } else { String::new() }
-        );
-    }
     // a link to a folder that is gone: the code map shows nothing of it
     let links = crate::state::links::Links::load(&cx.home);
     let gone: Vec<String> =
