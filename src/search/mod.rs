@@ -5,6 +5,7 @@
 
 mod dedup;
 mod glossary;
+pub mod graph;
 pub mod query;
 mod rank;
 
@@ -114,13 +115,15 @@ pub fn weigh_outcomes(hits: &mut [Hit], state: &crate::state::State) {
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
 }
 
-/// Rules and decisions bind the work; errors carry fixes; plain notes last.
+/// Every kind of record weighs the same: the one that answers wins, a note
+/// as much as a decision (measured on real notes: preferring rules and
+/// decisions put the note that answered below them). The project note
+/// touches every topic of the work (goal, steps, handoffs): it comes after
+/// the record about the topic itself.
 fn kind_weight(k: Kind) -> f64 {
     match k {
-        Kind::Rule | Kind::Decision => 1.5,
-        Kind::Error => 1.1,
-        Kind::Project => 1.0,
-        Kind::Note => 0.9,
+        Kind::Project => 0.7,
+        Kind::Rule | Kind::Decision | Kind::Error | Kind::Note => 1.0,
     }
 }
 
