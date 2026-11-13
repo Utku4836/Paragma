@@ -15,6 +15,7 @@ description: Use to look up or record project knowledge with Paragma - rules, de
 - A fixed error: `pg write --error "<error line as printed>" --cause "..." --fix "..."` (`--files a.go,b.go` when the line names none).
 - The same rule, decision or error written again updates the one memory has. A record that seems to contradict another is pointed out: replace it with `--supersedes` (decisions) or `pg rm r3` (rules).
 - An error seen often in many files is proposed as a rule: write it with `pg write --rule`.
+- Anything else worth keeping: a note per topic, `pg write <category>/<topic> "..."` (a category folder holds many notes). A note that grew several topics: split it.
 - Notes about code can say so in their properties: `files: [payments/refund.go]`, `symbols: [Refund]`.
 
 ## Secrets
