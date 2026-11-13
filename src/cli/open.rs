@@ -61,6 +61,8 @@ enum How {
 const RECENT: i64 = 14 * 86_400;
 /// Open steps listed in full.
 const STEPS_SHOWN: usize = 10;
+/// Characters of a step shown in the brief.
+const STEP_CHARS: usize = 160;
 /// Open questions listed in full.
 const QUESTIONS_SHOWN: usize = 8;
 /// Handoffs before the last one, listed as one line each.
@@ -256,7 +258,8 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
         // numbered as pg finish --done takes them
         let numbered = steps.iter().enumerate().filter(|(_, s)| s.open()).take(STEPS_SHOWN);
         for (i, s) in numbered {
-            b.add(&format!("- [ ] {}. {}", i + 1, s.text));
+            // a long step in full: pg steps
+            b.add(&format!("- [ ] {}. {}", i + 1, one_line(&s.text, STEP_CHARS)));
         }
         if open.len() > STEPS_SHOWN {
             b.add(&format!("+{} more: pg steps", open.len() - STEPS_SHOWN));
@@ -326,10 +329,16 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
             for h in &hits {
                 let changed =
                     if stale.check(&index.props_at(&h.path))?.is_some() { " (its code changed since)" } else { "" };
-                let place =
-                    if h.heading.is_empty() { h.path.trim_end_matches(".md").to_string() } else { h.heading.clone() };
+                // the default group of rules says nothing: "r3 rule: ..."
+                let place = if h.heading.is_empty() {
+                    format!(" {}", h.path.trim_end_matches(".md"))
+                } else if h.heading == "General" {
+                    String::new()
+                } else {
+                    format!(" {}", h.heading)
+                };
                 b.add(&format!(
-                    "{} {} {place}: {}{changed}",
+                    "{} {}{place}: {}{changed}",
                     h.id,
                     h.kind.as_str(),
                     one_line(&h.text, if h.kind == Kind::Rule { 240 } else { 110 })

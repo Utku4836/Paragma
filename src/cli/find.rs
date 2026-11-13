@@ -55,6 +55,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         let mut found = search::find(index, &query)?;
         if let Some(state) = state {
             search::weigh_outcomes(&mut found, state);
+            search::weigh_picks(&mut found, state, &query);
         }
         hits.extend(found.into_iter().map(|h| (p.name.clone(), h)));
     }
@@ -132,6 +133,11 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     if rest.len() > ONE_LINERS {
         b.add(&format!("+{} more: pg find \"{query}\" --budget {}", rest.len() - ONE_LINERS, cx.budget * 2));
+    }
+    // what was shown: a record read right after it answered the question
+    if !several && let Some(state) = &states[0] {
+        let ids: Vec<&str> = hits.iter().take(shown + ONE_LINERS).map(|(_, h)| h.id.as_str()).collect();
+        let _ = state.event("find", &query, &ids.join(" "));
     }
     // what the best result is connected to, beyond these results
     if !several && let Some((_, best)) = hits.first() {

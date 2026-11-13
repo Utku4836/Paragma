@@ -7,6 +7,7 @@ description: Use to look up or record project knowledge with Paragma - rules, de
 ## Look it up
 - `pg find "<topic, question, error line or code name>"`: rules, decisions, errors, notes, code and secrets in one call, in any language. One search with the user's words beats several.
 - `pg read <id>` (`e12`, `r3`, `d7`, `n40`; `shop:e12` in another project) or a path. What this conversation was shown in full lately comes back as one line: it is already in your context; `pg read` shows it again.
+- `connected:` after a record (and after the best result of a search): what it replaced, notes on the same code, links, what was written in the same work. Read those before changing what it governs.
 - `pg find "..." --in <project>` or `--all` for other projects.
 
 ## Record it

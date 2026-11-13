@@ -59,6 +59,33 @@ impl State {
         Ok(())
     }
 
+    /// What this conversation's last `pg find` asked and showed, when it was
+    /// in the last `within` seconds: (query, ids shown).
+    pub fn last_find(&self, within: i64) -> Option<(String, Vec<String>)> {
+        self.db
+            .query_row(
+                "SELECT target, detail FROM events WHERE conversation = ?1 AND action = 'find' AND at >= ?2 ORDER BY rowid DESC LIMIT 1",
+                params![conversation::key(), now() - within],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .ok()
+            .map(|(q, ids)| (q, ids.split(' ').filter(|s| !s.is_empty()).map(str::to_string).collect()))
+    }
+
+    /// The records picked after a search (read right after it), lately:
+    /// (query, id).
+    pub fn picks(&self, last: usize) -> Vec<(String, String)> {
+        let Ok(mut st) = self
+            .db
+            .prepare_cached("SELECT target, detail FROM events WHERE action = 'picked' ORDER BY rowid DESC LIMIT ?1")
+        else {
+            return Vec::new();
+        };
+        st.query_map([last as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
+    }
+
     /// The records written in the conversations that wrote `id` (on this
     /// computer: the history is not synced).
     pub fn written_with(&self, id: &str) -> Result<Vec<String>> {

@@ -100,6 +100,43 @@ pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
     Ok(dedup::fold(hits))
 }
 
+/// What a pick says at most: a record read right after a search for the
+/// same words moves up, never past a much better match.
+const PICKED: f64 = 1.25;
+/// Searches looked back on.
+const PICKS: usize = 300;
+/// The share of a query's words a past search must have had.
+const SAME_QUESTION: f64 = 0.5;
+
+/// Moves up the records read right after a search for mostly the same
+/// words (state: `picked`): what answered that question before. Then sorts
+/// again.
+pub fn weigh_picks(hits: &mut [Hit], state: &crate::state::State, query: &str) {
+    let picks = state.picks(PICKS);
+    if picks.is_empty() {
+        return;
+    }
+    let mine = query::words(query);
+    if mine.is_empty() {
+        return;
+    }
+    let same = |q: &str| {
+        let theirs = query::words(q);
+        let shared = mine.iter().filter(|w| theirs.contains(w)).count() as f64;
+        shared / (mine.len().max(theirs.len()) as f64) >= SAME_QUESTION
+    };
+    let picked: Vec<&String> = picks.iter().filter(|(q, _)| same(q)).map(|(_, id)| id).collect();
+    if picked.is_empty() {
+        return;
+    }
+    for h in hits.iter_mut() {
+        if picked.contains(&&h.id) {
+            h.score *= PICKED;
+        }
+    }
+    hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+}
+
 /// Moves error records by how their fixes did when shown before
 /// (state/outcome.rs): at most a fifth either way, and not at all before
 /// two outcomes. Then sorts again.

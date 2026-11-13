@@ -120,10 +120,21 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
 /// Later searches in this conversation show it as one line, while it does
 /// not change.
+/// Read right after a search that showed it: it answered that question
+/// (search/mod.rs weigh_picks).
 fn shown_in_full(project: &Project, index: &Index, id: &str) {
     let version = index.versions([id]).ok().and_then(|v| v.get(id).copied());
-    let _ = State::open(project).and_then(|s| s.shown_in_full(&[(id.to_string(), version.unwrap_or(0))]));
+    let Ok(state) = State::open(project) else { return };
+    let _ = state.shown_in_full(&[(id.to_string(), version.unwrap_or(0))]);
+    if let Some((query, ids)) = state.last_find(PICK_WITHIN)
+        && ids.iter().any(|x| x == id)
+    {
+        let _ = state.event("picked", &query, id);
+    }
 }
+
+/// A read this soon after a search is about it.
+const PICK_WITHIN: i64 = 600;
 
 /// The note a target names: "e45", "shop:e45", "physics/collisions" or
 /// "shop/physics/collisions".
