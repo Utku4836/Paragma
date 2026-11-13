@@ -31,6 +31,8 @@ use anyhow::{Result, bail};
 const SAME_RULE: f32 = 0.93;
 /// A decision this close is the same decision again.
 const SAME_DECISION: f32 = 0.95;
+/// A decision with the same title is the same one from this close.
+const SAME_TITLED_DECISION: f32 = 0.85;
 /// Decisions this close are about the same subject: worth checking for a
 /// contradiction.
 const SAME_SUBJECT: f32 = 0.65;
@@ -146,18 +148,38 @@ pub fn decision(project: &Project, d: &DecisionInput) -> Result<Written> {
             n.set_section("Alternatives", alt);
         }
     };
-    if old.is_none()
-        && let Some((piece, _)) = near.as_ref().filter(|p| p.1 >= SAME_DECISION && !contradicts(&p.0.text, d.text))
-    {
+    // the same decision written again (also when it says it replaces
+    // another one): that one is updated, not a second one made
+    let same_title = |path: &str| {
+        std::fs::read_to_string(project.dir.join(path))
+            .ok()
+            .and_then(|t: String| Note::parse(&t).props.text("title").map(|x| x.eq_ignore_ascii_case(&title)))
+            .unwrap_or(false)
+    };
+    if let Some((piece, _)) = near.as_ref().filter(|p| {
+        // the same title and this close: the same decision rewritten (the
+        // newer text replaces the older, even where they differ)
+        old.as_ref().is_none_or(|(o, _)| *o != p.0.id)
+            && ((p.1 >= SAME_DECISION && !contradicts(&p.0.text, d.text))
+                || (p.1 >= SAME_TITLED_DECISION && same_title(&p.0.path)))
+    }) {
         update_note(project, &piece.path, |n, _, _| {
             fill(n);
+            if let Some((o, _)) = &old {
+                n.props.set_text("supersedes", o.clone());
+            }
             Ok(())
         })?;
-        return Ok(Written {
-            id: piece.id.clone(),
-            what: "updated: the same decision as before".into(),
-            notes: Vec::new(),
-        });
+        let mut notes = Vec::new();
+        if let Some((o, path)) = &old {
+            update_note(project, path, |n, _, _| {
+                n.props.set_text("status", "superseded");
+                n.props.set_text("superseded_by", piece.id.clone());
+                Ok(())
+            })?;
+            notes.push(format!("{o} is now superseded by {}", piece.id));
+        }
+        return Ok(Written { id: piece.id.clone(), what: "updated: the same decision as before".into(), notes });
     }
     let mut notes = Vec::new();
     if old.is_none()
@@ -515,7 +537,8 @@ fn title_of(text: &str) -> String {
 
 /// The sentences of a text: each ends at ';', a line's end, or '.', '!',
 /// '?' before a space or the end. A dot inside a word or number (3.0,
-/// state.db, v0.2.7) does not end one.
+/// state.db, v0.2.7) does not end one, nor one after a number with a
+/// lower-case word next ("Tema 2. tur": an ordinal).
 fn sentences(text: &str) -> impl Iterator<Item = &str> {
     let mut rest = text;
     std::iter::from_fn(move || {
@@ -523,10 +546,15 @@ fn sentences(text: &str) -> impl Iterator<Item = &str> {
             return None;
         }
         let mut chars = rest.char_indices().peekable();
+        let mut prev = ' ';
         while let Some((i, c)) = chars.next() {
             let next = chars.peek().map(|(_, n)| *n);
-            let ends =
-                matches!(c, ';' | '\n') || (matches!(c, '.' | '!' | '?') && next.is_none_or(char::is_whitespace));
+            let ordinal = c == '.'
+                && prev.is_ascii_digit()
+                && rest[i + 1..].trim_start().chars().next().is_some_and(char::is_lowercase);
+            prev = c;
+            let ends = matches!(c, ';' | '\n')
+                || (matches!(c, '.' | '!' | '?') && next.is_none_or(char::is_whitespace) && !ordinal);
             if ends {
                 let (s, after) = (&rest[..i], &rest[i + c.len_utf8()..]);
                 rest = after;
@@ -587,5 +615,9 @@ mod tests {
         assert_eq!(title_of("Is it fast? Yes."), "Is it fast");
         assert_eq!(title_of("Use rustls.\nNot openssl."), "Use rustls");
         assert_eq!(title_of("Ends with a dot."), "Ends with a dot");
+        // an ordinal ("2nd round") is not a sentence's end; a number ending one is
+        assert_eq!(title_of("Tema 2. tur uygulandı. Sonra 3. tur."), "Tema 2. tur uygulandı");
+        assert_eq!(title_of("Shipping is 135 TL. Free above 1000 TL."), "Shipping is 135 TL");
+        assert_eq!(title_of("Version 2. Then more."), "Version 2");
     }
 }
