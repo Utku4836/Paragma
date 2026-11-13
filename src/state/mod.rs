@@ -59,6 +59,24 @@ impl State {
         Ok(())
     }
 
+    /// The records written in the conversations that wrote `id` (on this
+    /// computer: the history is not synced).
+    pub fn written_with(&self, id: &str) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT DISTINCT e.detail FROM events e WHERE e.action = 'write' AND e.conversation IN \
+             (SELECT conversation FROM events WHERE action = 'write' AND (detail = ?1 OR detail LIKE ?2)) ORDER BY e.rowid",
+        )?;
+        let rows = st.query_map(params![id, format!("{id} %")], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for d in rows.flatten() {
+            let x = d.split(' ').next().unwrap_or("").to_string();
+            if !x.is_empty() && x != id && !out.contains(&x) {
+                out.push(x);
+            }
+        }
+        Ok(out)
+    }
+
     /// What this conversation did since its last `pg finish`, oldest first.
     /// `skip`: finishes passed over (1: since the one before the last, for a
     /// handoff that replaces the last one).

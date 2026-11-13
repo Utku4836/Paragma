@@ -58,9 +58,15 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         && let Some(c) = chunks(&note, &row.path).into_iter().find(|c| c.id == id)
     {
         b.add(&format!("[{id} rule] {}#{}\n{}", row.path.trim_end_matches(".md"), c.heading, c.text));
-        print!("{}", b.out);
         if let Ok(index) = Index::open(&project) {
+            let links = crate::search::graph::connected(&project, &index, id, crate::search::graph::SHOWN, &[])?;
+            if let Some(l) = crate::search::graph::line(&links) {
+                b.add(&l);
+            }
+            print!("{}", b.out);
             shown_in_full(&project, &index, id);
+        } else {
+            print!("{}", b.out);
         }
         return Ok(());
     }
@@ -98,6 +104,12 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             n += 1;
         }
         b.out.push_str(&format!("... more below line {n}: pg read {} --budget {}\n", a.target, cx.budget * 2));
+    }
+    if !row.id.is_empty() {
+        let links = crate::search::graph::connected(&project, &index, &row.id, crate::search::graph::SHOWN, &[])?;
+        if let Some(l) = crate::search::graph::line(&links) {
+            b.add(&l);
+        }
     }
     print!("{}", b.out);
     if !row.id.is_empty() {

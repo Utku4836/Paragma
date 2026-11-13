@@ -133,6 +133,14 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if rest.len() > ONE_LINERS {
         b.add(&format!("+{} more: pg find \"{query}\" --budget {}", rest.len() - ONE_LINERS, cx.budget * 2));
     }
+    // what the best result is connected to, beyond these results
+    if !several && let Some((_, best)) = hits.first() {
+        let listed: Vec<String> = hits.iter().map(|(_, h)| h.id.clone()).collect();
+        let links = crate::search::graph::connected_by(&projects[0], &indexes[0].1, &best.id, 2, &listed, false)?;
+        if let Some(l) = crate::search::graph::line(&links) {
+            b.add(&l.replacen("connected:", &format!("{} is connected to:", best.id), 1));
+        }
+    }
     print!("{}", b.out);
     // what was shown, per project: what is still in the agent's context,
     // and what upkeep keeps as used (record/upkeep.rs)
