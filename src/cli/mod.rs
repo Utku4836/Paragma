@@ -8,6 +8,7 @@ mod finish;
 mod git;
 mod git_screen;
 pub mod hook;
+mod link;
 mod ls;
 mod mv;
 mod open;
@@ -77,6 +78,8 @@ enum Command {
     Ripple(ripple::Args),
     /// Projects, or the folders and notes of a project
     Ls(ls::Args),
+    /// The folders a project's code is in: list, link one (default: here), --replace the others, --remove one
+    Link(link::Args),
     /// Rename or move a note, a folder or a project
     #[command(alias = "rename")]
     Mv(mv::Args),
@@ -192,6 +195,7 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Tree(a) => tree::run(cx, a),
         Command::Ripple(a) => ripple::run(cx, a),
         Command::Ls(a) => ls::run(cx, a),
+        Command::Link(a) => link::run(cx, a),
         Command::Mv(a) => mv::run(cx, a),
         Command::Rm(a) => rm::run(cx, a),
         Command::Doctor(a) => doctor::run(cx, a),

@@ -42,6 +42,22 @@ impl Links {
         })
     }
 
+    /// Takes the links of a project out: from these folders (keys as
+    /// `folders_of` gives them), or from every folder. The folders unlinked.
+    pub fn unlink(home: &Home, project: &str, only: Option<&[String]>) -> Result<Vec<String>> {
+        let mut gone = Vec::new();
+        Links::change(home, |links| {
+            for (f, list) in &mut links.folders {
+                if only.is_none_or(|o| o.contains(f)) && list.iter().any(|(p, _)| p == project) {
+                    list.retain(|(p, _)| p != project);
+                    gone.push(f.clone());
+                }
+            }
+            links.folders.retain(|(_, list)| !list.is_empty());
+        })?;
+        Ok(gone)
+    }
+
     /// A project got a new name.
     pub fn rename_project(home: &Home, old: &str, new: &str) -> Result<()> {
         Links::change(home, |links| {
