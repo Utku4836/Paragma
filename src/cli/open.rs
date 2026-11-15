@@ -252,7 +252,7 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
         b.add(&format!(
             "steps: {} open, {} done{}",
             open.len(),
-            steps.len() - open.len() - deferred,
+            steps.iter().filter(|s| s.done).count(),
             if deferred > 0 { format!(", {deferred} deferred (pg steps --all)") } else { String::new() }
         ));
         // numbered as pg finish --done takes them

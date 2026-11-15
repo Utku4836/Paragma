@@ -13,7 +13,7 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - A short question or one-off task needs no project: `pg find` searches every project.
 
 ## While working
-- More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`. All steps with their numbers: `pg steps` (`--all` with the done ones); one gone stale or wrong: `pg steps --drop 7` or `pg steps --edit 7 "new text"`; left for later on purpose: `pg steps --defer 7` (`--resume 7` brings it back).
+- More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`. All steps with their numbers: `pg steps` (`--all` with the done ones); one gone stale or wrong: `pg steps --drop 7` or `pg steps --edit 7 "new text"`; left for later on purpose: `pg steps --defer 7` (`--resume 7` brings it back). A step's number never changes. `pg finish` names the steps it closed: one closed by mistake, `pg steps --reopen 7`.
 - A question only the user can answer, and the work waits on it (an address, a document, a choice): `pg ask "..."` keeps it; the brief lists the open ones under "waiting on the user", so it is neither asked twice nor forgotten. When the user answers: `pg answer <number> "..."`.
 - Inside a project's own folder in memory (`~/.paragma/projects/<name>`), commands work on that project without `-p`.
 - Decisions, rules, errors as you learn them: `pg skill knowledge`.
@@ -27,7 +27,7 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - Code, scripts and big files do not go in the memory folder (it goes to GitHub with the notes, and .md files there count as notes): keep them in a folder of their own and link it.
 - The folders a project's code is in: `pg link` lists them; `pg link <folder>` links one (`pg open` does it for the folder it runs in), `--replace` when the code moved (the others are taken out), `pg link --remove <folder>` takes one out, `--remove --gone` the ones that no longer exist.
 - What is where: `pg ls`, `pg ls <folder>`; projects: `pg ls` outside a project.
-- Rename or move a note, folder or project: `pg mv <from> <to>` (`<folder>/` moves into it). Ids stay, `[[links]]` follow.
+- Rename or move a note, folder or project: `pg mv <from> <to>` (`<folder>/` moves into it). Ids stay, `[[links]]` to it follow (also `[[folder/name]]`).
 - `pg rm <id | path | folder/ | project>` moves it to `.archive/` (`pg mv .archive/<path> <path>` brings it back); `--hard` deletes it.
 
 ## Memory on GitHub

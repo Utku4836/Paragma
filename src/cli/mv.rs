@@ -65,11 +65,23 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         locked.sort_by(|x, y| x.name.cmp(&y.name));
         locked.dedup_by(|x, y| x.name == y.name);
         let _locks = locked.iter().map(|p| files::WriteLock::take(&p.meta_dir())).collect::<Result<Vec<_>>>()?;
+        // the notes as they are before the move: what each link names
+        let before: Vec<String> = scan::notes(&project.dir).into_iter().map(|f| f.rel).collect();
         std::fs::create_dir_all(dest.dir.join(&to).parent().unwrap_or(&dest.dir))?;
         rename(&project.dir.join(&rel), &dest.dir.join(&to))?;
-        let (old_stem, new_stem) = (stem(&rel), stem(&to));
-        if !folder && old_stem != new_stem {
-            follow_links(&project, &old_stem, &new_stem)?;
+        if dest.name == project.name {
+            let moved: Vec<(String, String)> = if folder {
+                let from = format!("{}/", rel.trim_end_matches('/'));
+                before
+                    .iter()
+                    .filter_map(|p| {
+                        p.strip_prefix(&from).map(|rest| (p.clone(), format!("{}/{rest}", to.trim_end_matches('/'))))
+                    })
+                    .collect()
+            } else {
+                vec![(rel.clone(), to.clone())]
+            };
+            follow_links(&project, &before, &moved)?;
         }
     }
     let mut notes = Vec::new();
@@ -127,23 +139,47 @@ fn rename_project(cx: &Context, p: &Project, to: &str) -> Result<()> {
     Ok(())
 }
 
-/// A note's name without its folder and .md, as [[links]] write it.
-fn stem(rel: &str) -> String {
-    rel.rsplit('/').next().unwrap_or(rel).trim_end_matches(".md").to_string()
-}
-
-/// [[old]], [[old|label]] and [[old#section]] become [[new...]] in every
-/// note of the project. Runs under the project's write lock.
-fn follow_links(project: &Project, old: &str, new: &str) -> Result<()> {
+/// The links to moved notes follow them, in every note of the project:
+/// [[folder/name]] gets the new path, [[name]] the new name; a #section or
+/// |label stays. What a link names is worked out as it was before the move
+/// (search/graph.rs resolve). Runs under the project's write lock.
+fn follow_links(project: &Project, before: &[String], moved: &[(String, String)]) -> Result<()> {
+    let paths: Vec<&str> = before.iter().map(String::as_str).collect();
     for f in scan::notes(&project.dir) {
         let path = project.dir.join(&f.rel);
         let Ok(text) = files::read_text(&path) else { continue };
-        let mut changed = text.clone();
-        for end in ["]]", "|", "#"] {
-            changed = changed.replace(&format!("[[{old}{end}"), &format!("[[{new}{end}"));
+        if !text.contains("[[") {
+            continue;
         }
-        if changed != text {
-            files::write_atomic(&path, changed.as_bytes())?;
+        // where this note was: what its links were resolved from
+        let was = moved.iter().find(|(_, new)| *new == f.rel).map(|(old, _)| old.as_str()).unwrap_or(&f.rel);
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("[[") {
+            let after = &rest[i + 2..];
+            let Some(j) = after.find("]]") else { break };
+            out.push_str(&rest[..i + 2]);
+            let inner = &after[..j];
+            let cut = inner.find(['|', '#', '^']).unwrap_or(inner.len());
+            let (target, tail) = inner.split_at(cut);
+            let new_target = crate::search::graph::resolve(target.trim(), was, &paths)
+                .and_then(|p| moved.iter().find(|(old, _)| *old == p))
+                .map(|(_, new)| {
+                    let new = new.trim_end_matches(".md");
+                    if target.contains('/') {
+                        new.to_string()
+                    } else {
+                        new.rsplit('/').next().unwrap_or(new).to_string()
+                    }
+                });
+            out.push_str(new_target.as_deref().unwrap_or(target));
+            out.push_str(tail);
+            out.push_str("]]");
+            rest = &after[j + 2..];
+        }
+        out.push_str(rest);
+        if out != text {
+            files::write_atomic(&path, out.as_bytes())?;
         }
     }
     Ok(())

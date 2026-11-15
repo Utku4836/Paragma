@@ -4,6 +4,7 @@
 //! pg steps                     the open steps (and how many are deferred)
 //! pg steps --all               the done and deferred ones too
 //! pg steps --defer 4,7         left for later on purpose; --resume 4 brings one back
+//! pg steps --reopen 4          open a step closed by mistake again
 //! pg steps --drop 4,7          take steps out of the plan
 //! pg steps --edit 4 "text"     rewrite a step
 //! ```
@@ -26,7 +27,10 @@ pub struct Args {
     /// Bring deferred steps back to the work now, by number
     #[arg(long, value_delimiter = ',', value_name = "NUMBERS")]
     resume: Vec<String>,
-    /// Take steps out of the plan, by number (4,7); the steps after them move up
+    /// Open done steps again (closed by mistake), by number
+    #[arg(long, value_delimiter = ',', value_name = "NUMBERS")]
+    reopen: Vec<String>,
+    /// Take steps out of the plan, by number (4,7); every other step keeps its number
     #[arg(long, value_delimiter = ',', value_name = "NUMBERS", conflicts_with = "edit")]
     drop: Vec<String>,
     /// Rewrite a step, by number: pg steps --edit 4 "new text"
@@ -46,6 +50,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         let text = a.text.join(" ");
         let defer = numbers(&a.defer, "--defer")?;
         let resume = numbers(&a.resume, "--resume")?;
+        let reopen = numbers(&a.reopen, "--reopen")?;
         let mut drop = numbers(&a.drop, "--drop")?;
         let (_, said) = update_note(project, plan::FILE, |n, exists, _| {
             if !exists {
@@ -72,8 +77,17 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                 }
                 said.insert(0, format!("ok {} {what}", count(changed, "step")));
             }
-            // the highest first: the numbers asked for stay the ones shown
-            drop.sort_unstable_by(|x, y| y.cmp(x));
+            if !reopen.is_empty() {
+                let mut opened: i64 = 0;
+                for &number in &reopen {
+                    match plan::reopen_number(n, number) {
+                        Some(_) => opened += 1,
+                        None => said.push(format!("no done step {number}")),
+                    }
+                }
+                said.insert(0, format!("ok {} open again", count(opened, "step")));
+            }
+            drop.sort_unstable();
             drop.dedup();
             let mut dropped: i64 = 0;
             for &number in &drop {
@@ -103,10 +117,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     println!(
         "steps of {}: {open} open, {} done{}",
         project.name,
-        steps.len() - open - deferred,
+        steps.iter().filter(|s| s.done).count(),
         if deferred > 0 { format!(", {deferred} deferred") } else { String::new() }
     );
-    for (i, s) in steps.iter().enumerate().filter(|(_, s)| a.all || s.open()) {
+    for (i, s) in steps.iter().enumerate().filter(|(_, s)| !s.dropped && (a.all || s.open())) {
         let mark = if s.done {
             "x"
         } else if s.deferred {
@@ -156,6 +170,10 @@ pub fn numbers_apart(values: &[String]) -> Vec<String> {
 impl Args {
     /// Whether it changes the plan (memory then syncs).
     pub fn changes(&self) -> bool {
-        !self.drop.is_empty() || self.edit.is_some() || !self.defer.is_empty() || !self.resume.is_empty()
+        !self.drop.is_empty()
+            || self.edit.is_some()
+            || !self.defer.is_empty()
+            || !self.resume.is_empty()
+            || !self.reopen.is_empty()
     }
 }

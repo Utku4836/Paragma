@@ -80,17 +80,18 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             written.push(id);
         }
     }
-    let (_, (closed, left, open, missed)) = update_note(project, plan::FILE, |n, exists, _| {
+    let (_, (closed, left, open, missed, named)) = update_note(project, plan::FILE, |n, exists, _| {
         if !exists {
             n.props.set_text("type", Kind::Project.as_str());
             n.props.set_text("title", project.name.clone());
         }
         let mut closed = 0;
+        let done_before: Vec<bool> = plan::steps(n).iter().map(|s| s.done).collect();
         // what --done named that closed nothing, and why
         let mut missed = Vec::new();
         for d in super::steps::numbers_apart(&a.done).iter().map(|d| d.trim()).filter(|d| !d.is_empty()) {
             if d.eq_ignore_ascii_case("all") {
-                let open: Vec<String> = plan::steps(n).into_iter().filter(|s| !s.done).map(|s| s.text).collect();
+                let open: Vec<String> = plan::steps(n).into_iter().filter(|s| s.open()).map(|s| s.text).collect();
                 closed += open.iter().filter(|s| plan::close_step(n, s)).count();
             } else if let Ok(number) = d.trim_end_matches('.').parse::<usize>() {
                 match plan::close_number(n, number) {
@@ -139,7 +140,14 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             .filter(|(_, s)| s.open())
             .map(|(i, s)| format!("{}. {}", i + 1, one_line(&s.text, 60)))
             .collect();
-        Ok((closed, left, open, missed))
+        // what was closed, by number and text: a wrong one is seen at once
+        let named: Vec<String> = plan::steps(n)
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| s.done && !done_before.get(*i).copied().unwrap_or(false))
+            .map(|(i, s)| format!("{}. {}", i + 1, one_line(&s.text, 70)))
+            .collect();
+        Ok((closed, left, open, missed, named))
     })?;
     state.set(&mine, &heading)?;
     // fixes shown whose tests still fail did not help (state/outcome.rs)
@@ -152,6 +160,9 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     }
     out.push_str(if earlier.is_some() { ", handoff replaced" } else { ", handoff saved" });
     println!("{out}");
+    if !named.is_empty() {
+        println!("closed: {} (a wrong one: pg steps --reopen <number>)", named.join("; "));
+    }
     for m in &missed {
         println!("not closed: {m} (pg steps lists them with their numbers)");
     }

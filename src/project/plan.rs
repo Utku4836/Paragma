@@ -29,13 +29,21 @@ pub struct Step {
     pub done: bool,
     /// Left for later on purpose (`- [~]`): not done, not in the work now.
     pub deferred: bool,
+    /// Taken out of the plan (`- [-]`): kept in the note so that no other
+    /// step's number changes, shown nowhere.
+    pub dropped: bool,
     pub text: String,
 }
 
 impl Step {
-    /// To be done now: neither done nor deferred.
+    /// To be done now: neither done, deferred nor taken out.
     pub fn open(&self) -> bool {
-        !self.done && !self.deferred
+        !self.done && !self.deferred && !self.dropped
+    }
+
+    /// Not done and not taken out: open or deferred.
+    fn pending(&self) -> bool {
+        !self.done && !self.dropped
     }
 }
 
@@ -83,14 +91,16 @@ pub fn steps(note: &Note) -> Vec<Step> {
         .lines()
         .filter_map(|l| {
             let l = l.trim_start();
-            let (done, deferred, text) = if let Some(t) = l.strip_prefix("- [ ] ") {
-                (false, false, t)
+            let (done, deferred, dropped, text) = if let Some(t) = l.strip_prefix("- [ ] ") {
+                (false, false, false, t)
             } else if let Some(t) = l.strip_prefix("- [~] ") {
-                (false, true, t)
+                (false, true, false, t)
+            } else if let Some(t) = l.strip_prefix("- [-] ") {
+                (false, false, true, t)
             } else {
-                (true, false, l.strip_prefix("- [x] ").or_else(|| l.strip_prefix("- [X] "))?)
+                (true, false, false, l.strip_prefix("- [x] ").or_else(|| l.strip_prefix("- [X] "))?)
             };
-            Some(Step { done, deferred, text: without_number(text).to_string() })
+            Some(Step { done, deferred, dropped, text: without_number(text).to_string() })
         })
         .collect()
 }
@@ -103,6 +113,8 @@ fn set_steps(note: &mut Note, steps: &[Step]) {
                 "- [{}] {}",
                 if s.done {
                     "x"
+                } else if s.dropped {
+                    "-"
                 } else if s.deferred {
                     "~"
                 } else {
@@ -119,7 +131,7 @@ fn set_steps(note: &mut Note, steps: &[Step]) {
 /// work now: its text, or None when there is no such step not done.
 pub fn defer_number(note: &mut Note, n: usize, later: bool) -> Option<String> {
     let mut steps = steps(note);
-    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| !s.done)?;
+    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| s.pending())?;
     s.deferred = later;
     let text = s.text.clone();
     set_steps(note, &steps);
@@ -191,10 +203,10 @@ pub fn answer(note: &mut Note, which: &str, answer: &str) -> Result<String, usiz
 pub fn add_step(note: &mut Note, text: &str) -> bool {
     let text = without_number(text);
     let mut steps = steps(note);
-    if text.is_empty() || steps.iter().any(|s| !s.done && s.text == text) {
+    if text.is_empty() || steps.iter().any(|s| s.pending() && s.text == text) {
         return false;
     }
-    steps.push(Step { done: false, deferred: false, text: text.to_string() });
+    steps.push(Step { done: false, deferred: false, dropped: false, text: text.to_string() });
     set_steps(note, &steps);
     true
 }
@@ -202,7 +214,7 @@ pub fn add_step(note: &mut Note, text: &str) -> bool {
 /// Ticks off an open step; false when there is no such open step.
 pub fn close_step(note: &mut Note, text: &str) -> bool {
     let mut steps = steps(note);
-    let Some(s) = steps.iter_mut().find(|s| !s.done && s.text == text.trim()) else {
+    let Some(s) = steps.iter_mut().find(|s| s.pending() && s.text == text.trim()) else {
         return false;
     };
     s.done = true;
@@ -211,10 +223,11 @@ pub fn close_step(note: &mut Note, text: &str) -> bool {
 }
 
 /// Ticks off the step with this number (from 1, in the order of the note,
-/// done steps counted): its text, or None when there is no such open step.
+/// done and taken out steps counted): its text, or None when there is no
+/// such open step.
 pub fn close_number(note: &mut Note, n: usize) -> Option<String> {
     let mut steps = steps(note);
-    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| !s.done)?;
+    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| s.pending())?;
     s.done = true;
     let text = s.text.clone();
     set_steps(note, &steps);
@@ -227,7 +240,7 @@ pub fn close_part(note: &mut Note, part: &str) -> Result<String, usize> {
     let part = part.trim().to_lowercase();
     let mut steps = steps(note);
     let hits: Vec<usize> = (0..steps.len())
-        .filter(|&i| !steps[i].done && !part.is_empty() && steps[i].text.to_lowercase().contains(&part))
+        .filter(|&i| steps[i].pending() && !part.is_empty() && steps[i].text.to_lowercase().contains(&part))
         .collect();
     let [i] = hits[..] else { return Err(hits.len()) };
     steps[i].done = true;
@@ -237,21 +250,34 @@ pub fn close_part(note: &mut Note, part: &str) -> Result<String, usize> {
 }
 
 /// Takes the step with this number (from 1, done steps counted) out of
-/// the plan: its text, or None when there is no such step. The steps
-/// after it move up one number.
+/// the plan: its text, or None when there is no such step. Every other
+/// step keeps its number.
 pub fn drop_number(note: &mut Note, n: usize) -> Option<String> {
     let mut steps = steps(note);
-    let i = n.checked_sub(1).filter(|&i| i < steps.len())?;
-    let s = steps.remove(i);
+    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| !s.dropped)?;
+    s.dropped = true;
+    s.deferred = false;
+    let text = s.text.clone();
     set_steps(note, &steps);
-    Some(s.text)
+    Some(text)
+}
+
+/// Opens a done step again (closed by mistake): its text, or None when the
+/// step with this number is not a done one.
+pub fn reopen_number(note: &mut Note, n: usize) -> Option<String> {
+    let mut steps = steps(note);
+    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| s.done)?;
+    s.done = false;
+    let text = s.text.clone();
+    set_steps(note, &steps);
+    Some(text)
 }
 
 /// Rewrites the step with this number: its old text, or None when there
 /// is no such step.
 pub fn edit_number(note: &mut Note, n: usize, text: &str) -> Option<String> {
     let mut steps = steps(note);
-    let s = steps.get_mut(n.checked_sub(1)?)?;
+    let s = steps.get_mut(n.checked_sub(1)?).filter(|s| !s.dropped)?;
     let old = std::mem::replace(&mut s.text, text.trim().to_string());
     set_steps(note, &steps);
     Some(old)
@@ -325,7 +351,13 @@ mod tests {
             edit_number(&mut n, 3, "Remove the old provider and its keys").as_deref(),
             Some("Remove the old provider")
         );
-        let texts: Vec<String> = steps(&n).into_iter().map(|s| s.text).collect();
+        // a step taken out keeps its place: no other number changes
+        add_step(&mut n, "Release");
+        assert_eq!(close_number(&mut n, 5).as_deref(), Some("Release"));
+        assert_eq!(reopen_number(&mut n, 5).as_deref(), Some("Release"));
+        assert_eq!(reopen_number(&mut n, 5), None, "open already");
+        assert_eq!(close_number(&mut n, 4), None, "taken out");
+        let texts: Vec<String> = steps(&n).into_iter().filter(|s| !s.dropped).take(3).map(|s| s.text).collect();
         assert_eq!(texts, ["Add the client", "Move refunds to the client", "Remove the old provider and its keys"]);
     }
 
