@@ -60,14 +60,16 @@ pub fn connected_by(
     skip: &[String],
     meaning: bool,
 ) -> Result<Vec<Link>> {
-    let mut st =
-        index.db.prepare_cached("SELECT id, path, title, props FROM notes WHERE id IS NOT NULL AND id != ''")?;
+    // a note without an id is known by its path, as search names it
+    let mut st = index.db.prepare_cached("SELECT id, path, title, props FROM notes")?;
     let rows: Vec<Row> = st
         .query_map([], |r| {
             let props: String = r.get(3)?;
+            let path: String = r.get(1)?;
+            let id = r.get::<_, Option<String>>(0)?.filter(|s| !s.is_empty());
             Ok(Row {
-                id: r.get(0)?,
-                path: r.get(1)?,
+                id: id.unwrap_or_else(|| path.trim_end_matches(".md").to_string()),
+                path,
                 title: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 props: serde_json::from_str(&props).unwrap_or_default(),
             })
@@ -107,24 +109,25 @@ pub fn connected_by(
             add(&mut out, r, "a related error".to_string());
         }
     }
-    // [[links]] both ways, by the note's name
-    let name = |path: &str| path.trim_end_matches(".md").rsplit('/').next().unwrap_or("").to_string();
-    let my_name = name(&me.path);
+    // [[links]] both ways: [[name]], [[folder/name]], [[name#Heading]],
+    // [[name|label]], each to the one note it names
+    let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let text = std::fs::read_to_string(project.dir.join(&me.path)).unwrap_or_default();
-    for r in &rows {
-        let theirs = name(&r.path);
-        if !theirs.is_empty() && (text.contains(&format!("[[{theirs}]]")) || text.contains(&format!("[[{theirs}|"))) {
+    for target in wiki_links(&text) {
+        if let Some(p) = resolve(&target, &me.path, &paths)
+            && let Some(r) = rows.iter().find(|r| r.path == p)
+        {
             add(&mut out, r, "linked from this".to_string());
         }
     }
-    if !my_name.is_empty() {
-        let mut st = index.db.prepare_cached("SELECT DISTINCT ref FROM chunks WHERE text LIKE ?1 OR text LIKE ?2")?;
-        let refs: Vec<String> =
-            st.query_map([format!("%[[{my_name}]]%"), format!("%[[{my_name}|%")], |r| r.get(0))?.flatten().collect();
-        for x in refs {
-            if let Some(r) = by_id(&x) {
-                add(&mut out, r, "links here".to_string());
-            }
+    let mut st = index.db.prepare_cached("SELECT DISTINCT path, text FROM chunks WHERE text LIKE '%[[%'")?;
+    let linking: Vec<(String, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.flatten().collect();
+    for (path, text) in linking {
+        if path != me.path
+            && wiki_links(&text).iter().any(|t| resolve(t, &path, &paths).as_deref() == Some(me.path.as_str()))
+            && let Some(r) = rows.iter().find(|r| r.path == path)
+        {
+            add(&mut out, r, "links here".to_string());
         }
     }
     // written in the same work (this computer's history)
@@ -169,6 +172,55 @@ pub fn connected_by(
     Ok(out)
 }
 
+/// The targets of the [[links]] in a text, as written (no label, no
+/// heading): "folder/name", "name".
+pub fn wiki_links(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("[[") {
+        let after = &rest[i + 2..];
+        let Some(j) = after.find("]]") else { break };
+        let inner = &after[..j];
+        let target = inner.split('|').next().unwrap_or("").split(['#', '^']).next().unwrap_or("").trim();
+        if !target.is_empty() && !target.contains('\n') && !out.iter().any(|t: &String| t == target) {
+            out.push(target.to_string());
+        }
+        rest = &after[j + 2..];
+    }
+    out
+}
+
+/// The note a link names, from the note at `from`: the note at that path
+/// (from the project's root, or the end of a path), else the one note with
+/// that name, else of the notes with that name the one nearest to `from`
+/// (then the one nearest the root). None when it names none, or several
+/// equally near.
+pub fn resolve(target: &str, from: &str, paths: &[&str]) -> Option<String> {
+    let t = target.trim_end_matches(".md").trim_start_matches("./").to_lowercase();
+    let stem = |p: &str| p.trim_end_matches(".md").to_lowercase();
+    if t.contains('/') {
+        let hits: Vec<&&str> = paths.iter().filter(|p| stem(p) == t || stem(p).ends_with(&format!("/{t}"))).collect();
+        return (hits.len() == 1).then(|| hits[0].to_string());
+    }
+    let named: Vec<&&str> = paths.iter().filter(|p| stem(p).rsplit('/').next() == Some(t.as_str())).collect();
+    match named.len() {
+        0 => None,
+        1 => Some(named[0].to_string()),
+        _ => {
+            // the nearest: the most folders in common with the linking note
+            let from_dirs: Vec<&str> = from.split('/').collect();
+            let common = |p: &str| p.split('/').zip(&from_dirs).take_while(|(a, b)| a == *b).count();
+            let best = named.iter().map(|p| common(p)).max()?;
+            let nearest: Vec<&&&str> = named.iter().filter(|p| common(p) == best).collect();
+            // then the one nearest the root, as Obsidian takes it
+            let depth = |p: &str| p.matches('/').count();
+            let top = nearest.iter().map(|p| depth(p)).min()?;
+            let shallow: Vec<&&&&str> = nearest.iter().filter(|p| depth(p) == top).collect();
+            (shallow.len() == 1).then(|| shallow[0].to_string())
+        }
+    }
+}
+
 /// "connected: d7 Refund window: replaced this · e4 Day 30 refused: same code (payments/)"
 pub fn line(links: &[Link]) -> Option<String> {
     if links.is_empty() {
@@ -190,6 +242,31 @@ pub fn line(links: &[Link]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn links_name_one_note() {
+        let text = "See [[projects/omni/design]], [[design#Goals]], [[Design|the design]] and ![[pic.png]].";
+        assert_eq!(wiki_links(text), vec!["projects/omni/design", "design", "Design", "pic.png"]);
+        let paths = [
+            "projects/omni/design.md",
+            "design.md",
+            "projects/omni/intro.md",
+            "other/00 - Index.md",
+            "projects/omni/00 - Index.md",
+        ];
+        assert_eq!(resolve("projects/omni/design", "x.md", &paths).as_deref(), Some("projects/omni/design.md"));
+        assert_eq!(resolve("omni/design", "x.md", &paths).as_deref(), Some("projects/omni/design.md"));
+        // two notes named design: the one in the linking note's folder
+        assert_eq!(resolve("design", "projects/omni/intro.md", &paths).as_deref(), Some("projects/omni/design.md"));
+        assert_eq!(resolve("Design", "top.md", &paths).as_deref(), Some("design.md"));
+        assert_eq!(
+            resolve("00 - Index", "projects/omni/intro.md", &paths).as_deref(),
+            Some("projects/omni/00 - Index.md")
+        );
+        assert_eq!(resolve("00 - Index", "top.md", &paths).as_deref(), Some("other/00 - Index.md"));
+        assert_eq!(resolve("x", "top.md", &["a/x.md", "b/x.md"]), None, "two equally near");
+        assert_eq!(resolve("missing", "x.md", &paths), None);
+    }
 
     #[test]
     fn a_folder_and_a_file_in_it_are_the_same_place() {
