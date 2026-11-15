@@ -1,7 +1,7 @@
 //! Changing a note file and its index entry together.
 
 use super::Index;
-use crate::note::{Kind, Note, Props};
+use crate::note::{Kind, Note, Value};
 use crate::project::{Project, files};
 use anyhow::Result;
 
@@ -28,12 +28,8 @@ pub fn update_note<T>(
         None if note.kind() == Kind::Rule => String::new(), // a rules note: its rules have the ids
         None => {
             let id = index.next_id(note.kind())?;
-            let mut props = Props::default();
-            props.set_text("id", id.clone());
-            for (k, v) in note.props.iter() {
-                props.set(k, v.clone());
-            }
-            note.props = props;
+            // first, the other keys as they were written
+            note.props.set_first("id", Value::Text(id.clone()));
             id
         }
     };

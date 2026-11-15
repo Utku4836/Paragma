@@ -130,6 +130,7 @@ fn prepare(project: &Project, rel: &str) -> Option<Prepared> {
             let v = match v {
                 note::Value::Text(s) => serde_json::Value::String(s.clone()),
                 note::Value::List(l) => serde_json::Value::from(l.clone()),
+                note::Value::Raw(r) => serde_json::Value::String(r.trim().to_string()),
             };
             (k.clone(), v)
         })

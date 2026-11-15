@@ -88,6 +88,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         let v = match v {
             Value::Text(s) => s.clone(),
             Value::List(l) => l.join(", "),
+            Value::Raw(r) => crate::output::one_line(r.trim(), 120),
         };
         if !v.is_empty() {
             b.add(&format!("{k}: {v}"));
@@ -105,8 +106,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         }
         b.out.push_str(&format!("... more below line {n}: pg read {} --budget {}\n", a.target, cx.budget * 2));
     }
-    if !row.id.is_empty() {
-        let links = crate::search::graph::connected(&project, &index, &row.id, crate::search::graph::SHOWN, &[])?;
+    // a note without an id: by its path, as search names it
+    {
+        let me = if row.id.is_empty() { row.path.trim_end_matches(".md").to_string() } else { row.id.clone() };
+        let links = crate::search::graph::connected(&project, &index, &me, crate::search::graph::SHOWN, &[])?;
         if let Some(l) = crate::search::graph::line(&links) {
             b.add(&l);
         }
