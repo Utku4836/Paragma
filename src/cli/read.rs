@@ -77,6 +77,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         row.path.trim_end_matches(".md")
     ));
     let index = Index::open(&project)?;
+    crate::output::mark("read: index open");
     let props = index.props_at(&row.path);
     if let Some(w) = crate::code::stale::Staleness::new(&cx.home, &project).check(&props)? {
         b.add(&format!("({w})"));
@@ -150,14 +151,15 @@ pub fn locate(cx: &Context, target: &str) -> Result<(Project, NoteRow)> {
     match (&proj_name, &cx.project) {
         (Some(p), _) => candidates.push((cx.home.project(p).expect("checked above"), rest.clone())),
         (None, _) => {
-            // "shop/physics/collisions": the first part may be a project
+            // the current project first (as mv and rm look), then
+            // "shop/physics/collisions" in project shop
+            if let Some(p) = &cx.project {
+                candidates.push((p.clone(), rest.clone()));
+            }
             if let Some((first, inner)) = rest.split_once('/')
                 && let Some(p) = cx.home.project(first)
             {
                 candidates.push((p, inner.to_string()));
-            }
-            if let Some(p) = &cx.project {
-                candidates.push((p.clone(), rest.clone()));
             }
             if cx.project.is_none() {
                 for p in cx.home.projects() {

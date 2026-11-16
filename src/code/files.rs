@@ -2,8 +2,9 @@
 //! does not ignore), or, outside git, every file below except build output
 //! and dependencies.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Folders that hold build output or dependencies, never written code.
 const SKIP: &[&str] = &[
@@ -26,18 +27,175 @@ pub const MAX_SIZE: u64 = 1_000_000;
 /// Files read from one folder at most.
 const MAX_FILES: usize = 30_000;
 
+/// What `list` found in this run of pg, by folder: a command can open the
+/// code index more than once (the brief: stale notes, then the code part),
+/// and git is slow to start (about 0.1 s on Windows), so the folder is
+/// listed once, and early (`list_ahead`) while other work goes on.
+type Listed = Arc<OnceLock<Vec<String>>>;
+static LISTED: Mutex<Vec<(PathBuf, Listed)>> = Mutex::new(Vec::new());
+
+fn listed(dir: &Path) -> Listed {
+    let mut all = LISTED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, l)) = all.iter().find(|(d, _)| d == dir) {
+        return l.clone();
+    }
+    let l = Listed::default();
+    all.push((dir.to_path_buf(), l.clone()));
+    l
+}
+
 /// Paths below `dir` with '/', of the files worth showing: code in a known
-/// language, and the usual project files around it.
+/// language, and the usual project files around it. Listed once a run of
+/// pg (`forget` after something that may change the files).
 pub fn list(dir: &Path) -> Vec<String> {
-    let mut out = if dir.join(".git").exists() { from_git(dir) } else { None }.unwrap_or_else(|| {
-        let mut v = Vec::new();
-        walk(dir, dir, &mut v);
+    listed(dir).get_or_init(|| list_now(dir)).clone()
+}
+
+/// Starts listing these folders in the background, for a `list` later in
+/// this run.
+pub fn list_ahead<P: AsRef<Path>>(dirs: impl IntoIterator<Item = P>) {
+    for d in dirs {
+        let dir = d.as_ref().to_path_buf();
+        if !dir.is_dir() {
+            continue;
+        }
+        let l = listed(&dir);
+        if l.get().is_none() {
+            std::thread::spawn(move || {
+                l.get_or_init(|| list_now(&dir));
+            });
+        }
+    }
+}
+
+/// Lists afresh from now on: after a command that may have made or removed
+/// files (pg run).
+pub fn forget() {
+    LISTED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+fn list_now(dir: &Path) -> Vec<String> {
+    if dir.join(".git").is_dir() {
+        if let Some(files) = kept::load(dir) {
+            return files;
+        }
+        if let Some(all) = from_git(dir) {
+            let files = worth_showing(all.clone());
+            kept::store(dir, &all, &files);
+            return files;
+        }
+    }
+    let mut v = Vec::new();
+    walk(dir, dir, &mut v);
+    worth_showing(v)
+}
+
+fn worth_showing(mut files: Vec<String>) -> Vec<String> {
+    files.retain(|p| shown(p));
+    files.sort();
+    files.truncate(MAX_FILES);
+    files
+}
+
+/// Where listings of git folders are kept between runs of pg (set once a
+/// run; unset: not kept).
+static KEPT_IN: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn keep_listings_in(dir: PathBuf) {
+    let _ = KEPT_IN.set(dir);
+}
+
+/// A git folder's listing kept between runs: listing asks git twice (the
+/// files, then their attributes), about 0.2 s on Windows, for every command
+/// that reads the code (the brief, a hook before each edit). The listing is
+/// used again while nothing that decides it changed: git's index (a file
+/// added, removed, checked out), the ignore and attribute files, and the
+/// folders holding the files (a file made or removed changes its folder's
+/// time). At most an hour old, for what this cannot see (git's global
+/// settings).
+mod kept {
+    use std::hash::{Hash, Hasher};
+    use std::path::Path;
+    use std::time::{Duration, SystemTime};
+
+    /// Folders checked at most; a larger tree is listed by git every time.
+    const MOST_FOLDERS: usize = 5_000;
+    const MOST_AGE: Duration = Duration::from_secs(3600);
+
+    fn file(dir: &Path) -> Option<std::path::PathBuf> {
+        let root = super::KEPT_IN.get()?;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        dir.hash(&mut h);
+        Some(root.join(format!("{:016x}.json", h.finish())))
+    }
+
+    /// Every folder holding a file of the listing ("" is the folder itself).
+    fn folders(all: &[String]) -> Vec<String> {
+        let mut v: Vec<String> =
+            all.iter().map(|p| p.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()).collect();
+        v.push(String::new());
+        v.sort();
+        v.dedup();
         v
-    });
-    out.retain(|p| shown(p));
-    out.sort();
-    out.truncate(MAX_FILES);
-    out
+    }
+
+    fn time(p: &Path) -> u128 {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    }
+
+    /// What decides the listing, as one number.
+    fn stamp(dir: &Path, folders: &[String]) -> String {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        env!("CARGO_PKG_VERSION").hash(&mut h);
+        for f in [".git/index", ".git/info/exclude", ".git/info/attributes"] {
+            time(&dir.join(f)).hash(&mut h);
+        }
+        for f in folders {
+            let d = if f.is_empty() { dir.to_path_buf() } else { dir.join(f) };
+            f.hash(&mut h);
+            time(&d).hash(&mut h);
+            time(&d.join(".gitignore")).hash(&mut h);
+            time(&d.join(".gitattributes")).hash(&mut h);
+        }
+        format!("{:016x}", h.finish())
+    }
+
+    pub fn load(dir: &Path) -> Option<Vec<String>> {
+        let path = file(dir)?;
+        let age = SystemTime::now().duration_since(std::fs::metadata(&path).ok()?.modified().ok()?).ok()?;
+        if age > MOST_AGE {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+        let strings = |k: &str| -> Option<Vec<String>> {
+            v[k].as_array()?.iter().map(|x| x.as_str().map(str::to_string)).collect()
+        };
+        if v["dir"].as_str()? != dir.to_string_lossy() {
+            return None;
+        }
+        let folders = strings("folders")?;
+        (v["stamp"].as_str()? == stamp(dir, &folders)).then(|| strings("files")).flatten()
+    }
+
+    pub fn store(dir: &Path, all: &[String], files: &[String]) {
+        let Some(path) = file(dir) else { return };
+        let folders = folders(all);
+        if folders.len() > MOST_FOLDERS {
+            return;
+        }
+        let v = serde_json::json!({
+            "dir": dir.to_string_lossy(),
+            "stamp": stamp(dir, &folders),
+            "folders": folders,
+            "files": files,
+        });
+        let _ = crate::project::files::write_atomic(&path, v.to_string().as_bytes());
+    }
 }
 
 fn from_git(dir: &Path) -> Option<Vec<String>> {
@@ -194,7 +352,43 @@ mod tests {
         assert_eq!(listed, ["README.md", "bench/keep/own.py", "src/main.rs"], "{listed:?}");
 
         // without such marks nothing is left out, and git is not asked
+        // (in a new run of pg: a run lists a folder once)
         write(".gitattributes", "* text=auto\n");
+        forget();
         assert!(list(dir).contains(&"bench/run.py".to_string()));
+    }
+
+    #[test]
+    fn a_kept_listing_follows_what_changes() {
+        let d = tempfile::tempdir().unwrap();
+        let (dir, kept) = (d.path().join("code"), d.path().join("kept"));
+        keep_listings_in(kept);
+        let write = |p: &str| {
+            let f = dir.join(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, "x\n").unwrap();
+        };
+        write("src/a.rs");
+        write("src/deep/b.rs");
+        Command::new("git").args(["init", "-q"]).current_dir(&dir).output().unwrap();
+        let run = || {
+            forget();
+            list(&dir)
+        };
+        assert_eq!(run(), ["src/a.rs", "src/deep/b.rs"]);
+        // untracked files made and removed, in a known folder and a new one
+        write("src/deep/c.rs");
+        assert_eq!(run(), ["src/a.rs", "src/deep/b.rs", "src/deep/c.rs"]);
+        write("src/new/d.rs");
+        assert!(run().contains(&"src/new/d.rs".to_string()));
+        std::fs::remove_file(dir.join("src/a.rs")).unwrap();
+        assert!(!run().contains(&"src/a.rs".to_string()));
+        // an ignore file that leaves a folder out
+        std::fs::write(dir.join(".gitignore"), "src/new/\n").unwrap();
+        assert!(!run().contains(&"src/new/d.rs".to_string()));
+        // the listing was kept: the same answer without git, while nothing changed
+        if let Some(k) = KEPT_IN.get() {
+            assert!(std::fs::read_dir(k).is_ok_and(|mut r| r.next().is_some()));
+        }
     }
 }

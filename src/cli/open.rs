@@ -69,6 +69,8 @@ const QUESTIONS_SHOWN: usize = 8;
 const EARLIER_HANDOFFS: usize = 2;
 /// Files listed as likely to be touched, or as changed.
 const LIKELY: usize = 5;
+/// Commits read for "usually changes with".
+const TOGETHER_COMMITS: usize = 300;
 /// How close in meaning (plus name) code must be to the goal to be listed.
 const LIKELY_MIN: f32 = 0.35;
 /// Rules listed as matching the goal and steps (before the others).
@@ -226,6 +228,18 @@ fn linkable(cx: &Context) -> bool {
 
 fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How, others: &[String]) -> Result<String> {
     crate::output::mark("brief: start");
+    // git takes a while to start (about 0.1 s on Windows): what the brief
+    // will ask it runs from now on, side by side, while the rest is read
+    let folders = Links::load(&cx.home).folders_of(&project.name);
+    crate::code::files::list_ahead(&folders);
+    crate::code::git::changed_ahead(&folders);
+    let last_finish = state.last_finish();
+    for f in &folders {
+        crate::code::git::together_ahead(Path::new(f), TOGETHER_COMMITS);
+        if let Some(at) = last_finish {
+            crate::code::git::since_ahead(Path::new(f), at + 1);
+        }
+    }
     let mut b = Budget::new(cx.budget);
     b.add(first);
     if let How::New { similar } = how {
@@ -348,7 +362,6 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
         }
     }
     crate::output::mark("brief: code index");
-    crate::code::git::changed_ahead(Links::load(&cx.home).folders_of(&project.name));
     if let Some(code) = crate::code::notes::open(&cx.home, project)? {
         crate::output::mark("brief: code part");
         code_part(&mut b, &code, state, &query)?;
@@ -504,7 +517,7 @@ fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Re
     }
     if let Some((folder, path, _, _)) = best.first()
         && let Some(f) = code.folders.iter().find(|f| f.key == *folder)
-        && let Some(with) = git::changed_together(&f.dir, 300).remove(path)
+        && let Some(with) = git::changed_together(&f.dir, TOGETHER_COMMITS).remove(path)
     {
         let with: Vec<String> = with.into_iter().take(3).map(|(p, _)| p).collect();
         b.add(&format!("{} usually changes with: {}", code.display(folder, path), with.join(", ")));

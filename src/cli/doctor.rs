@@ -15,6 +15,18 @@ pub struct Args {
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let project = cx.need_project()?;
     let t = std::time::Instant::now();
+    // damage deep inside a file shows only when that part is read: looked
+    // for here, and such a file set aside to be made again
+    let mut repaired = Vec::new();
+    let libs = cx.home.root.join("libs").join("libs.db");
+    let meta = project.meta_dir();
+    for path in [meta.join("index.db"), meta.join("code.db"), meta.join("state.db"), libs] {
+        if crate::db::damaged(&path) {
+            crate::db::set_aside(&path)?;
+            repaired.push(path.file_name().unwrap_or_default().to_string_lossy().into_owned());
+        }
+    }
+    let cleared = leftovers(&project.dir);
     let mut index = Index::open(project)?;
     if a.rebuild {
         index.rebuild(project)?;
@@ -33,6 +45,15 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         count(chunks, "piece"),
         t.elapsed().as_millis()
     );
+    if cleared > 0 {
+        println!(
+            "cleared: {} of writes stopped halfway (their process was killed)",
+            count(cleared as i64, "temporary file")
+        );
+    }
+    if !repaired.is_empty() {
+        println!("repaired: {} damaged, set aside (.broken) and made again", repaired.join(", "));
+    }
     match &code {
         Some(c) => {
             let (files, symbols) = c.counts();
@@ -95,4 +116,16 @@ fn not_notes(dir: &std::path::Path) -> (usize, Vec<String>) {
     folders.sort();
     folders.truncate(6);
     (n, folders)
+}
+
+/// Clears the leftovers of killed writers in every folder of the memory.
+fn leftovers(dir: &std::path::Path) -> usize {
+    let mut n = crate::project::files::clear_leftovers(dir);
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if e.file_type().is_ok_and(|t| t.is_dir()) && name != ".pg" && name != ".git" {
+            n += leftovers(&e.path());
+        }
+    }
+    n
 }

@@ -120,11 +120,12 @@ impl CodeIndex {
         if folders.is_empty() {
             return Ok(None);
         }
-        let db = crate::db::open(&project.meta_dir().join("code.db"))?;
-        let mut index = CodeIndex { db, folders };
-        index.ensure_schema()?;
-        let renames = index.sync()?;
-        Ok(Some((index, renames)))
+        crate::db::open_or_renew(&project.meta_dir().join("code.db"), |db| {
+            let mut index = CodeIndex { db, folders: folders.clone() };
+            index.ensure_schema()?;
+            let renames = index.sync()?;
+            Ok(Some((index, renames)))
+        })
     }
 
     /// The project's code index as it was last brought up to date, without
@@ -144,10 +145,14 @@ impl CodeIndex {
                 Folder { key, dir, name }
             })
             .collect();
-        let db = crate::db::open(&path)?;
         let wanted = format!("{SCHEMA_VERSION}/{}", embed::fingerprint());
-        let have: Option<String> = db.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| r.get(0)).ok();
-        Ok((have.as_deref() == Some(wanted.as_str())).then_some(CodeIndex { db, folders }))
+        crate::db::open_or_renew(&path, |db| {
+            // a damaged file shows here, not as a missing table
+            db.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))?;
+            let have: Option<String> =
+                db.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| r.get(0)).ok();
+            Ok((have.as_deref() == Some(wanted.as_str())).then(|| CodeIndex { db, folders: folders.clone() }))
+        })
     }
 
     fn ensure_schema(&mut self) -> Result<()> {

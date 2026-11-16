@@ -32,6 +32,7 @@ pub fn by_words(index: &Index, query: &str) -> Result<Vec<i64>> {
             n < COMMON_MIN || n as f64 / total <= COMMON_WORD
         })
         .collect();
+    crate::output::mark("search: common words dropped");
     if words.is_empty() {
         return Ok(Vec::new());
     }

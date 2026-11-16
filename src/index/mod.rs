@@ -79,11 +79,12 @@ impl Index {
     /// Opens the index, creating or rebuilding it when needed, and brings it
     /// up to date with the note files.
     pub fn open(project: &Project) -> Result<Index> {
-        let db = crate::db::open(&project.index_path())?;
-        let mut index = Index { db };
-        index.ensure_schema()?;
-        index.sync(project)?;
-        Ok(index)
+        crate::db::open_or_renew(&project.index_path(), |db| {
+            let mut index = Index { db };
+            index.ensure_schema()?;
+            index.sync(project)?;
+            Ok(index)
+        })
     }
 
     fn ensure_schema(&mut self) -> Result<()> {

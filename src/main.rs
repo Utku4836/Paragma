@@ -22,7 +22,9 @@ mod upgrade;
 fn main() -> std::process::ExitCode {
     output::mark("start");
     quiet_when_output_closes();
-    cli::run()
+    let code = cli::run();
+    output::mark("end");
+    code
 }
 
 /// An agent that pipes pg into `head` closes the output early: pg stops

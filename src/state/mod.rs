@@ -35,9 +35,12 @@ pub struct Event {
 impl State {
     pub fn open(project: &Project) -> Result<State> {
         let path = project.state_path();
-        let mut db = crate::db::open(&path)?;
-        migrate::run(&mut db, &path)?;
-        Ok(State { db })
+        // what it holds helps, but pg works without it: a damaged file is
+        // set aside and a new one started
+        crate::db::open_or_renew(&path, |mut db| {
+            migrate::run(&mut db, &path)?;
+            Ok(State { db })
+        })
     }
 
     /// Notes that this conversation is working on the project.

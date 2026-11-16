@@ -149,6 +149,19 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     let (id, what) = write_note(&project, &rel, &text, a.append)?;
     State::open(&project)?.touch_session(&cx.cwd.to_string_lossy())?;
     println!("ok {}/{} ({id}, {what})", project.name, rel.trim_end_matches(".md"));
+    // "notes/x" in shop, when a project is called notes: said aloud, so a
+    // note meant for this project is not lost in the other one unseen
+    if let Some(here) = &cx.project
+        && here.name != project.name
+    {
+        println!(
+            "written in project {}, not {}: {} has a project of that name; this project's own folder: pg write {}/{path} ...",
+            project.name,
+            here.name,
+            path.split('/').next().unwrap_or(""),
+            here.name
+        );
+    }
     if let Some(w) = warning {
         println!("{w}");
     }
@@ -307,7 +320,13 @@ fn target(cx: &Context, path: &str) -> Result<(String, String)> {
     let (first, rest) = path.split_once('/').unwrap_or((path, ""));
     match &cx.project {
         // inside the current project, unless the path names another project
-        Some(p) if first != p.name && !rest.is_empty() && cx.home.project(first).is_some() => {
+        // and this one has no folder of that name
+        Some(p)
+            if first != p.name
+                && !rest.is_empty()
+                && cx.home.project(first).is_some()
+                && !p.dir.join(first).is_dir() =>
+        {
             Ok((first.to_string(), rest.to_string()))
         }
         Some(p) if first == p.name && !rest.is_empty() => Ok((p.name.clone(), rest.to_string())),

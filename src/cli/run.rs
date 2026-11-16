@@ -63,6 +63,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let command = crate::project::env::hide(&command, &secrets);
     let parsed = parse::parse(&output);
     crate::output::mark("run: command done");
+    // the command may have made or removed files
+    crate::code::files::forget();
     if let Some(p) = &cx.project {
         crate::code::git::changed_ahead(crate::state::links::Links::load(&cx.home).folders_of(&p.name));
     }

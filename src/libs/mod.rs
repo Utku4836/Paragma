@@ -52,15 +52,16 @@ pub struct Found {
 
 impl Store {
     pub fn open(home: &crate::project::Home) -> Result<Store> {
-        let db = crate::db::open(&home.root.join("libs").join("libs.db"))?;
-        db.execute_batch(SCHEMA)?;
-        let have: Option<String> =
-            db.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| r.get(0)).optional()?;
-        if have.as_deref() != Some(SCHEMA_VERSION) {
-            db.execute_batch("DELETE FROM items; DELETE FROM items_fts; DELETE FROM libs;")?;
-            db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?1)", [SCHEMA_VERSION])?;
-        }
-        Ok(Store { db })
+        crate::db::open_or_renew(&home.root.join("libs").join("libs.db"), |db| {
+            db.execute_batch(SCHEMA)?;
+            let have: Option<String> =
+                db.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| r.get(0)).optional()?;
+            if have.as_deref() != Some(SCHEMA_VERSION) {
+                db.execute_batch("DELETE FROM items; DELETE FROM items_fts; DELETE FROM libs;")?;
+                db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?1)", [SCHEMA_VERSION])?;
+            }
+            Ok(Store { db })
+        })
     }
 
     /// The library read, reading it now when it was not yet; None when it

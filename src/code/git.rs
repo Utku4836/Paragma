@@ -10,6 +10,61 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+/// Logs asked for in this run of pg, by folder and arguments: started early
+/// (`log_ahead`) they run beside other work, and a second ask waits for the
+/// first instead of starting git again.
+type Log = std::sync::Arc<std::sync::OnceLock<Option<String>>>;
+/// A folder and the arguments of a log.
+type LogKey = (std::path::PathBuf, Vec<String>);
+static LOGS: std::sync::Mutex<Vec<(LogKey, Log)>> = std::sync::Mutex::new(Vec::new());
+
+fn log_cell(dir: &Path, args: &[String]) -> Log {
+    let mut all = LOGS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, l)) = all.iter().find(|((d, a), _)| d == dir && a == args) {
+        return l.clone();
+    }
+    let l = Log::default();
+    all.push(((dir.to_path_buf(), args.to_vec()), l.clone()));
+    l
+}
+
+/// `git log` with these arguments, once a run of pg.
+fn log_once(dir: &Path, args: Vec<String>) -> Option<String> {
+    let cell = log_cell(dir, &args);
+    cell.get_or_init(|| git(dir, &args.iter().map(String::as_str).collect::<Vec<_>>())).clone()
+}
+
+fn log_ahead(dir: &Path, args: Vec<String>) {
+    if !is_repo(dir) {
+        return;
+    }
+    let cell = log_cell(dir, &args);
+    if cell.get().is_none() {
+        let dir = dir.to_path_buf();
+        std::thread::spawn(move || {
+            cell.get_or_init(|| git(&dir, &args.iter().map(String::as_str).collect::<Vec<_>>()));
+        });
+    }
+}
+
+fn since_args(time: i64) -> Vec<String> {
+    ["log", &format!("--since=@{time}"), "--name-only", "--format=%x00%s"].map(str::to_string).to_vec()
+}
+
+fn together_args(commits: usize) -> Vec<String> {
+    ["log", "--name-only", "--format=%x00", "-n", &commits.to_string()].map(str::to_string).to_vec()
+}
+
+/// Starts `since` in the background, for a call later in this run.
+pub fn since_ahead(dir: &Path, time: i64) {
+    log_ahead(dir, since_args(time));
+}
+
+/// Starts `changed_together` in the background, for a call later in this run.
+pub fn together_ahead(dir: &Path, commits: usize) {
+    log_ahead(dir, together_args(commits));
+}
+
 /// A file as it was in the last commit; None when it was not there.
 pub fn at_head(dir: &Path, path: &str) -> Option<String> {
     git(dir, &["show", &format!("HEAD:./{path}")])
@@ -125,7 +180,7 @@ pub fn changed_since(dir: &Path, commit: &str, path: &str) -> Option<Vec<(usize,
 /// Commits since a time (seconds since the epoch): their subjects, newest
 /// first, and the files they changed.
 pub fn since(dir: &Path, time: i64) -> (Vec<String>, Vec<String>) {
-    let Some(log) = git(dir, &["log", &format!("--since=@{time}"), "--name-only", "--format=%x00%s"]) else {
+    let Some(log) = log_once(dir, since_args(time)) else {
         return (Vec::new(), Vec::new());
     };
     let (mut subjects, mut files) = (Vec::new(), Vec::new());
@@ -145,7 +200,7 @@ pub fn since(dir: &Path, time: i64) -> (Vec<String>, Vec<String>) {
 /// the last commits.
 pub fn changed_together(dir: &Path, commits: usize) -> HashMap<String, Vec<(String, usize)>> {
     let mut pairs: HashMap<String, HashMap<String, usize>> = HashMap::new();
-    let Some(log) = git(dir, &["log", "--name-only", "--format=%x00", "-n", &commits.to_string()]) else {
+    let Some(log) = log_once(dir, together_args(commits)) else {
         return HashMap::new();
     };
     for commit in log.split('\0') {

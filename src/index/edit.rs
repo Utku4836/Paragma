@@ -18,6 +18,10 @@ pub fn update_note<T>(
     let mut index = Index::open(project)?;
     let file = project.note_file(rel);
     let rel = project.rel(&file);
+    // what a writer killed here before left behind
+    if let Some(dir) = file.parent() {
+        files::clear_leftovers(dir);
+    }
     let (mut note, exists) = match files::read_text(&file) {
         Ok(old) => (Note::parse(&old), true),
         Err(_) => (Note::default(), false),

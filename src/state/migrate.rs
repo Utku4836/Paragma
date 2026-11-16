@@ -140,8 +140,15 @@ pub fn check(state_path: &Path) -> Result<()> {
     if !state_path.is_file() {
         return Ok(());
     }
-    let db = Connection::open_with_flags(state_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    refuse_newer(version(&db)?)
+    let found = Connection::open_with_flags(state_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(anyhow::Error::from)
+        .and_then(|db| version(&db));
+    match found {
+        Ok(v) => refuse_newer(v),
+        // a damaged file says nothing of who wrote it: State::open renews it
+        Err(e) if crate::db::broken(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 fn refuse_newer(found: i64) -> Result<()> {

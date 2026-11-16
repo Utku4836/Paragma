@@ -48,10 +48,13 @@ pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
         QueryKind::Words => (1.0, 1.0),
     };
     let mut score: HashMap<i64, f64> = HashMap::new();
+    crate::output::mark("search: start");
     for (rank, rowid) in rank::by_words(index, query)?.into_iter().enumerate() {
         *score.entry(rowid).or_default() += w_words / (RRF_K + rank as f64);
     }
+    crate::output::mark("search: by words");
     let meaning = rank::by_meaning(index, query)?;
+    crate::output::mark("search: by meaning");
     if std::env::var_os("PG_EXPLAIN").is_some() {
         eprintln!(
             "explain: {qk:?}, words {:?}, word hits {}, top similarity {:.3} (z {:.2})",
@@ -97,6 +100,7 @@ pub fn find(index: &Index, query: &str) -> Result<Vec<Hit>> {
         hits.push(h?);
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+    crate::output::mark("search: hits read");
     Ok(dedup::fold(hits))
 }
 

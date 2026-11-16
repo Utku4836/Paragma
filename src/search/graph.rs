@@ -9,6 +9,7 @@ use crate::index::Index;
 use crate::project::Project;
 use anyhow::Result;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Records listed as connected.
 pub const SHOWN: usize = 5;
@@ -60,6 +61,7 @@ pub fn connected_by(
     skip: &[String],
     meaning: bool,
 ) -> Result<Vec<Link>> {
+    crate::output::mark("connected: start");
     // a note without an id is known by its path, as search names it
     let mut st = index.db.prepare_cached("SELECT id, path, title, props FROM notes")?;
     let rows: Vec<Row> = st
@@ -75,14 +77,18 @@ pub fn connected_by(
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
-    let Some(me) = rows.iter().find(|r| r.id == id) else { return Ok(Vec::new()) };
+    // looked up by id and by path many times below: a large memory has
+    // thousands of notes
+    let ids: HashMap<&str, &Row> = rows.iter().map(|r| (r.id.as_str(), r)).collect();
+    let at: HashMap<&str, &Row> = rows.iter().map(|r| (r.path.as_str(), r)).collect();
+    let Some(me) = ids.get(id).copied() else { return Ok(Vec::new()) };
     let mut out: Vec<Link> = Vec::new();
     let add = |out: &mut Vec<Link>, other: &Row, why: String| {
         if other.id != id && !skip.contains(&other.id) && !out.iter().any(|l| l.id == other.id) {
             out.push(Link { id: other.id.clone(), title: other.title.clone(), why });
         }
     };
-    let by_id = |x: &str| rows.iter().find(|r| r.id == x);
+    let by_id = |x: &str| ids.get(x).copied();
 
     // the decisions it replaced, or that replaced it
     for (key, why) in [("superseded_by", "replaced this"), ("supersedes", "replaced by this")] {
@@ -111,11 +117,12 @@ pub fn connected_by(
     }
     // [[links]] both ways: [[name]], [[folder/name]], [[name#Heading]],
     // [[name|label]], each to the one note it names
+    crate::output::mark("connected: notes read");
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let text = std::fs::read_to_string(project.dir.join(&me.path)).unwrap_or_default();
     for target in wiki_links(&text) {
         if let Some(p) = resolve(&target, &me.path, &paths)
-            && let Some(r) = rows.iter().find(|r| r.path == p)
+            && let Some(r) = at.get(p.as_str())
         {
             add(&mut out, r, "linked from this".to_string());
         }
@@ -125,11 +132,12 @@ pub fn connected_by(
     for (path, text) in linking {
         if path != me.path
             && wiki_links(&text).iter().any(|t| resolve(t, &path, &paths).as_deref() == Some(me.path.as_str()))
-            && let Some(r) = rows.iter().find(|r| r.path == path)
+            && let Some(r) = at.get(path.as_str())
         {
             add(&mut out, r, "links here".to_string());
         }
     }
+    crate::output::mark("connected: links");
     // written in the same work (this computer's history)
     if let Ok(state) = crate::state::State::open(project) {
         for x in state.written_with(id).unwrap_or_default() {
@@ -142,6 +150,7 @@ pub fn connected_by(
         out.truncate(max);
         return Ok(out);
     }
+    crate::output::mark("connected: same work");
     // the closest in meaning
     let mut st = index.db.prepare_cached("SELECT ref, vec FROM chunks")?;
     let pieces: Vec<(String, Vec<f32>)> = st
@@ -149,17 +158,20 @@ pub fn connected_by(
         .flatten()
         .collect();
     let mine: Vec<&Vec<f32>> = pieces.iter().filter(|p| p.0 == id).map(|p| &p.1).collect();
-    let mut near: Vec<(String, f32)> = Vec::new();
+    let mut best: HashMap<&str, f32> = HashMap::new();
     for (r, v) in pieces.iter().filter(|p| p.0 != id) {
         let s = mine.iter().map(|m| embed::similarity(m, v)).fold(f32::MIN, f32::max);
         if s >= SAME_TOPIC {
-            match near.iter_mut().find(|n| n.0 == *r) {
-                Some(n) => n.1 = n.1.max(s),
-                None => near.push((r.clone(), s)),
-            }
+            let b = best.entry(r.as_str()).or_insert(s);
+            *b = b.max(s);
         }
     }
-    near.sort_by(|a, b| b.1.total_cmp(&a.1));
+    crate::output::mark("connected: meaning");
+    let mut near: Vec<(String, f32)> = best.into_iter().map(|(r, s)| (r.to_string(), s)).collect();
+    // ties in a fixed order: the same note shows the same links each time
+    near.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    // only as many as can be shown are looked at
+    near.truncate(max + skip.len() + out.len() + 1);
     for (x, _) in near {
         if let Some(r) = by_id(&x) {
             add(&mut out, r, "about the same".to_string());

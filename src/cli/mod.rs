@@ -144,6 +144,13 @@ pub fn run() -> ExitCode {
                 eprintln!("pg: {}", x.message);
                 ExitCode::from(x.code)
             }
+            None if crate::db::broken(&e) => {
+                eprintln!(
+                    "pg: {e:#}
+a file of pg's own is damaged: pg doctor finds it and makes it again"
+                );
+                ExitCode::from(7)
+            }
             None => {
                 eprintln!("pg: {e:#}");
                 ExitCode::from(7)
@@ -154,7 +161,9 @@ pub fn run() -> ExitCode {
 
 fn dispatch(cli: Cli) -> Result<()> {
     crate::output::mark("parsed");
-    crate::upgrade::run(&Home::locate());
+    let home = Home::locate();
+    crate::upgrade::run(&home);
+    crate::code::files::keep_listings_in(home.projects_dir().join(".pg").join("listings"));
     crate::output::mark("upgrade checked");
     if let Command::Hook(a) = cli.command {
         return hook::run(a);

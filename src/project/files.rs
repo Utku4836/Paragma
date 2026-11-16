@@ -70,6 +70,40 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     }
 }
 
+/// The temporary file `write_atomic` writes before it replaces `path`:
+/// `.<name>.<pid>.tmp`, beside it.
+fn temporary(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    rest.rsplit_once('.')?.1.parse().ok()
+}
+
+/// Leftovers of a write whose process was killed before it ended: its
+/// temporary file, still in the folder. Removed once that process is gone
+/// (or after an hour, its number perhaps taken by another); how many.
+pub fn clear_leftovers(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let found: Vec<(std::path::PathBuf, u32)> =
+        entries.flatten().filter_map(|e| Some((e.path(), temporary(&e.file_name().to_string_lossy())?))).collect();
+    if found.is_empty() {
+        return 0;
+    }
+    let running = crate::state::conversation::Running::now();
+    let hour = Duration::from_secs(3600);
+    let mut cleared = 0;
+    for (path, pid) in found {
+        let old = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > hour);
+        let dead = pid != std::process::id() && !running.has(pid);
+        if (dead || old) && std::fs::remove_file(&path).is_ok() {
+            cleared += 1;
+        }
+    }
+    cleared
+}
+
 /// Reads a text file, tolerating the brief moment a rename holds it on
 /// Windows.
 pub fn read_text(path: &Path) -> std::io::Result<String> {
@@ -99,6 +133,21 @@ mod tests {
         assert_eq!(read_text(&p).unwrap(), "two");
         let leftovers = std::fs::read_dir(p.parent().unwrap()).unwrap().count();
         assert_eq!(leftovers, 1);
+    }
+
+    #[test]
+    fn leftovers_of_dead_writers_are_cleared() {
+        let d = tempfile::tempdir().unwrap();
+        // no process has this number (above any a system gives), and this one is alive
+        let dead = d.path().join(".note.md.4000000000.tmp");
+        let alive = d.path().join(format!(".note.md.{}.tmp", std::process::id()));
+        for p in [&dead, &alive] {
+            std::fs::write(p, "half").unwrap();
+        }
+        std::fs::write(d.path().join("note.md"), "whole").unwrap();
+        std::fs::write(d.path().join(".hidden.tmp"), "not ours").unwrap();
+        assert_eq!(clear_leftovers(d.path()), 1);
+        assert!(!dead.exists() && alive.exists() && d.path().join(".hidden.tmp").exists());
     }
 
     #[test]
