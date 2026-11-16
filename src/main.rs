@@ -19,6 +19,9 @@ mod terminal;
 mod testrun;
 mod upgrade;
 
+#[cfg(test)]
+mod robust_tests;
+
 fn main() -> std::process::ExitCode {
     output::mark("start");
     quiet_when_output_closes();

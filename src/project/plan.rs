@@ -255,7 +255,9 @@ pub fn close_part(note: &mut Note, part: &str) -> Result<String, usize> {
 pub fn drop_number(note: &mut Note, n: usize) -> Option<String> {
     let mut steps = steps(note);
     let s = steps.get_mut(n.checked_sub(1)?).filter(|s| !s.dropped)?;
+    // a done step taken out is taken out (written as done, it would stay)
     s.dropped = true;
+    s.done = false;
     s.deferred = false;
     let text = s.text.clone();
     set_steps(note, &steps);

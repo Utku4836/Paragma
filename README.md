@@ -149,7 +149,7 @@ pg tree                              # the code: files and symbols, with the not
 pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor
 ```
 
-Many `pg` calls can run at once, from several conversations. `pg rm` moves notes to `.archive/` instead of deleting them.
+Many `pg` calls can run at once, from several conversations, on one project or many. A write is whole or not there at all, also when its process is killed halfway. `pg rm` moves notes to `.archive/` instead of deleting them. pg's own index files are made again from the notes when they are damaged (kept aside as `.broken`); `pg doctor` also looks for damage deep inside them.
 
 ### Secrets
 

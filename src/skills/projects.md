@@ -29,6 +29,8 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - What is where: `pg ls`, `pg ls <folder>`; projects: `pg ls` outside a project.
 - Rename or move a note, folder or project: `pg mv <from> <to>` (`<folder>/` moves into it). Ids stay, `[[links]]` to it follow (also `[[folder/name]]`).
 - `pg rm <id | path | folder/ | project>` moves it to `.archive/` (`pg mv .archive/<path> <path>` brings it back); `--hard` deletes it.
+- A path's first part names this project's folder when it has one, else a project of that name: `pg write` says so when the note went to another project.
+- pg says a file of its own is damaged: `pg doctor` finds it and makes it again (notes are never touched).
 
 ## Memory on GitHub
 - The user may back up and sync memory with `pg git` (their screen). What you write then goes there by itself; never wait for it or sync by hand.

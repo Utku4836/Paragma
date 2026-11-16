@@ -91,6 +91,19 @@ impl Links {
     fn change(home: &Home, f: impl FnOnce(&mut Links)) -> Result<()> {
         let dir = home.projects_dir();
         let _lock = files::WriteLock::take(&dir.join(".pg"))?;
+        // a file pg cannot read (edited by hand, a disk error) is not
+        // written over with only the new link: it is kept aside
+        let path = dir.join(".links");
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && !matches!(serde_json::from_str::<Value>(&text), Ok(Value::Object(_)))
+        {
+            let aside = dir.join(format!(".links.broken-{}", crate::output::now()));
+            std::fs::rename(&path, &aside)?;
+            eprintln!(
+                "pg: the folder links file could not be read; kept as {} (each project's folder: pg link <folder> -p <project>)",
+                aside.display()
+            );
+        }
         let mut links = Links::load(home);
         f(&mut links);
         let mut map = serde_json::Map::new();

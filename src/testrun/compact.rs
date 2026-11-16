@@ -75,7 +75,14 @@ pub fn compact(output: &str, max: usize) -> Vec<String> {
             // pointing at code, up to a blank line or the next diagnostic
             let mut block = vec![l.clone()];
             let mut j = i + 1;
-            while j < lines.len() && !lines[j].trim().is_empty() && !DIAGNOSTIC.is_match(&lines[j]) {
+            // (a progress line is not part of it: "   Compiling" is indented
+            // too; a line of marks, "  |", is the error's own)
+            let progress_word = |t: &str| PROGRESS.is_match(t) && t.trim_start().starts_with(char::is_alphabetic);
+            while j < lines.len()
+                && !lines[j].trim().is_empty()
+                && !DIAGNOSTIC.is_match(&lines[j])
+                && !progress_word(&lines[j])
+            {
                 let t = &lines[j];
                 if t.starts_with(char::is_whitespace)
                     || t.trim_start().starts_with(['|', '=', '-', '^', '>'])
@@ -111,23 +118,25 @@ pub fn compact(output: &str, max: usize) -> Vec<String> {
         i += 1;
     }
 
-    let mut out: Vec<String> = Vec::new();
+    let mut whole: Vec<String> = Vec::new();
     for (n, e) in errors.iter().enumerate() {
         if n < ERRORS_WHOLE {
-            out.extend(trim_block(e));
+            whole.extend(trim_block(e));
         } else {
-            out.push(e[0].clone());
+            whole.push(e[0].clone());
         }
     }
+    let heads: Vec<String> = errors.iter().map(|e| e[0].clone()).collect();
+    let mut grouped: Vec<String> = Vec::new();
     for (_, count, places, block) in &warnings {
         let first = block[0].trim().to_string();
         if *count == 1 {
-            out.extend(trim_block(block).into_iter().take(3));
+            grouped.extend(trim_block(block).into_iter().take(3));
             continue;
         }
         let shown: Vec<&str> = places.iter().take(PLACES).map(String::as_str).collect();
         let more = places.len().saturating_sub(PLACES);
-        out.push(format!(
+        grouped.push(format!(
             "{first} (×{count}{}{})",
             if shown.is_empty() { String::new() } else { format!(": {}", shown.join(", ")) },
             if more > 0 { format!(" +{more}") } else { String::new() }
@@ -135,14 +144,25 @@ pub fn compact(output: &str, max: usize) -> Vec<String> {
     }
     // the end of the output, the same line said once
     let tail = merge_repeats(&rest);
-    let room = max.saturating_sub(out.len() + 1).max(max.min(8));
-    let from = tail.len().saturating_sub(room);
-    if from > 0 {
-        out.push(format!("... {} lines before ...", from));
-    }
-    out.extend(tail[from..].iter().cloned());
-    if progress > 0 {
-        out.push(format!("({progress} progress lines left out)"));
+    let with = |errors: &[String]| {
+        let mut out: Vec<String> = errors.to_vec();
+        out.extend(grouped.iter().cloned());
+        let room = max.saturating_sub(out.len() + 1).max(max.min(8));
+        let from = tail.len().saturating_sub(room);
+        if from > 0 {
+            out.push(format!("... {} lines before ...", from));
+        }
+        out.extend(tail[from..].iter().cloned());
+        if progress > 0 {
+            out.push(format!("({progress} progress lines left out)"));
+        }
+        out
+    };
+    // errors whole when there is room; else every error by its first line
+    // before anything else is cut: none disappears into a count
+    let mut out = with(&whole);
+    if out.len() > max && whole.len() > heads.len() {
+        out = with(&heads);
     }
     if out.len() > max {
         let cut = out.len() - max;

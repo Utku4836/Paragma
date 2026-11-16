@@ -257,8 +257,19 @@ fn split_items(s: &str) -> Option<Vec<String>> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;
+    // in double quotes a backslash escapes the next character: \" ends nothing
+    let mut escaped = false;
     for c in s.chars() {
+        if escaped {
+            escaped = false;
+            cur.push(c);
+            continue;
+        }
         match (quote, c) {
+            (Some('"'), '\\') => {
+                escaped = true;
+                cur.push(c);
+            }
             (None, '"' | '\'') => {
                 quote = Some(c);
                 cur.push(c);
@@ -281,12 +292,38 @@ fn split_items(s: &str) -> Option<Vec<String>> {
 fn unquote(s: &str) -> String {
     let s = s.trim();
     if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        return s[1..s.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\");
+        return unescape(&s[1..s.len() - 1]);
     }
     if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
         return s[1..s.len() - 1].replace("''", "'");
     }
     s.to_string()
+}
+
+/// The text of a double-quoted YAML string: the escapes `quote_always`
+/// writes read back as what they stand for; others kept as they are.
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Text that YAML would read otherwise than as this text, unquoted.
@@ -307,7 +344,12 @@ fn quote(s: &str) -> String {
 /// An item of an inline list: also quoted when it holds what ends or
 /// nests an item there.
 fn quote_item(s: &str) -> String {
-    if needs_quotes(s) || s.contains([',', '[', ']', '{', '}', '#', ':']) { quote_always(s) } else { s.to_string() }
+    // a quote inside an item would start a quoted one when read
+    if needs_quotes(s) || s.contains([',', '[', ']', '{', '}', '#', ':', '"', '\'']) {
+        quote_always(s)
+    } else {
+        s.to_string()
+    }
 }
 
 fn quote_always(s: &str) -> String {

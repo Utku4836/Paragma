@@ -62,7 +62,7 @@ pub struct Note {
 
 impl Note {
     pub fn parse(text: &str) -> Note {
-        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let text = text.trim_start_matches('\u{feff}');
         let (props, body) = props::split(text);
         Note { props, body: body.to_string() }
     }
