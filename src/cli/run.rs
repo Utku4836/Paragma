@@ -225,7 +225,12 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         }
     }
     // the whole output, for the part around an error (a short one was all said)
-    if exit != 0 && !run.errors.is_empty() && output.lines().filter(|l| !l.trim().is_empty()).count() > WHOLE_OUTPUT {
+    // (the same errors as before: named with them already)
+    if exit != 0
+        && !run.errors.is_empty()
+        && !same_as_before
+        && output.lines().filter(|l| !l.trim().is_empty()).count() > WHOLE_OUTPUT
+    {
         let path = project.meta_dir().join("last-run.log");
         if std::fs::write(&path, &output).is_ok() {
             let lines = places.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");

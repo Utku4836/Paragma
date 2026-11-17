@@ -23,16 +23,21 @@ pub fn context(output: &str, line: &str) -> (Option<usize>, Vec<String>) {
     };
     let mut details: Vec<String> = Vec::new();
     let mut library = 0usize;
+    // Rust says a panic's message on the lines after "panicked at", as they are
+    let panic = head.contains("panicked at");
     for l in lines.iter().skip(at + 1) {
         let t = l.trim();
         if t.is_empty() || ends_block(t) {
             break;
         }
+        if t.starts_with("note: run with `RUST_BACKTRACE") {
+            continue; // the same advice under every panic
+        }
         if library_frame(t) {
             library += 1;
             continue;
         }
-        if explains(l) {
+        if panic || explains(l) {
             if library > 0 {
                 details.push(format!("... {}", crate::output::count(library as i64, "library frame")));
                 library = 0;
@@ -160,10 +165,10 @@ mod tests {
         let out = "running 1 test\nthread 'refund' panicked at src/refund.rs:9:5:\nassertion `left == right` failed\n  left: 100\n right: 0\nnote: run with `RUST_BACKTRACE=1`\ntest refund ... FAILED\n";
         let (at, d) = context(out, "thread 'refund' panicked at src/refund.rs:9:5:");
         assert_eq!(at, Some(2));
-        assert_eq!(
-            d,
-            ["assertion `left == right` failed", "left: 100", "right: 0", "note: run with `RUST_BACKTRACE=1`"]
-        );
+        assert_eq!(d, ["assertion `left == right` failed", "left: 100", "right: 0"]);
+        // a panic's own message, not indented
+        let out = "thread 'w' panicked at src/lib.rs:6:5:\nrefund window must be 30 days, got 29\nnote: run with `RUST_BACKTRACE=1`\n\n";
+        assert_eq!(context(out, "thread 'w' panicked at src/lib.rs:6:5:").1, ["refund window must be 30 days, got 29"]);
     }
 
     #[test]
