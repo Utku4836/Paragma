@@ -273,5 +273,6 @@ fn opencode(data: &Path) -> Vec<Conversation> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/agents/conversations.rs"]
 mod tests;

@@ -44,5 +44,6 @@ pub fn pagerank(n: usize, edges: &[(usize, usize)], personal: &[f64], damping: f
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/kernel/rank.rs"]
 mod tests;

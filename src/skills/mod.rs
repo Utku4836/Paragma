@@ -74,5 +74,6 @@ pub fn write_copies(home: &Home) -> Result<()> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/skills/mod.rs"]
 mod tests;

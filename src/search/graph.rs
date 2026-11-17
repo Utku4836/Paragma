@@ -252,5 +252,6 @@ pub fn line(links: &[Link]) -> Option<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/search/graph.rs"]
 mod tests;

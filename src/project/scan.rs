@@ -70,5 +70,6 @@ pub fn folders(dir: &Path) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/project/scan.rs"]
 mod tests;

@@ -74,5 +74,6 @@ pub fn fit(s: &str, n: usize) -> String {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/screen.rs"]
 mod tests;

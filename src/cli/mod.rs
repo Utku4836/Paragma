@@ -310,5 +310,6 @@ impl Context {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/mod.rs"]
 mod tests;

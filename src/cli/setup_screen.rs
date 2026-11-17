@@ -583,5 +583,6 @@ impl Setup<'_> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/setup_screen.rs"]
 mod tests;

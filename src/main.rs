@@ -21,6 +21,7 @@ mod testrun;
 mod upgrade;
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 mod robust_tests;
 
 fn main() -> std::process::ExitCode {

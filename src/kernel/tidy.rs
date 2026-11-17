@@ -139,5 +139,6 @@ pub fn tidy(notes: &[NoteFacts]) -> Vec<Tidy> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/kernel/tidy.rs"]
 mod tests;

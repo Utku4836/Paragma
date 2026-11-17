@@ -121,5 +121,6 @@ pub fn read_text(path: &Path) -> std::io::Result<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/project/files.rs"]
 mod tests;

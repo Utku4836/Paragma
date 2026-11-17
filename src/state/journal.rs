@@ -247,5 +247,6 @@ impl State {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/state/journal.rs"]
 mod tests;

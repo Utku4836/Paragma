@@ -247,5 +247,6 @@ pub fn state_of(code: &CodeIndex, files: &[String], symbols: &[String]) -> Resul
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/code/stale.rs"]
 mod tests;

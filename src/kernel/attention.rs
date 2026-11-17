@@ -26,5 +26,6 @@ pub fn choose(mut hints: Vec<Hint>, said: &HashSet<String>, tokens: usize) -> Ve
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/kernel/attention.rs"]
 mod tests;

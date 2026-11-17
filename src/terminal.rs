@@ -191,5 +191,6 @@ mod sys {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../unit/src/terminal.rs"]
 mod tests;

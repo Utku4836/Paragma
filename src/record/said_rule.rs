@@ -210,5 +210,6 @@ fn sentences(s: &str) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/record/said_rule.rs"]
 mod tests;

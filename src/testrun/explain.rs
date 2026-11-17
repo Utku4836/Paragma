@@ -157,5 +157,6 @@ pub fn differ(a: &str, b: &str) -> (String, String) {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/testrun/explain.rs"]
 mod tests;

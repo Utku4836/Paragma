@@ -228,5 +228,6 @@ pub fn changed_together(dir: &Path, commits: usize) -> HashMap<String, Vec<(Stri
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/code/git.rs"]
 mod tests;

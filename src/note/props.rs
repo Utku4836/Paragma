@@ -359,5 +359,6 @@ fn quote_always(s: &str) -> String {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/note/props.rs"]
 mod tests;

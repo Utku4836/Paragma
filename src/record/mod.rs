@@ -582,5 +582,6 @@ fn free_path(project: &Project, folder: &str, title: &str) -> String {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/record/mod.rs"]
 mod tests;

@@ -69,5 +69,6 @@ pub fn gives_plan(message: &str) -> bool {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/record/plan.rs"]
 mod tests;

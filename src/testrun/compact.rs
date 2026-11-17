@@ -255,5 +255,6 @@ fn merge_repeats(lines: &[String]) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/testrun/compact.rs"]
 mod tests;

@@ -63,5 +63,6 @@ fn changing(run: &str) -> String {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/record/signature.rs"]
 mod tests;

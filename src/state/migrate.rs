@@ -209,5 +209,6 @@ fn keep(part: &Path) -> Result<()> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/state/migrate.rs"]
 mod tests;

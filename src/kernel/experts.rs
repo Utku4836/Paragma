@@ -373,5 +373,6 @@ pub fn fix_changes(at_fail: Option<&[String]>, now: &[String]) -> Option<Vec<Str
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/kernel/experts.rs"]
 mod tests;

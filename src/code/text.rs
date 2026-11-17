@@ -477,5 +477,6 @@ pub fn hlsl_buffers(src: &str) -> Vec<Symbol> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/code/text.rs"]
 mod tests;

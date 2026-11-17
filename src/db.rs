@@ -121,5 +121,6 @@ fn still_broken(path: &Path) -> bool {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../unit/src/db.rs"]
 mod tests;

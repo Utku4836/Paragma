@@ -661,5 +661,6 @@ fn resolve_re_exports(items: &mut [Item]) -> Vec<Item> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/libs/api.rs"]
 mod tests;

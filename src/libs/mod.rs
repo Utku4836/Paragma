@@ -696,5 +696,6 @@ fn diff(old: &[Item], new: &[Item], called: &HashSet<String>) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/libs/mod.rs"]
 mod tests;

@@ -171,5 +171,6 @@ impl State {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/state/outcome.rs"]
 mod tests;

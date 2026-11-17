@@ -259,5 +259,6 @@ fn private(p: &std::path::Path) {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/project/env.rs"]
 mod tests;

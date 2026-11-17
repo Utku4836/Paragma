@@ -136,5 +136,6 @@ fn is_heading(line: &str, name: &str) -> bool {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/note/mod.rs"]
 mod tests;

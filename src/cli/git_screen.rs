@@ -655,5 +655,6 @@ impl Page<'_> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/git_screen.rs"]
 mod tests;

@@ -113,5 +113,6 @@ fn split_code_name(s: &str) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/search/query.rs"]
 mod tests;

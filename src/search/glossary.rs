@@ -60,5 +60,6 @@ fn matches(word: &str, term: &str) -> bool {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/search/glossary.rs"]
 mod tests;

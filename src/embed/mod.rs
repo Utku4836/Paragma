@@ -177,5 +177,6 @@ pub fn from_bytes(b: &[u8]) -> Vec<f32> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/embed/mod.rs"]
 mod tests;

@@ -191,5 +191,6 @@ fn write_if_changed(path: &Path, before: &Value, after: &Value) -> Result<Change
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/agents/hooks.rs"]
 mod tests;

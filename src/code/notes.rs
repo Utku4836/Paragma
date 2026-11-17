@@ -217,5 +217,6 @@ fn follow(project: &Project, renames: &[Rename]) -> Result<()> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/code/notes.rs"]
 mod tests;

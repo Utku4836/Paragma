@@ -116,5 +116,6 @@ fn instructions_hash() -> u64 {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/upgrade/mod.rs"]
 mod tests;

@@ -543,5 +543,6 @@ fn kill_tree(child: &mut std::process::Child) {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/run.rs"]
 mod tests;

@@ -120,5 +120,6 @@ pub fn broken_by(runs: &[Run], files: &[String]) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/testrun/mod.rs"]
 mod tests;

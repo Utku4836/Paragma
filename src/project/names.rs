@@ -115,5 +115,6 @@ fn distance(a: &str, b: &str) -> usize {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/project/names.rs"]
 mod tests;

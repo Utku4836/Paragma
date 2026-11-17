@@ -114,5 +114,6 @@ pub fn mark(what: &str) {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../unit/src/output.rs"]
 mod tests;

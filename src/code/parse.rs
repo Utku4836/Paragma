@@ -587,5 +587,6 @@ pub fn hash(text: &str) -> u64 {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/code/parse.rs"]
 mod tests;

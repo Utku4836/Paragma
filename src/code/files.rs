@@ -321,5 +321,6 @@ fn shown(path: &str) -> bool {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/code/files.rs"]
 mod tests;

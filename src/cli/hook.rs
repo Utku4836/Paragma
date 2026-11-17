@@ -788,5 +788,6 @@ fn log(line: &str) {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/hook.rs"]
 mod tests;

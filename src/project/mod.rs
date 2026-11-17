@@ -113,5 +113,6 @@ pub fn check_name(name: &str) -> Result<()> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/project/mod.rs"]
 mod tests;

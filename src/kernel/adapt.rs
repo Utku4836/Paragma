@@ -106,5 +106,6 @@ pub fn alive(uses: &[i64], now: i64, days: i64) -> bool {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/kernel/adapt.rs"]
 mod tests;

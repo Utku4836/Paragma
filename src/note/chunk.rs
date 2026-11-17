@@ -67,5 +67,6 @@ pub fn rule_line(line: &str) -> Option<(&str, &str)> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/note/chunk.rs"]
 mod tests;

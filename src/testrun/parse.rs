@@ -220,5 +220,6 @@ pub fn locations(line: &str) -> Vec<(String, usize)> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/testrun/parse.rs"]
 mod tests;

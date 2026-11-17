@@ -180,5 +180,6 @@ pub fn folder_key(p: &Path) -> String {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/state/links.rs"]
 mod tests;

@@ -27,5 +27,6 @@ pub fn fold(hits: Vec<Hit>) -> Vec<Hit> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/search/dedup.rs"]
 mod tests;

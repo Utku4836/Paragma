@@ -454,5 +454,6 @@ fn python_named(dir: &Path) -> HashSet<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/libs/deps.rs"]
 mod tests;

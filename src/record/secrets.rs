@@ -127,5 +127,6 @@ pub fn in_notes_lines(project: &crate::project::Project) -> Vec<String> {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/record/secrets.rs"]
 mod tests;

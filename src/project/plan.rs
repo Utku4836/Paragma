@@ -314,5 +314,6 @@ pub fn add_handoff(note: &mut Note, heading: &str, text: &str, replaces: Option<
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/project/plan.rs"]
 mod tests;

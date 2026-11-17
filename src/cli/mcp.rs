@@ -294,5 +294,6 @@ fn tools() -> Value {
 }
 
 #[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
 #[path = "../../unit/src/cli/mcp.rs"]
 mod tests;
