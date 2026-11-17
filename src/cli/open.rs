@@ -268,6 +268,9 @@ fn brief(
         b.add(&format!("this folder is also linked to: {}", others.join(", ")));
     }
 
+    // what the kernel decides from: the event log, the runs, what was said
+    let facts = super::perceive::facts(project, state, compacted)?;
+    let claims = crate::kernel::experts::claims(&facts);
     let note = files::read_text(&project.note_file(plan::FILE)).map(|t| Note::parse(&t)).unwrap_or_default();
     let goal = plan::goal(&note);
     let steps = plan::steps(&note);
@@ -289,7 +292,8 @@ fn brief(
         let numbered = steps.iter().enumerate().filter(|(_, s)| s.open()).take(STEPS_SHOWN);
         for (i, s) in numbered {
             // a long step in full: pg steps
-            b.add(&format!("- [ ] {}. {}", i + 1, one_line(&s.text, STEP_CHARS)));
+            let taken = crate::kernel::experts::claim_mark(&facts, &claims, i + 1);
+            b.add(&format!("- [ ] {}. {}{taken}", i + 1, one_line(&s.text, STEP_CHARS)));
         }
         if open.len() > STEPS_SHOWN {
             b.add(&format!("+{} more: pg steps", open.len() - STEPS_SHOWN));
@@ -321,7 +325,6 @@ fn brief(
     }
     // what the kernel makes of the event log: conversations cut short, this
     // one's work before it was compacted, how the project runs
-    let facts = super::perceive::facts(project, state, compacted)?;
     let hints = crate::kernel::brief_hints(&facts, HINT_TOKENS);
     for h in &hints {
         b.add(&h.text);
@@ -352,8 +355,11 @@ fn brief(
             b.add("matching the goal and steps:");
             let mut stale = crate::code::stale::Staleness::new(&cx.home, project);
             for h in &hits {
-                let changed =
-                    if stale.check(&index.props_at(&h.path))?.is_some() { " (its code changed since)" } else { "" };
+                let changed = if stale.check(&index.props_at(&h.path))?.is_some() {
+                    " (may be outdated: pg read it)"
+                } else {
+                    ""
+                };
                 // the default group of rules says nothing: "r3 rule: ..."
                 let place = if h.heading.is_empty() {
                     format!(" {}", h.path.trim_end_matches(".md"))

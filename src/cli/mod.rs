@@ -21,8 +21,10 @@ mod screen;
 mod setup;
 mod setup_screen;
 mod skill;
+mod sleep;
 mod steps;
 mod target;
+mod tell;
 mod tree;
 mod write;
 
@@ -77,6 +79,8 @@ enum Command {
     Tree(tree::Args),
     /// What a change reaches: callers it left as they were, the tests to run (or what reaches one function)
     Ripple(ripple::Args),
+    /// A short note for the other conversations on this project (each sees it once, for a day)
+    Tell(tell::Args),
     /// Projects, or the folders and notes of a project
     Ls(ls::Args),
     /// The folders a project's code is in: list, link one (default: here), --replace the others, --remove one
@@ -97,6 +101,9 @@ enum Command {
     /// Answers an agent's hook (put in place by pg setup): the event as JSON on stdin
     #[command(hide = true)]
     Hook(hook::Args),
+    /// The work done after pg finish, in the background (what may be outdated, what could be tidier)
+    #[command(hide = true)]
+    Sleep(sleep::Args),
 }
 
 /// What every command needs.
@@ -177,7 +184,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         cli.command,
         Command::Open(_) | Command::Finish(_) | Command::Write(_) | Command::Mv(_) | Command::Rm(_)
     ) || matches!(&cli.command, Command::Steps(a) if a.changes())
-        || matches!(&cli.command, Command::Answer(_))
+        || matches!(&cli.command, Command::Answer(_) | Command::Tell(_))
         || matches!(&cli.command, Command::Ask(a) if a.asks());
     // started before too: a command that stops early (its output closed)
     // still syncs; the sync waits for a quiet moment anyway
@@ -208,6 +215,8 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Link(a) => link::run(cx, a),
         Command::Mv(a) => mv::run(cx, a),
         Command::Rm(a) => rm::run(cx, a),
+        Command::Sleep(a) => sleep::run(cx, a),
+        Command::Tell(a) => tell::run(cx, a),
         Command::Doctor(a) => doctor::run(cx, a),
         Command::Setup(a) => setup::run(cx, a),
         Command::Skill(a) => skill::run(cx, a),

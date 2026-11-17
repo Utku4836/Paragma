@@ -1,9 +1,11 @@
 //! Memory keeping itself in order, once a day at most, at `pg finish`:
-//! - errors and plain notes nobody has seen, shown or changed for three
-//!   months are archived (status: archived). Nothing is deleted: they rank
-//!   lower and still come up when a search matches them well;
-//! - rules and decisions are never archived on their own; the ones unused
-//!   for three months are listed with a question: still valid?
+//! - errors and plain notes that faded are archived (status: archived):
+//!   their liveness, from every use (shown, read, picked, written, seen
+//!   again), is below that of a thing used once three months ago
+//!   (kernel/adapt.rs): a note used often lives longer. Nothing is
+//!   deleted: they rank lower and still come up when a search matches them;
+//! - rules and decisions are never archived on their own; the faded ones
+//!   are listed with a question: still valid?
 
 use crate::index::{Index, update_note};
 use crate::note::Kind;
@@ -27,10 +29,14 @@ pub fn daily(project: &Project, state: &State) -> Result<Vec<String>> {
     }
     state.set("upkeep", &today)?;
     let index = Index::open(project)?;
-    let cutoff = now() - UNUSED;
-    let last_used = |id: &str, changed: i64, last_seen: Option<&str>| -> Result<i64> {
-        let seen = last_seen.and_then(parse_date).unwrap_or(0);
-        Ok(changed.max(seen).max(state.last_shown(id)?.unwrap_or(0)))
+    let now = now();
+    let cutoff = now - UNUSED;
+    // every use it had, the note's last change and last sighting included
+    let alive = |id: &str, changed: i64, last_seen: Option<&str>| -> Result<bool> {
+        let mut uses = state.uses(id)?;
+        uses.push(changed);
+        uses.extend(last_seen.and_then(parse_date));
+        Ok(crate::kernel::adapt::alive(&uses, now, UNUSED / 86_400))
     };
 
     let mut archived = Vec::new();
@@ -41,7 +47,7 @@ pub fn daily(project: &Project, state: &State) -> Result<Vec<String>> {
             if status != "active" || (kind == Kind::Error && seen >= KEEP_SEEN) {
                 continue;
             }
-            if last_used(&n.id, n.changed, n.props["last_seen"].as_str())? < cutoff {
+            if !alive(&n.id, n.changed, n.props["last_seen"].as_str())? {
                 update_note(project, &n.path, |note, _, _| {
                     note.props.set_text("status", "archived");
                     Ok(())
@@ -55,13 +61,13 @@ pub fn daily(project: &Project, state: &State) -> Result<Vec<String>> {
     let mut questioned = Vec::new();
     if state.first_session()?.is_some_and(|t| t < cutoff) {
         for p in index.pieces_of(Kind::Rule)? {
-            if state.last_shown(&p.id)?.unwrap_or(0) < cutoff {
+            if !crate::kernel::adapt::alive(&state.uses(&p.id)?, now, UNUSED / 86_400) {
                 questioned.push(p.id);
             }
         }
         for n in index.notes_of(Kind::Decision)? {
             let active = n.props["status"].as_str().unwrap_or("active") == "active";
-            if active && last_used(&n.id, n.changed, None)? < cutoff {
+            if active && !alive(&n.id, n.changed, None)? {
                 questioned.push(n.id);
             }
         }
@@ -69,12 +75,15 @@ pub fn daily(project: &Project, state: &State) -> Result<Vec<String>> {
 
     let mut out = super::secrets::in_notes_lines(project);
     if !archived.is_empty() {
-        out.push(format!("archived (unused for 3 months; still found when searched for): {}", archived.join(", ")));
+        out.push(format!(
+            "archived (faded: unused for about 3 months; still found when searched for): {}",
+            archived.join(", ")
+        ));
     }
     if !questioned.is_empty() {
         let more = questioned.len().saturating_sub(QUESTIONED);
         out.push(format!(
-            "not used for 3 months, still valid? {}{}: pg rm <id> if not",
+            "not used for about 3 months, still valid? {}{}: pg rm <id> if not",
             questioned.iter().take(QUESTIONED).cloned().collect::<Vec<_>>().join(", "),
             if more > 0 { format!(" (+{more})") } else { String::new() }
         ));

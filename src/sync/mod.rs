@@ -227,7 +227,7 @@ fn spawn_background(home: &crate::project::Home) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn detach(c: &mut std::process::Command) -> Result<()> {
+pub(crate) fn detach(c: &mut std::process::Command) -> Result<()> {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
     use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
@@ -252,7 +252,7 @@ fn detach(c: &mut std::process::Command) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn detach(c: &mut std::process::Command) -> Result<()> {
+pub(crate) fn detach(c: &mut std::process::Command) -> Result<()> {
     use std::os::unix::process::CommandExt;
     c.process_group(0);
     c.spawn()?;

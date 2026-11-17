@@ -103,6 +103,86 @@ pub fn at_work(f: &Facts) -> Vec<Hint> {
     }]
 }
 
+/// A step taken lasts while its conversation works: until its handoff, or
+/// this long quiet.
+pub const HOLD: i64 = 60 * 60;
+/// A note between conversations is news this long.
+pub const NEWS: i64 = 24 * 60 * 60;
+
+/// Who has taken a step.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Claim {
+    pub conversation: String,
+    /// When it was taken.
+    pub at: i64,
+}
+
+/// The steps taken now, by number: the last take of each, while the
+/// conversation that took it has not handed off and is not quiet for `HOLD`.
+pub fn claims(f: &Facts) -> std::collections::BTreeMap<usize, Claim> {
+    let mut last: HashMap<&str, (i64, i64)> = HashMap::new(); // conversation -> (last event, last finish)
+    let mut taken: std::collections::BTreeMap<usize, Claim> = std::collections::BTreeMap::new();
+    for e in &f.journal {
+        let l = last.entry(e.conversation.as_str()).or_insert((0, i64::MIN));
+        l.0 = l.0.max(e.at);
+        match &e.did {
+            Did::Finish { .. } => l.1 = e.at,
+            Did::Take { step } if *step > 0 => {
+                taken.insert(*step, Claim { conversation: e.conversation.clone(), at: e.at });
+            }
+            _ => {}
+        }
+    }
+    taken.retain(|_, c| {
+        let (seen, finished) = last.get(c.conversation.as_str()).copied().unwrap_or((0, i64::MIN));
+        finished < c.at && f.now - seen < HOLD
+    });
+    taken
+}
+
+/// "(taken by shop, 5 min ago)" or "(yours)" for a step, when taken.
+pub fn claim_mark(f: &Facts, claims: &std::collections::BTreeMap<usize, Claim>, step: usize) -> String {
+    match claims.get(&step) {
+        Some(c) if c.conversation == f.me => " (yours)".to_string(),
+        Some(c) => {
+            let who = f
+                .folders
+                .get(&c.conversation)
+                .filter(|x| !x.is_empty())
+                .map(String::as_str)
+                .unwrap_or("another conversation");
+            format!(" (taken by {who}, {})", ago(c.at, f.now))
+        }
+        None => String::new(),
+    }
+}
+
+/// Notes the other conversations left here (pg tell) in the last day, each
+/// said once.
+pub fn told(f: &Facts) -> Vec<Hint> {
+    f.journal
+        .iter()
+        .filter(|e| e.conversation != f.me && f.now - e.at < NEWS)
+        .filter_map(|e| match &e.did {
+            Did::Told { text } => {
+                let who = f
+                    .folders
+                    .get(&e.conversation)
+                    .filter(|x| !x.is_empty())
+                    .map(String::as_str)
+                    .unwrap_or("another conversation");
+                Some(Hint {
+                    key: format!("told:{}", e.seq),
+                    weight: 95,
+                    text: format!("from {who} ({}): {}", ago(e.at, f.now), one_line(text, 200)),
+                    why: "another conversation here left it for the others".into(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// What a stretch of the log did, in one line: "wrote r3, n5; added 2
 /// steps; ran cargo test 4x (last: 2 failing); edited src/a.rs, src/b.rs".
 pub fn summary(entries: &[&Entry]) -> String {
@@ -239,6 +319,42 @@ pub fn recipes(f: &Facts) -> Vec<Hint> {
         weight: 40,
         text: format!("how it runs here: {}", parts.join("; ")),
         why: "commands that passed here before".into(),
+    }]
+}
+
+/// Notes whose code is gone or changed its signature (the last sleep
+/// looked): named once, the reasons in pg doctor and pg read.
+pub fn outdated(f: &Facts) -> Vec<Hint> {
+    if f.outdated.is_empty() {
+        return Vec::new();
+    }
+    let ids: Vec<&str> = f.outdated.iter().take(6).map(|(i, _)| i.as_str()).collect();
+    let more = f.outdated.len().saturating_sub(6);
+    vec![Hint {
+        key: format!("outdated:{}", f.outdated.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>().join(",")),
+        weight: 60,
+        text: format!(
+            "may be outdated (their code is gone or its signature changed): {}{} (pg read <id> says why; still right: pg write --confirm <id>)",
+            ids.join(", "),
+            if more > 0 { format!(" +{more}") } else { String::new() }
+        ),
+        why: "the code a note names changed in a way that matters".into(),
+    }]
+}
+
+/// What could be tidier (the last sleep looked): one line, the list in pg
+/// doctor.
+pub fn tidier(f: &Facts) -> Vec<Hint> {
+    let Some(first) = f.tidy.first() else { return Vec::new() };
+    let more = f.tidy.len() - 1;
+    vec![Hint {
+        key: format!("tidy:{}", f.tidy.len()),
+        weight: 30,
+        text: format!(
+            "the notes could be tidier: {first}{}",
+            if more > 0 { format!(" (+{more} more: pg doctor)") } else { String::new() }
+        ),
+        why: "notes nearly the same, a note on several topics, or a folder with one note".into(),
     }]
 }
 

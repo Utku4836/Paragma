@@ -213,6 +213,18 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     for line in upkeep::daily(project, &state)? {
         println!("{line}");
     }
+    // what the last sleep found to tidy, once a conversation; then the
+    // next sleep looks over the memory again, in the background
+    for line in super::perceive::news(&state)? {
+        println!("{line}");
+    }
+    let facts = super::perceive::facts(project, &state, false)?;
+    let hints = crate::kernel::finish_hints(&facts, 120);
+    for h in &hints {
+        println!("{}", h.text);
+    }
+    state.say(&hints.iter().map(|h| h.key.clone()).collect::<Vec<_>>())?;
+    super::sleep::start(cx, project);
     Ok(())
 }
 

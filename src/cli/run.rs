@@ -309,6 +309,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
     state.record_run(&run)?;
     state.record(Did::Run { command: command.clone(), passed: exit == 0, failing: run.failing.len() })?;
+    for line in super::perceive::news(&state)? {
+        b.add(&line);
+    }
     finish(&b, exit);
 }
 

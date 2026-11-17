@@ -33,7 +33,7 @@ description: Use when changing code with Paragma memory - finding where things a
 - `pg run` shows the output made short (errors whole, warnings grouped, repeats and progress counted, a library's frames counted); a failure names the file with all of it and the lines of its errors: read only those.
 - A failure memory knows: `pg run` prints `known: e12 ... fix: ...`. Read it: `pg read e12`.
 - Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated. When a test that failed passes, `pg run` prints this command with the change that fixed it filled in (the functions changed after the failing run): say what was wrong and how, then run it.
-- `(code changed since it was written: ...)` on a note: the code it describes changed after it was written. Check before relying on it.
+- `may be outdated since it was written: ...` on a note: the code it names is gone, or its signature changed. Check it before relying on it; still right: `pg write --confirm <id>`, else change or remove it. `pg doctor` lists every such note.
 
 ## Before you finish
 - `pg finish "<what was done; what is next>"` lists the functions you changed and the rules and notes about them (and about the code that calls them). Check your change against those rules.

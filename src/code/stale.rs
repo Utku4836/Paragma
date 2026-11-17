@@ -1,21 +1,20 @@
-//! Notes about code that changed since they were written: a note that was
-//! right then may be wrong now, so output says so.
+//! Notes about code that may be outdated: the code they are about is gone,
+//! or its signature changed. Within limits: only notes that name their code
+//! (a record's `files`, `symbols`, `code_state`), and only those two strong
+//! signs. A function whose body changed is how code lives; it marks nothing.
+//! A rename is followed (the notes take the new name, code/notes.rs).
 //!
-//! A record written about code keeps the state of that code as it was:
-//! `code_state: payments/refund.go#Refund=9f3a1c2b` (the hash of the
-//! function's body, or of a whole file), taken after the fix the record
-//! describes, so a fix does not make its own note stale. Notes with only a
-//! `commit:` are checked with git: did the lines of their functions change
-//! since that commit?
+//! A record written about code keeps its state then:
+//! `code_state: payments/refund.go#Refund=9f3a1c2b/0c41aa07`, the hash of
+//! the function's body and of its signature (older records have the body
+//! only: they are marked when the code is gone). Records with only a
+//! `commit:` are compared with the code at that commit by git.
 
-use super::{CodeIndex, git};
+use super::{CodeIndex, git, lang::Lang, parse};
 use crate::project::{Home, Project};
 use anyhow::Result;
 use serde_json::Value;
-
-/// Lines of a file (with no function named) that must change to call a
-/// note about the whole file stale.
-const FILE_LINES: usize = 10;
+use std::collections::HashMap;
 
 /// Checks notes against the code, opening the code index only when a note
 /// has something to check.
@@ -23,20 +22,69 @@ pub struct Staleness<'a> {
     home: &'a Home,
     project: &'a Project,
     code: Option<Option<CodeIndex>>,
+    /// Files as they were at a commit, parsed once: (commit, folder, path).
+    then: HashMap<(String, String, String), Option<Vec<parse::Symbol>>>,
+}
+
+/// Why a note may be outdated.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Drift {
+    /// Places it names that are gone.
+    pub gone: Vec<String>,
+    /// Functions whose signature changed.
+    pub signature: Vec<String>,
+}
+
+impl Drift {
+    pub fn is_empty(&self) -> bool {
+        self.gone.is_empty() && self.signature.is_empty()
+    }
+
+    /// "may be outdated: payments/refund.go#Refund is gone; the signature
+    /// of tax.go#Rate changed"
+    pub fn text(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.gone.is_empty() {
+            parts.push(format!("{} {} gone", self.gone.join(", "), if self.gone.len() == 1 { "is" } else { "are" }));
+        }
+        if !self.signature.is_empty() {
+            parts.push(format!("the signature of {} changed", self.signature.join(", ")));
+        }
+        format!("may be outdated since it was written: {}", parts.join("; "))
+    }
+}
+
+/// A `code_state` entry: place, body hash, signature hash (newer records).
+fn entry(e: &str) -> Option<(&str, &str, Option<&str>)> {
+    let (place, hashes) = e.trim().rsplit_once('=')?;
+    let (body, sig) = match hashes.split_once('/') {
+        Some((b, s)) => (b, Some(s)),
+        None => (hashes, None),
+    };
+    Some((place, body, sig))
+}
+
+fn short(h: u64) -> String {
+    format!("{h:08x}").chars().take(8).collect()
 }
 
 impl<'a> Staleness<'a> {
     pub fn new(home: &'a Home, project: &'a Project) -> Staleness<'a> {
-        Staleness { home, project, code: None }
+        Staleness { home, project, code: None, then: HashMap::new() }
     }
 
-    /// "code changed since it was written: payments/refund.go#Refund", or
-    /// None when it did not (or there is nothing to check).
+    /// The note's drift as a line, or None when its code is all there.
     pub fn check(&mut self, props: &Value) -> Result<Option<String>> {
+        Ok(self.drift(props)?.filter(|d| !d.is_empty()).map(|d| d.text()))
+    }
+
+    /// What of the code a note names is gone or has another signature;
+    /// None when the note names no code (or there is no code index).
+    pub fn drift(&mut self, props: &Value) -> Result<Option<Drift>> {
         if let Some(state) = props["code_state"].as_str() {
             return self.against_state(state);
         }
-        let Some(commit) = props["commit"].as_str() else { return Ok(None) };
+        let Some(commit) = props["commit"].as_str().map(str::to_string) else { return Ok(None) };
         let list = |key: &str| -> Vec<String> {
             props[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect()
         };
@@ -44,56 +92,70 @@ impl<'a> Staleness<'a> {
         if files.is_empty() && symbols.is_empty() {
             return Ok(None);
         }
-        let Some(code) = self.code()? else { return Ok(None) };
-
-        // the files to look at, with the functions named in each
-        let mut places: Vec<(String, String, Vec<String>)> = Vec::new();
+        if self.code()?.is_none() {
+            return Ok(None);
+        }
+        let mut d = Drift::default();
         for f in files.iter().filter(|f| !f.ends_with('/')) {
-            if let Some((folder, path)) = code.locate(f)? {
-                places.push((folder, path, Vec::new()));
+            let code = self.code()?.expect("checked above");
+            if code.locate(f)?.is_none() && !self.anywhere(f) {
+                d.gone.push(f.clone());
             }
         }
         for s in &symbols {
+            let code = self.code()?.expect("checked above");
             let (file, name) = match s.split_once('#') {
                 Some((f, n)) => (Some(f), n),
                 None => (None, s.as_str()),
             };
-            let found = match file {
-                Some(f) => code.locate(f)?.into_iter().collect::<Vec<_>>(),
-                None => code.named(name)?.into_iter().map(|x| (x.folder, x.path)).collect(),
+            let now: Vec<super::Sym> = match file {
+                Some(f) => match code.locate(f)? {
+                    Some((folder, path)) => code
+                        .symbols_of(&folder, &path)?
+                        .into_iter()
+                        .filter(|x| x.qualified == name || x.name == name)
+                        .collect(),
+                    None => Vec::new(),
+                },
+                None => code.named(name)?,
             };
-            for (folder, path) in found {
-                match places.iter_mut().find(|p| p.0 == folder && p.1 == path) {
-                    Some(p) => p.2.push(name.to_string()),
-                    None => places.push((folder, path, vec![name.to_string()])),
-                }
+            let Some(sym) = now.first().cloned() else {
+                d.gone.push(s.clone());
+                continue;
+            };
+            let place = format!("{}#{}", code.display(&sym.folder, &sym.path), sym.qualified);
+            if let Some(before) = self.at_commit(&commit, &sym.folder, &sym.path)?
+                && let Some(b) = before.iter().find(|x| x.qualified == sym.qualified)
+                && normalize(&b.signature) != normalize(&sym.signature)
+            {
+                d.signature.push(place);
             }
         }
+        Ok(Some(d))
+    }
 
-        let mut changed = Vec::new();
-        for (folder, path, names) in places {
-            let Some(dir) = code.folders.iter().find(|f| f.key == folder).map(|f| f.dir.clone()) else { continue };
-            let Some(hunks) = git::changed_since(&dir, commit, &path) else { continue };
-            if hunks.is_empty() {
-                continue;
-            }
-            let shown = code.display(&folder, &path);
-            if names.is_empty() {
-                let lines: usize = hunks.iter().map(|(a, b)| b - a + 1).sum();
-                if lines >= FILE_LINES {
-                    changed.push(format!("{shown} ({lines} lines)"));
-                }
-                continue;
-            }
-            for s in code.symbols_of(&folder, &path)? {
-                let named =
-                    names.iter().any(|n| s.qualified == *n || s.name == *n || s.qualified.ends_with(&format!(".{n}")));
-                if named && hunks.iter().any(|(a, b)| s.start <= *b && s.end >= *a) {
-                    changed.push(format!("{shown}#{}", s.qualified));
-                }
-            }
+    /// Whether a file named by a note still exists below a code folder
+    /// (left out of the index, yet there).
+    fn anywhere(&mut self, file: &str) -> bool {
+        let Ok(Some(code)) = self.code() else { return false };
+        code.folders.iter().any(|f| f.dir.join(file).is_file())
+    }
+
+    /// The symbols of a file as it was at a commit (None: git does not know).
+    fn at_commit(&mut self, commit: &str, folder: &str, path: &str) -> Result<Option<Vec<parse::Symbol>>> {
+        let key = (commit.to_string(), folder.to_string(), path.to_string());
+        if let Some(found) = self.then.get(&key) {
+            return Ok(found.clone());
         }
-        Ok(said(changed))
+        let found = (|| {
+            let code = self.code().ok()??;
+            let dir = code.folders.iter().find(|f| f.key == folder).map(|f| f.dir.clone())?;
+            let lang = Lang::of(path)?;
+            let text = git::at_commit(&dir, commit, path)?;
+            Some(parse::symbols(lang, &text))
+        })();
+        self.then.insert(key, found.clone());
+        Ok(found)
     }
 
     fn code(&mut self) -> Result<Option<&CodeIndex>> {
@@ -103,61 +165,105 @@ impl<'a> Staleness<'a> {
         Ok(self.code.as_ref().and_then(|c| c.as_ref()))
     }
 
-    /// Each "place=hash" of a code_state compared with the code now.
-    fn against_state(&mut self, state: &str) -> Result<Option<String>> {
+    /// Each "place=body/signature" of a code_state compared with the code now.
+    fn against_state(&mut self, state: &str) -> Result<Option<Drift>> {
         let Some(code) = self.code()? else { return Ok(None) };
-        let mut changed = Vec::new();
-        for entry in state.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-            let Some((place, then)) = entry.rsplit_once('=') else { continue };
-            if now(code, place)?.is_some_and(|h| format!("{h:08x}").get(..8) != Some(then)) {
-                changed.push(place.to_string());
+        let mut d = Drift::default();
+        for e in state.split(',').filter_map(entry) {
+            let (place, _body, sig) = e;
+            match now(code, place)? {
+                None => d.gone.push(place.to_string()),
+                Some(at) => {
+                    if let (Some(then), Some(now_sig)) = (sig, at.signature)
+                        && short(now_sig) != then
+                    {
+                        d.signature.push(place.to_string());
+                    }
+                }
             }
         }
-        Ok(said(changed))
+        Ok(Some(d))
     }
 }
 
-fn said(changed: Vec<String>) -> Option<String> {
-    (!changed.is_empty()).then(|| format!("code changed since it was written: {}", changed.join(", ")))
+/// A signature as it means: the same with other spacing is the same.
+fn normalize(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The hash of a place now: "file#Symbol" (its body) or "file" (all of it).
-/// None when the place is gone (a rename the notes follow, or a deletion).
-fn now(code: &CodeIndex, place: &str) -> Result<Option<u64>> {
+/// A place now: its body hash and, for a function, its signature's hash.
+struct Now {
+    signature: Option<u64>,
+}
+
+/// A place now: "file#Symbol" or "file". None when it is gone (deleted; a
+/// rename is followed by the notes before this is asked).
+fn now(code: &CodeIndex, place: &str) -> Result<Option<Now>> {
     let (file, symbol) = match place.split_once('#') {
         Some((f, s)) => (f, Some(s)),
         None => (place, None),
     };
     let Some((folder, path)) = code.locate(file)? else { return Ok(None) };
     Ok(match symbol {
-        Some(s) => code.symbols_of(&folder, &path)?.into_iter().find(|x| x.qualified == s).map(|x| x.body_hash),
-        None => {
-            let dir = code.folders.iter().find(|f| f.key == folder).map(|f| f.dir.clone()).unwrap_or_default();
-            std::fs::read_to_string(dir.join(&path)).ok().map(|t| super::parse::hash(&t))
-        }
+        Some(s) => code
+            .symbols_of(&folder, &path)?
+            .into_iter()
+            .find(|x| x.qualified == s)
+            .map(|x| Now { signature: Some(parse::hash(&normalize(&x.signature))) }),
+        None => Some(Now { signature: None }),
     })
 }
 
 /// The state of some code now, to keep with a record about it: each named
-/// function's body hash, and the hash of each file with no function named.
+/// function's body and signature hashes, and the hash of each file with no
+/// function named.
 pub fn state_of(code: &CodeIndex, files: &[String], symbols: &[String]) -> Result<Option<String>> {
     let mut entries: Vec<String> = Vec::new();
     let mut covered: Vec<String> = Vec::new();
     for s in symbols {
         for x in code.named(s.rsplit('#').next().unwrap_or(s))? {
             let place = format!("{}#{}", code.display(&x.folder, &x.path), x.qualified);
-            entries.push(format!("{place}={:08x}", x.body_hash).chars().take(place.len() + 9).collect());
+            if entries.iter().any(|e| e.starts_with(&format!("{place}="))) {
+                continue; // named twice (its symbols and its code_state)
+            }
+            let sig = parse::hash(&normalize(&x.signature));
+            entries.push(format!("{place}={}/{}", short(x.body_hash), short(sig)));
             covered.push(code.display(&x.folder, &x.path));
         }
     }
     for f in files.iter().filter(|f| !f.ends_with('/')) {
         if let Some((folder, path)) = code.locate(f)?
             && !covered.contains(&code.display(&folder, &path))
-            && let Some(h) = now(code, &code.display(&folder, &path))?
+            && !entries.iter().any(|e| e.starts_with(&format!("{}=", code.display(&folder, &path))))
         {
             let place = code.display(&folder, &path);
-            entries.push(format!("{place}={}", &format!("{h:08x}")[..8]));
+            let dir = code.folders.iter().find(|x| x.key == folder).map(|x| x.dir.clone()).unwrap_or_default();
+            if let Ok(t) = std::fs::read_to_string(dir.join(&path)) {
+                entries.push(format!("{place}={}", short(parse::hash(&t))));
+            }
         }
     }
     Ok((!entries.is_empty()).then(|| entries.join(", ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entries_old_and_new() {
+        assert_eq!(entry("a.go#F=0011aabb"), Some(("a.go#F", "0011aabb", None)));
+        assert_eq!(entry(" a.go#F=0011aabb/22334455"), Some(("a.go#F", "0011aabb", Some("22334455"))));
+        assert_eq!(entry("nothing"), None);
+    }
+
+    #[test]
+    fn drift_says_what_and_why() {
+        let d = Drift { gone: vec!["a.go#F".into()], signature: vec!["b.go#G".into(), "c.go#H".into()] };
+        assert_eq!(
+            d.text(),
+            "may be outdated since it was written: a.go#F is gone; the signature of b.go#G, c.go#H changed"
+        );
+        assert!(Drift::default().is_empty());
+    }
 }

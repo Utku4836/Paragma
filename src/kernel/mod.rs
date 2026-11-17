@@ -17,9 +17,11 @@
 //! do not know each other; attention alone chooses what is worth the
 //! agent's context, says nothing twice and keeps to the budget.
 
+pub mod adapt;
 pub mod attention;
 pub mod experts;
 pub mod rank;
+pub mod tidy;
 
 use crate::state::journal::Entry;
 use crate::testrun::Run;
@@ -42,6 +44,12 @@ pub struct Facts {
     pub compacted: bool,
     /// Hints already said to this conversation, by key.
     pub said: HashSet<String>,
+    /// Notes that may be outdated, (id, why), as the last sleep found.
+    pub outdated: Vec<(String, String)>,
+    /// What could be tidier, as the last sleep found.
+    pub tidy: Vec<String>,
+    /// The hints said to every conversation lately (to learn what helps).
+    pub said_log: Vec<adapt::Said>,
 }
 
 /// Something worth telling the agent, with why.
@@ -59,7 +67,22 @@ pub struct Hint {
 /// Every expert's hints for the brief, chosen by attention to fit `tokens`.
 pub fn brief_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
     let mut hints = experts::cut_short(f);
+    hints.extend(experts::told(f));
     hints.extend(experts::at_work(f));
     hints.extend(experts::recipes(f));
+    hints.extend(experts::outdated(f));
+    hints.extend(experts::tidier(f));
+    let hints = adapt::adapt(hints, &adapt::usage(f, &f.said_log));
+    attention::choose(hints, &f.said, tokens)
+}
+
+/// What any command adds: notes the other conversations left, once.
+pub fn news_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
+    attention::choose(experts::told(f), &f.said, tokens)
+}
+
+/// What `pg finish` adds: what could be tidier, once.
+pub fn finish_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
+    let hints = adapt::adapt(experts::tidier(f), &adapt::usage(f, &f.said_log));
     attention::choose(hints, &f.said, tokens)
 }

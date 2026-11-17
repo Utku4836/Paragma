@@ -99,9 +99,17 @@ pub struct Args {
     /// Files the error is about, comma separated
     #[arg(long, value_delimiter = ',', requires = "error")]
     files: Vec<String>,
+
+    /// Say a record marked "may be outdated" is still right: it keeps the
+    /// code as it is now
+    #[arg(long, value_name = "ID", conflicts_with_all = ["rule", "decision", "error", "secret"])]
+    confirm: Option<String>,
 }
 
 pub fn run(cx: &Context, mut a: Args) -> Result<()> {
+    if let Some(id) = a.confirm.clone() {
+        return confirm(cx, &id);
+    }
     if let Some(title) = a.secret.clone() {
         return write_secret(cx, &title, &a);
     }
@@ -167,6 +175,10 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     }
     if let Some(h) = topic_hint(&project, &rel) {
         println!("{h}");
+    }
+    // a note that has grown to hold unrelated topics: one note each
+    if let Some(t) = super::sleep::topics_of(&project, &rel) {
+        println!("{t}");
     }
     Ok(())
 }
@@ -317,6 +329,63 @@ pub fn write_note(project: &Project, rel: &str, text: &str, append: bool) -> Res
         what: what.to_string(),
     })?;
     Ok((id, what))
+}
+
+/// A record said to be still right after its code changed: it keeps the
+/// code as it is now (the hashes and the commit), so it is not marked again
+/// until that code changes again.
+fn confirm(cx: &Context, id: &str) -> Result<()> {
+    let (project, row) = super::read::locate(cx, id)?;
+    let Some(code) = crate::code::notes::open(&cx.home, &project)? else {
+        return Err(fail(USAGE, "no code folder is linked to this project: nothing to compare the record with"));
+    };
+    let note = crate::note::Note::parse(&crate::project::files::read_text(&project.dir.join(&row.path))?);
+    let props = crate::index::Index::open(&project)?.props_at(&row.path);
+    let drift = crate::code::stale::Staleness::new(&cx.home, &project).drift(&props)?.unwrap_or_default();
+    if !drift.gone.is_empty() {
+        return Err(fail(
+            USAGE,
+            format!(
+                "{} {} gone: change the record (pg write) or take it out (pg rm {id}); confirming keeps nothing",
+                drift.gone.join(", "),
+                if drift.gone.len() == 1 { "is" } else { "are" }
+            ),
+        ));
+    }
+    // the places it names: its code_state's, else its files and symbols
+    let mut files = note.props.list("files");
+    let mut symbols = note.props.list("symbols");
+    if let Some(state) = note.props.text("code_state") {
+        for e in state.split(',') {
+            let place = e.trim().rsplit_once('=').map(|(p, _)| p).unwrap_or("");
+            match place.split_once('#') {
+                Some((f, s)) => {
+                    files.push(f.to_string());
+                    symbols.push(s.to_string());
+                }
+                None if !place.is_empty() => files.push(place.to_string()),
+                None => {}
+            }
+        }
+    }
+    let state = crate::code::stale::state_of(&code, &files, &symbols)?;
+    let commit = crate::code::head_commit(&cx.home, &project);
+    update_note(&project, &row.path, |n, _, _| {
+        if let Some(s) = &state {
+            n.props.set_text("code_state", s.clone());
+        }
+        if let Some(c) = &commit {
+            n.props.set_text("commit", c.clone());
+        }
+        Ok(())
+    })?;
+    State::open(&project)?.record(crate::state::journal::Did::Write {
+        kind: "confirm".into(),
+        id: id.to_string(),
+        what: "confirmed".into(),
+    })?;
+    println!("ok {id} (confirmed: it keeps the code as it is now)");
+    Ok(())
 }
 
 /// The project and the path in it a write is aimed at.

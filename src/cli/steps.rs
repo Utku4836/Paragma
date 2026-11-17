@@ -39,12 +39,22 @@ pub struct Args {
     /// The step's new text (with --edit)
     #[arg(allow_hyphen_values = true)]
     text: Vec<String>,
+    /// Take a step, by number: the other conversations here see it taken until this one hands off or goes quiet
+    #[arg(long, value_name = "NUMBER")]
+    take: Option<usize>,
+    /// With --take: take it even when another conversation has it
+    #[arg(long, requires = "take")]
+    force: bool,
 }
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let project = cx.need_project()?;
     if !a.text.is_empty() && a.edit.is_none() {
         return Err(fail(USAGE, "a text is for --edit: pg steps --edit <number> \"new text\""));
+    }
+    let state = crate::state::State::open(project)?;
+    if let Some(number) = a.take {
+        take(project, &state, number, a.force)?;
     }
     if a.changes() {
         let text = a.text.join(" ");
@@ -114,6 +124,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     let open = steps.iter().filter(|s| s.open()).count();
     let deferred = steps.iter().filter(|s| s.deferred).count();
+    let facts = super::perceive::facts(project, &state, false)?;
+    let claims = crate::kernel::experts::claims(&facts);
     println!(
         "steps of {}: {open} open, {} done{}",
         project.name,
@@ -128,7 +140,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         } else {
             " "
         };
-        println!("- [{mark}] {}. {}{}", i + 1, s.text, if s.deferred { " (deferred)" } else { "" });
+        let taken = if s.open() { crate::kernel::experts::claim_mark(&facts, &claims, i + 1) } else { String::new() };
+        println!("- [{mark}] {}. {}{}{taken}", i + 1, s.text, if s.deferred { " (deferred)" } else { "" });
     }
     if deferred > 0 && !a.all {
         println!("(deferred ones: pg steps --all; back to the work: pg steps --resume <number>)");
@@ -136,6 +149,37 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if open > 0 {
         println!("(done: pg finish \"...\" --done <numbers>)");
     }
+    for line in super::perceive::news(&state)? {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// Takes a step for this conversation, unless another one working now has
+/// it (then only with --force).
+fn take(project: &crate::project::Project, state: &crate::state::State, number: usize, force: bool) -> Result<()> {
+    let note =
+        files::read_text(&project.note_file(plan::FILE)).map(|t| crate::note::Note::parse(&t)).unwrap_or_default();
+    let steps = plan::steps(&note);
+    let Some(step) = number.checked_sub(1).and_then(|i| steps.get(i)).filter(|s| s.open()) else {
+        return Err(fail(NOT_FOUND, format!("no open step {number} (pg steps lists them)")));
+    };
+    let facts = super::perceive::facts(project, state, false)?;
+    let claims = crate::kernel::experts::claims(&facts);
+    if claims.get(&number).is_some_and(|c| c.conversation != facts.me) && !force {
+        // " (taken by shop, 5 min ago)" -> "taken by shop, 5 min ago"
+        let mark = crate::kernel::experts::claim_mark(&facts, &claims, number);
+        let mark = mark.trim().trim_start_matches('(').trim_end_matches(')');
+        return Err(fail(
+            USAGE,
+            format!("step {number} is {mark}: leave it, or take it over with pg steps --take {number} --force"),
+        ));
+    }
+    state.record(crate::state::journal::Did::Take { step: number })?;
+    println!(
+        "ok step {number} is yours ({}): the other conversations here see it taken until you hand off or go quiet for an hour",
+        crate::output::one_line(&step.text, 60)
+    );
     Ok(())
 }
 
@@ -170,7 +214,8 @@ pub fn numbers_apart(values: &[String]) -> Vec<String> {
 impl Args {
     /// Whether it changes the plan (memory then syncs).
     pub fn changes(&self) -> bool {
-        !self.drop.is_empty()
+        self.take.is_some()
+            || !self.drop.is_empty()
             || self.edit.is_some()
             || !self.defer.is_empty()
             || !self.resume.is_empty()

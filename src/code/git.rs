@@ -70,6 +70,12 @@ pub fn at_head(dir: &Path, path: &str) -> Option<String> {
     git(dir, &["show", &format!("HEAD:./{path}")])
 }
 
+/// A file as it was at a commit; None when it was not there or git does
+/// not know the commit.
+pub fn at_commit(dir: &Path, commit: &str, path: &str) -> Option<String> {
+    git(dir, &["show", &format!("{commit}:./{path}")])
+}
+
 pub fn is_repo(dir: &Path) -> bool {
     dir.join(".git").exists()
 }
@@ -168,13 +174,6 @@ fn hunk(h: &str) -> Option<(usize, usize)> {
 pub fn head(dir: &Path) -> Option<String> {
     let h = git(dir, &["rev-parse", "HEAD"])?;
     Some(h.trim().chars().take(12).collect())
-}
-
-/// The lines of a file (as it is now) changed since a commit, committed or
-/// not; None when git does not know the commit or the file.
-pub fn changed_since(dir: &Path, commit: &str, path: &str) -> Option<Vec<(usize, usize)>> {
-    let diff = git(dir, &["diff", "-U0", "--no-color", "--no-ext-diff", commit, "--", path])?;
-    Some(diff.lines().filter_map(|l| l.strip_prefix("@@ ")).filter_map(hunk).collect())
 }
 
 /// Commits since a time (seconds since the epoch): their subjects, newest

@@ -62,8 +62,23 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         }
         None => println!("code: no folder linked (pg open in the code's folder links it)"),
     }
+    // the whole memory looked over now (what the sleep after pg finish does)
+    let found = super::sleep::look(cx, project)?;
+    if !found.outdated.is_empty() {
+        println!("may be outdated ({}; still right: pg write --confirm <id>):", found.outdated.len());
+        for (id, why) in &found.outdated {
+            println!("  {id}: {}", why.trim_start_matches("may be outdated since it was written: "));
+        }
+    }
+    if !found.tidy.is_empty() {
+        println!("could be tidier ({}):", found.tidy.len());
+        for t in &found.tidy {
+            println!("  {t}");
+        }
+    }
     if without_id > 0 {
-        println!("{} without an id (written outside pg) are found by path", count(without_id, "note"));
+        let verb = if without_id == 1 { "is" } else { "are" };
+        println!("{} without an id (written outside pg) {verb} found by path", count(without_id, "note"));
     }
     for line in crate::record::secrets::in_notes_lines(project) {
         println!("{line}");

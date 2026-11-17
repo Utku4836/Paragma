@@ -91,6 +91,14 @@ pub enum Did {
     },
     /// Asked once to hand off (the Stop hook).
     AskedFinish,
+    /// Took a step of the plan: the others see it taken.
+    Take {
+        step: usize,
+    },
+    /// A short note for the other conversations here.
+    Told {
+        text: String,
+    },
     /// An action of another version of pg, kept as it was.
     Other {
         action: String,
@@ -138,6 +146,8 @@ impl Did {
             }
             Did::Offered { what, about } => (format!("{what}-offered"), about.clone(), String::new()),
             Did::AskedFinish => (s("ask-finish"), String::new(), String::new()),
+            Did::Take { step } => (s("take"), step.to_string(), String::new()),
+            Did::Told { text } => (s("tell"), text.clone(), String::new()),
             Did::Other { action, target, detail } => (action.clone(), target.clone(), detail.clone()),
         }
     }
@@ -176,6 +186,8 @@ impl Did {
                 Did::FixShown { id: t, command, tests: parts.filter(|x| !x.is_empty()).map(str::to_string).collect() }
             }
             "ask-finish" => Did::AskedFinish,
+            "take" => Did::Take { step: target.parse().unwrap_or(0) },
+            "tell" => Did::Told { text: t },
             a if a.ends_with("-offered") => Did::Offered { what: a.trim_end_matches("-offered").to_string(), about: t },
             _ => Did::Other { action: action.to_string(), target: t, detail: d },
         }
@@ -206,6 +218,11 @@ impl State {
             params![now(), conversation::key(), action, target, detail],
         )?;
         Ok(())
+    }
+
+    /// The log of one kind of event since a time, oldest first.
+    pub fn journal_of(&self, action: &str, since: i64) -> Result<Vec<Entry>> {
+        Ok(self.journal(since)?.into_iter().filter(|e| e.did.row().0 == action).collect())
     }
 
     /// The log since a time, oldest first, of every conversation.
@@ -254,6 +271,8 @@ mod tests {
             Did::FixShown { id: "e1".into(), command: "cargo test".into(), tests: vec!["t1".into()] },
             Did::Offered { what: "rule".into(), about: "Always round once.".into() },
             Did::AskedFinish,
+            Did::Take { step: 3 },
+            Did::Told { text: "I am changing refund.go".into() },
             Did::Other { action: "future".into(), target: "x".into(), detail: "y".into() },
         ];
         for d in all {

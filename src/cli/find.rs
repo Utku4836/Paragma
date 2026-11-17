@@ -150,6 +150,12 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             b.add(&l.replacen("connected:", &format!("{} is connected to:", best.id), 1));
         }
     }
+    // a note another conversation here left, once
+    if !several && let Some(state) = &states[0] {
+        for line in super::perceive::news(state).unwrap_or_default() {
+            b.add(&line);
+        }
+    }
     print!("{}", b.out);
     // what was shown, per project: what is still in the agent's context,
     // and what upkeep keeps as used (record/upkeep.rs)

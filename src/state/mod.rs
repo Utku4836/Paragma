@@ -132,6 +132,34 @@ impl State {
         Ok(rows.flatten().map(|r| r.trim_start_matches("hint:").to_string()).collect())
     }
 
+    /// The hints said to every conversation since a time (kernel/adapt.rs).
+    pub fn said_log(&self, since: i64) -> Result<Vec<crate::kernel::adapt::Said>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT conversation, ref, at FROM shown WHERE ref LIKE 'hint:%' AND at >= ?1 ORDER BY at",
+        )?;
+        let rows = st.query_map([since], |r| {
+            Ok(crate::kernel::adapt::Said {
+                conversation: r.get(0)?,
+                key: r.get::<_, String>(1)?.trim_start_matches("hint:").to_string(),
+                at: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Every time a note or rule was used that this computer saw: shown,
+    /// read in full, picked after a search, written.
+    pub fn uses(&self, id: &str) -> Result<Vec<i64>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT at FROM shown WHERE ref = ?1
+             UNION ALL SELECT full_at FROM shown WHERE ref = ?1 AND full_at > 0
+             UNION ALL SELECT at FROM events WHERE action = 'picked' AND detail = ?1
+             UNION ALL SELECT at FROM events WHERE action = 'write' AND (detail = ?1 OR detail LIKE ?2)",
+        )?;
+        let rows = st.query_map(params![id, format!("{id} %")], |r| r.get::<_, i64>(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Remembers hints as said to this conversation.
     pub fn say(&self, keys: &[String]) -> Result<()> {
         self.shown(&keys.iter().map(|k| format!("hint:{k}")).collect::<Vec<_>>())
@@ -186,11 +214,6 @@ impl State {
             )
             .optional()?
             .is_some())
-    }
-
-    /// When a note or rule was last shown to any conversation.
-    pub fn last_shown(&self, r: &str) -> Result<Option<i64>> {
-        Ok(self.db.query_row("SELECT MAX(at) FROM shown WHERE ref = ?1", [r], |r| r.get(0)).optional()?.flatten())
     }
 
     /// When the first conversation worked on the project.
