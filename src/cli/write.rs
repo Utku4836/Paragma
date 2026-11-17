@@ -212,7 +212,7 @@ fn write_secret(cx: &Context, title: &str, a: &Args) -> Result<()> {
         return Err(fail(USAGE, "a secret needs a title and a value: pg write --secret \"Npm Api\" <value>"));
     }
     let (s, new) = crate::project::env::set(project, title, value.trim())?;
-    State::open(project)?.event("secret", &s.title, if new { "added" } else { "replaced" })?;
+    State::open(project)?.record(crate::state::journal::Did::Secret { title: s.title.clone(), new })?;
     println!(
         "ok {} {}: use ${} in pg run (pg run -- <command with ${}>)",
         s.show(),
@@ -259,7 +259,11 @@ fn write_record(cx: &Context, a: &Args) -> Result<()> {
         ("error", record::error(project, &e).map_err(usage)?)
     };
     let state = State::open(project)?;
-    state.event("write", kind, &format!("{} {}", w.id, w.what))?;
+    state.record(crate::state::journal::Did::Write {
+        kind: kind.to_string(),
+        id: w.id.clone(),
+        what: w.what.clone(),
+    })?;
     state.touch_session(&cx.cwd.to_string_lossy())?;
     println!("ok {} ({kind} {})", w.id, w.what);
     for n in &w.notes {
@@ -307,7 +311,11 @@ pub fn write_note(project: &Project, rel: &str, text: &str, append: bool) -> Res
             Ok("updated")
         }
     })?;
-    State::open(project)?.event("write", &project.rel(&project.note_file(rel)), &format!("{id} {what}"))?;
+    State::open(project)?.record(crate::state::journal::Did::Write {
+        kind: project.rel(&project.note_file(rel)),
+        id: id.clone(),
+        what: what.to_string(),
+    })?;
     Ok((id, what))
 }
 

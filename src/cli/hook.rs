@@ -23,6 +23,7 @@ use crate::index::Index;
 use crate::note::{Kind, Note};
 use crate::output::{now, one_line};
 use crate::project::files;
+use crate::state::journal::Did;
 use crate::state::links::{Links, folder_key};
 use crate::state::{State, conversation};
 use crate::testrun::{self, Run, parse};
@@ -134,7 +135,7 @@ fn reply(agent: Agent, event: &str, text: &str) -> String {
 }
 
 fn session_start(cx: &Context, project: &crate::project::Project, source: &str) -> Result<String> {
-    let brief = super::open::brief_at_start(cx, project)?;
+    let brief = super::open::brief_at_start(cx, project, source == "compact")?;
     let why = if source == "compact" { "The conversation was compacted. " } else { "" };
     Ok(format!(
         "{why}Paragma: this folder belongs to project {}. Its brief, as `pg open` gives it (no need to run it again):\n{brief}",
@@ -188,7 +189,7 @@ fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -
     state.shown(&ids)?;
     if !found.iter().any(binds) {
         // only the file's past errors and notes: after the edit, no turn lost
-        state.event("after-edit", &files.join(" "), &ids.join(" "))?;
+        state.record(Did::AfterEdit { files: files.join(" "), ids: ids.clone() })?;
         return Ok(None);
     }
     Ok(Some(format!(
@@ -443,7 +444,7 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
     if !edited.is_empty() {
         let state = State::open(project)?;
         for f in &edited {
-            state.event("edit", f, "")?;
+            state.record(Did::Edit { file: f.to_string() })?;
         }
         let mut text = after_edit(project, &state)?;
         // the edit changed a function's shape and left its callers as they were
@@ -496,19 +497,20 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         passed: parsed.passed,
         errors: parsed.errors.clone(),
         changed: code.as_ref().map(super::run::changed_files).unwrap_or_default(),
+        symbols: code.as_ref().map(super::run::changed_symbols).unwrap_or_default(),
     };
     let state = State::open(project)?;
     let history = state.runs(Some(&run.command), 10)?;
     let verdict = testrun::judge(&run, &history);
     state.record_run(&run)?;
-    state.event("run", &run.command, if exit == 0 { "pass" } else { "fail" })?;
+    state.record(Did::Run { command: run.command.clone(), passed: exit == 0, failing: run.failing.len() })?;
     let index = Index::open(project)?;
     if !verdict.fixed.is_empty() {
         // the fixes shown for these tests helped (state/outcome.rs)
         state.tests_fixed(&run.command, &verdict.fixed)?;
     }
     if exit == 0 {
-        return fixed_here(cx, project, (&state, &index, code.as_ref()), &verdict, history.first());
+        return fixed_here(cx, project, (&state, &index, code.as_ref()), &verdict, history.first(), &run.symbols);
     }
 
     let mut lines = Vec::new();
@@ -547,24 +549,36 @@ fn fixed_here(
     (state, index, code): (&State, &Index, Option<&crate::code::CodeIndex>),
     verdict: &testrun::Verdict,
     before: Option<&Run>,
+    now: &[String],
 ) -> Result<Option<String>> {
     let (Some(before), false) = (before, verdict.fixed.is_empty()) else { return Ok(None) };
     let Some(line) = before.errors.first() else { return Ok(None) };
     if super::run::known(index, project, line)?.is_some() {
         return Ok(None);
     }
-    state.event("fixed", line, &verdict.fixed.join(", "))?;
+    state.record(Did::Fixed { line: line.to_string(), tests: verdict.fixed.clone() })?;
     let folders = Links::load(&cx.home).folders_of(&project.name);
     let changed: Vec<String> = state
         .my_targets_since("edit", before.at)?
         .iter()
         .filter_map(|f| relative(&folders, Path::new(f)).map(|r| r.1))
         .collect();
+    // the functions changed after the failing run, when it kept them (kernel)
+    let kept = !before.symbols.is_empty() || before.changed.is_empty();
+    let functions =
+        crate::kernel::experts::fix_changes(kept.then_some(before.symbols.as_slice()), now).filter(|f| !f.is_empty());
+    let changed = match &functions {
+        Some(f) => f.clone(),
+        None => changed,
+    };
     let (since, files) = if changed.is_empty() {
         (String::new(), String::new())
     } else {
         // the record is then tied to the code that was fixed, not only to the test
-        let mut files: Vec<String> = changed.clone();
+        let mut files: Vec<String> = changed
+            .iter()
+            .map(|c| c.split_once('#').map(|(f, _)| f.to_string()).unwrap_or_else(|| c.clone()))
+            .collect();
         if let Some(code) = code {
             for (file, _) in parse::locations(line) {
                 if let Some((folder, path)) = code.locate(&file)? {
@@ -610,7 +624,7 @@ fn said_plan(project: &crate::project::Project, prompt: &str) -> Result<Option<S
     if state.my_last("plan-offered").is_some() {
         return Ok(None);
     }
-    state.event("plan-offered", &project.name, "")?;
+    state.record(Did::Offered { what: "plan".into(), about: project.name.clone() })?;
     Ok(Some(
         "Paragma: the user's message gives decisions or a plan. Before the work, record them in the user's words:          pg open --goal \"...\" --step \"...\" --decision \"...\" (one --step per step, also the ones for later; one          --decision per decision). A later conversation knows only what is recorded."
             .to_string(),
@@ -624,7 +638,7 @@ fn said_rule(project: &crate::project::Project, prompt: &str) -> Result<Option<S
     if state.my_targets_since("rule-offered", 0)?.contains(&sentence) {
         return Ok(None);
     }
-    state.event("rule-offered", &sentence, "")?;
+    state.record(Did::Offered { what: "rule".into(), about: sentence.to_string() })?;
     Ok(Some(format!(
         "Paragma: the user's message reads like a lasting rule for this project: \"{sentence}\". If they mean it for \
          the future, keep it: pg write --rule \"<the rule in a sentence>\" (add (applies: <folder>/) when it is about \
@@ -643,7 +657,7 @@ fn stop(project: &crate::project::Project) -> Result<Option<String>> {
     if !events.iter().any(|e| matches!(e.action.as_str(), "edit" | "write" | "step" | "run" | "rm" | "mv")) {
         return Ok(None);
     }
-    state.event("ask-finish", &project.name, "")?;
+    state.record(Did::AskedFinish)?;
     Ok(Some(
         "Paragma: this conversation changed the project and has not handed off. If its work is done or stops \
          here, run: pg finish --done <numbers of the steps it finished> \"what changed, what is next\". If you \

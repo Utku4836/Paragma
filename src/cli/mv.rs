@@ -90,7 +90,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         Index::open(&project)?;
     }
     Index::open(&dest)?;
-    State::open(&dest)?.event("mv", &rel, &to)?;
+    State::open(&dest)?.record(crate::state::journal::Did::Mv { from: rel.to_string(), to: to.to_string() })?;
     let show =
         |p: &Project, r: &str| format!("{}/{}{}", p.name, r.trim_end_matches(".md"), if folder { "/" } else { "" });
     println!("ok {} -> {}", show(&project, &rel), show(&dest, &to));

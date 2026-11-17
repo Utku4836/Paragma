@@ -19,6 +19,7 @@ use crate::note::rule_line;
 use crate::output::{date, now};
 use crate::project::{Project, files};
 use crate::state::State;
+use crate::state::journal::Did;
 use crate::state::links::Links;
 use anyhow::{Context as _, Result};
 use std::path::Path;
@@ -58,18 +59,18 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                 let line = format!("- {id}: {removed} (removed {})", date(now()));
                 files::write_atomic(&file, format!("{}\n{line}\n", old.trim_end()).as_bytes())?;
             }
-            State::open(&project)?.event("rm", &id, "")?;
+            State::open(&project)?.record(Did::Rm { what: id.to_string() })?;
             println!("ok removed {id}{}", if a.hard { "" } else { " (kept in .archive/rules)" });
         }
         Target::Note { project, rel } => {
             let what = rel.trim_end_matches(".md").to_string();
             take_out(&project, &rel, a.hard)?;
-            State::open(&project)?.event("rm", &rel, "")?;
+            State::open(&project)?.record(Did::Rm { what: rel.to_string() })?;
             println!("ok removed {}/{what}{}", project.name, kept_note(&project, &what, a.hard));
         }
         Target::Folder { project, rel } => {
             take_out(&project, &rel, a.hard)?;
-            State::open(&project)?.event("rm", &format!("{rel}/"), "")?;
+            State::open(&project)?.record(Did::Rm { what: format!("{rel}/") })?;
             println!("ok removed {}/{rel}/{}", project.name, kept_note(&project, &rel, a.hard));
         }
         Target::Project(project) => {

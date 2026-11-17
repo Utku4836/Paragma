@@ -39,7 +39,6 @@ const SHELLS: &[&str] = &[
 /// The variables agents name their conversation in: (agent, variable).
 const AGENT_SESSIONS: &[(&str, &str)] = &[("claude", "CLAUDE_CODE_SESSION_ID"), ("codex", "CODEX_THREAD_ID")];
 
-/// The key of an agent's conversation known by its id (as hooks know it).
 /// The processes running now, to ask whether one still is.
 pub struct Running(process::Table);
 
@@ -53,6 +52,7 @@ impl Running {
     }
 }
 
+/// The key of an agent's conversation known by its id (as hooks know it).
 pub fn of_agent(agent: &str, id: &str) -> String {
     format!("{agent}:{id}")
 }

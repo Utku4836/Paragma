@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// The steps, in order: step `i` moves the data from version `i` to `i + 1`.
 /// Only add steps at the end; each one adds tables or columns, or copies.
-const STEPS: &[fn(&Transaction) -> Result<()>] = &[v1_tables, v2_outcomes, v3_shown_version];
+const STEPS: &[fn(&Transaction) -> Result<()>] = &[v1_tables, v2_outcomes, v3_shown_version, v4_run_symbols];
 
 /// The version this pg writes.
 pub const VERSION: i64 = STEPS.len() as i64;
@@ -89,6 +89,15 @@ CREATE INDEX IF NOT EXISTS outcomes_ref ON outcomes(ref, at);
 fn v3_shown_version(tx: &Transaction) -> Result<()> {
     if !has_column(tx, "shown", "version")? {
         tx.execute_batch("ALTER TABLE shown ADD COLUMN version INTEGER NOT NULL DEFAULT 0")?;
+    }
+    Ok(())
+}
+
+/// The functions changed (by git) when a run ran, each with the hash of
+/// its body then: what changed after a failing run is what fixed it.
+fn v4_run_symbols(tx: &Transaction) -> Result<()> {
+    if !has_column(tx, "runs", "symbols")? {
+        tx.execute_batch("ALTER TABLE runs ADD COLUMN symbols TEXT NOT NULL DEFAULT ''")?;
     }
     Ok(())
 }

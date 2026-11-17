@@ -291,9 +291,35 @@ impl CodeIndex {
 
     /// A file named in tool output: its path may be absolute or relative to
     /// somewhere else, so the longest end of it that names one file wins.
+    /// A path that is in a code folder is that file or none: "tests/work.rs"
+    /// that the index leaves out is not "src/code/work.rs" of the same name.
     pub fn locate(&self, file: &str) -> Result<Option<(String, String)>> {
-        let parts: Vec<&str> = file.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
-        for skip in 0..parts.len() {
+        let given = file.trim().replace('\\', "/");
+        for f in &self.folders {
+            let dir = f.dir.to_string_lossy().replace('\\', "/");
+            let dir = dir.trim_end_matches('/');
+            let inside = given
+                .strip_prefix(dir)
+                .or_else(|| {
+                    // Windows: the same folder in another case
+                    (cfg!(windows) && given.to_lowercase().starts_with(&dir.to_lowercase()))
+                        .then(|| given.get(dir.len()..).unwrap_or(""))
+                })
+                .filter(|rest| rest.starts_with('/'))
+                .map(|rest| rest.trim_start_matches('/').to_string())
+                .or_else(|| f.dir.join(&given).is_file().then(|| given.trim_start_matches("./").to_string()));
+            if let Some(rel) = inside {
+                return Ok(self
+                    .files()?
+                    .iter()
+                    .find(|(k, p, _)| *k == f.key && *p == rel)
+                    .map(|(k, p, _)| (k.clone(), p.clone())));
+            }
+        }
+        let parts: Vec<&str> = given.split('/').filter(|p| !p.is_empty()).collect();
+        // down to the file name alone only when nothing more was given
+        let last = if parts.len() > 1 { parts.len() - 1 } else { parts.len() };
+        for skip in 0..last {
             if let Some(found) = self.file(&parts[skip..].join("/"))? {
                 return Ok(Some(found));
             }

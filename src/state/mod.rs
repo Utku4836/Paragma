@@ -2,6 +2,7 @@
 //! conversations that worked on the project and what they did.
 
 pub mod conversation;
+pub mod journal;
 pub mod links;
 pub mod migrate;
 pub mod outcome;
@@ -14,15 +15,6 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 pub struct State {
     db: Connection,
-}
-
-/// A conversation that worked on the project.
-#[derive(Clone, Debug)]
-pub struct Session {
-    pub folder: String,
-    pub last: i64,
-    /// Whether its last word was `pg finish`.
-    pub finished: bool,
 }
 
 /// Something a conversation did.
@@ -49,15 +41,6 @@ impl State {
             "INSERT INTO sessions(conversation, folder, started, last) VALUES (?1, ?2, ?3, ?3)
              ON CONFLICT(conversation) DO UPDATE SET last = ?3, folder = ?2",
             params![conversation::key(), folder, now()],
-        )?;
-        Ok(())
-    }
-
-    /// Records what this conversation did (a write, a step, a finish, ...).
-    pub fn event(&self, action: &str, target: &str, detail: &str) -> Result<()> {
-        self.db.execute(
-            "INSERT INTO events(at, conversation, action, target, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![now(), conversation::key(), action, target, detail],
         )?;
         Ok(())
     }
@@ -129,23 +112,29 @@ impl State {
         Ok(rows)
     }
 
-    /// The other conversations that worked here since `since`, latest first.
-    pub fn other_sessions(&self, since: i64) -> Result<Vec<Session>> {
-        let mut st = self.db.prepare(
-            "SELECT s.folder, s.last,
-                    (SELECT action FROM events e WHERE e.conversation = s.conversation ORDER BY rowid DESC LIMIT 1)
-             FROM sessions s WHERE s.conversation != ?1 AND s.last >= ?2 ORDER BY s.last DESC",
-        )?;
-        let rows = st
-            .query_map(params![conversation::key(), since], |r| {
-                Ok(Session {
-                    folder: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
-                    last: r.get(1)?,
-                    finished: r.get::<_, Option<String>>(2)?.as_deref() == Some("finish"),
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+    /// The folder each conversation worked in that was here since `since`.
+    pub fn folders(&self, since: i64) -> Result<std::collections::HashMap<String, String>> {
+        let mut st = self.db.prepare_cached("SELECT conversation, folder FROM sessions WHERE last >= ?1")?;
+        let rows = st.query_map([since], |r| {
+            let folder = r.get::<_, Option<String>>(1)?.unwrap_or_default();
+            // the folder's name says enough: "shop-api", not the whole path
+            let name =
+                std::path::Path::new(&folder).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            Ok((r.get::<_, String>(0)?, name))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The keys of the hints (kernel) said to this conversation.
+    pub fn said(&self) -> Result<std::collections::HashSet<String>> {
+        let mut st = self.db.prepare_cached("SELECT ref FROM shown WHERE conversation = ?1 AND ref LIKE 'hint:%'")?;
+        let rows = st.query_map([conversation::key()], |r| r.get::<_, String>(0))?;
+        Ok(rows.flatten().map(|r| r.trim_start_matches("hint:").to_string()).collect())
+    }
+
+    /// Remembers hints as said to this conversation.
+    pub fn say(&self, keys: &[String]) -> Result<()> {
+        self.shown(&keys.iter().map(|k| format!("hint:{k}")).collect::<Vec<_>>())
     }
 
     /// Remembers that results were shown to this conversation as one line.
@@ -211,8 +200,8 @@ impl State {
 
     pub fn record_run(&self, r: &Run) -> Result<()> {
         self.db.execute(
-            "INSERT INTO runs(at, conversation, command, exit, seconds, failing, passed, errors, changed)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO runs(at, conversation, command, exit, seconds, failing, passed, errors, changed, symbols)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 r.at,
                 conversation::key(),
@@ -222,7 +211,8 @@ impl State {
                 r.failing.join("\n"),
                 r.passed as i64,
                 r.errors.join("\n"),
-                r.changed.join("\n")
+                r.changed.join("\n"),
+                r.symbols.join("\n")
             ],
         )?;
         Ok(())
@@ -230,7 +220,7 @@ impl State {
 
     /// Earlier runs, newest first: of one command, or of any.
     pub fn runs(&self, command: Option<&str>, limit: usize) -> Result<Vec<Run>> {
-        let sql = "SELECT at, command, exit, seconds, failing, passed, errors, changed FROM runs
+        let sql = "SELECT at, command, exit, seconds, failing, passed, errors, changed, symbols FROM runs
                    WHERE ?1 IS NULL OR command = ?1 ORDER BY rowid DESC LIMIT ?2";
         let mut st = self.db.prepare_cached(sql)?;
         let lines = |s: String| -> Vec<String> { s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect() };
@@ -245,6 +235,7 @@ impl State {
                     passed: r.get::<_, i64>(5)? as usize,
                     errors: lines(r.get(6)?),
                     changed: lines(r.get(7)?),
+                    symbols: lines(r.get(8)?),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -313,7 +304,16 @@ impl State {
             )
             .ok();
         let Some((rowid, files, ids)) = row else { return Ok(None) };
-        self.db.execute("UPDATE events SET action = 'after-edit-shown' WHERE rowid = ?1", [rowid])?;
+        // shown once: said by a later event, the log is only appended to
+        let shown: bool = self.db.query_row(
+            "SELECT COUNT(*) > 0 FROM events WHERE conversation = ?1 AND action = 'after-edit-shown' AND target = ?2",
+            params![conversation::key(), rowid.to_string()],
+            |r| r.get(0),
+        )?;
+        if shown {
+            return Ok(None);
+        }
+        self.record(journal::Did::AfterEditShown { of: rowid })?;
         Ok(Some((files, ids.split_whitespace().map(str::to_string).collect())))
     }
 
@@ -335,18 +335,6 @@ impl State {
             }
         }
         Ok(ids)
-    }
-
-    /// The commands run here, most run first: (command, runs, last exit).
-    pub fn commands(&self, limit: usize) -> Result<Vec<(String, i64, i32)>> {
-        let mut st = self.db.prepare_cached(
-            "SELECT command, COUNT(*), (SELECT exit FROM runs r2 WHERE r2.command = r.command ORDER BY rowid DESC LIMIT 1)
-             FROM runs r GROUP BY command ORDER BY COUNT(*) DESC, MAX(at) DESC LIMIT ?1",
-        )?;
-        let rows = st
-            .query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
     }
 
     pub fn get(&self, key: &str) -> Option<String> {

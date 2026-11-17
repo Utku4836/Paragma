@@ -22,6 +22,7 @@ use crate::output::{Budget, count, now, one_line};
 use crate::project::files;
 use crate::record;
 use crate::state::State;
+use crate::state::journal::Did;
 use crate::testrun::{self, Run, parse};
 use anyhow::{Context as _, Result};
 use std::io::{BufRead, BufReader, Write};
@@ -81,6 +82,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         passed: parsed.passed,
         errors: parsed.errors.clone(),
         changed: code.as_ref().map(changed_files).unwrap_or_default(),
+        symbols: code.as_ref().map(changed_symbols).unwrap_or_default(),
     };
     crate::output::mark("run: code index and changes");
 
@@ -193,16 +195,30 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             history.first().and_then(|r| r.errors.iter().find(|l| record::says_something(l)).or(r.errors.first()))
         && known(&index, project, line)?.is_none()
     {
-        // a draft: the error, and the change that fixed it; the agent says why
-        let changes = match &code {
+        // a draft: the error, and the change that fixed it; the agent says why.
+        // The change is what changed after the failing run (kernel), when
+        // that run kept its functions; else all changed since the commit
+        let failed = history.first();
+        let narrowed = failed.and_then(|f| {
+            let kept = !f.symbols.is_empty() || f.changed.is_empty();
+            crate::kernel::experts::fix_changes(kept.then_some(f.symbols.as_slice()), &run.symbols)
+        });
+        let changes: Vec<(String, String)> = match (&code, narrowed) {
+            (Some(_), Some(names)) => names
+                .into_iter()
+                .map(|n| {
+                    let file = n.split_once('#').map(|(f, _)| f.to_string()).unwrap_or_else(|| n.clone());
+                    (n, file)
+                })
+                .collect(),
             // the functions it changed (a new file may be anything)
-            Some(c) => crate::code::work::changed(c)
+            (Some(c), None) => crate::code::work::changed(c)
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|ch| ch.symbol.is_some())
                 .map(|ch| (ch.show(c), ch.path))
                 .collect(),
-            None => Vec::new(),
+            (None, _) => Vec::new(),
         };
         let mut files: Vec<String> = Vec::new();
         for (_, p) in &changes {
@@ -224,12 +240,11 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                 files.iter().take(5).cloned().collect::<Vec<_>>().join(",")
             ));
         }
-        state.event("fixed", line, &verdict.fixed.join(", "))?;
+        state.record(Did::Fixed { line: line.clone(), tests: verdict.fixed.clone() })?;
     }
 
     state.record_run(&run)?;
-    let detail = if exit == 0 { "pass".to_string() } else { format!("fail {}", run.failing.len()) };
-    state.event("run", &command, &detail)?;
+    state.record(Did::Run { command: command.clone(), passed: exit == 0, failing: run.failing.len() })?;
     finish(&b, exit);
 }
 
@@ -302,6 +317,20 @@ pub(super) fn known_elsewhere(cx: &Context, here: &crate::project::Project, line
 /// Files changed (by git) in the project's code folders, as output shows them.
 pub(super) fn changed_files(code: &CodeIndex) -> Vec<String> {
     code.folders.iter().flat_map(|f| git::changed(&f.dir).into_iter().map(|(p, _)| code.display(&f.key, &p))).collect()
+}
+
+/// The functions changed (by git) now, each with the hash of its body:
+/// "payments/refund.go#Refund=9f3a1c2b". Kept with the run, so a later run
+/// that passes can tell what changed after this one.
+pub(super) fn changed_symbols(code: &CodeIndex) -> Vec<String> {
+    crate::code::work::changed(code)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|c| {
+            let s = c.symbol.as_ref()?;
+            Some(format!("{}#{}={:x}", code.display(&c.folder, &c.path), s.qualified, s.body_hash))
+        })
+        .collect()
 }
 
 /// The command as one line for the shell, quoting arguments with spaces.

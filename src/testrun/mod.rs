@@ -18,6 +18,9 @@ pub struct Run {
     pub errors: Vec<String>,
     /// Files changed (by git) when it ran.
     pub changed: Vec<String>,
+    /// The functions changed then, each with the hash of its body:
+    /// "payments/refund.go#Refund=9f3a1c2b".
+    pub symbols: Vec<String>,
 }
 
 #[derive(Debug, Default, PartialEq)]

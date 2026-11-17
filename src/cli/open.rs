@@ -21,6 +21,7 @@ use crate::project::names::{self, Match};
 use crate::project::{Project, files, plan};
 use crate::search;
 use crate::state::State;
+use crate::state::journal::Did;
 use crate::state::links::Links;
 use crate::testrun;
 use anyhow::Result;
@@ -57,8 +58,6 @@ enum How {
     OfThisFolder,
 }
 
-/// Conversations older than this are not mentioned in the brief.
-const RECENT: i64 = 14 * 86_400;
 /// Open steps listed in full.
 const STEPS_SHOWN: usize = 10;
 /// Characters of a step shown in the brief.
@@ -69,6 +68,8 @@ const QUESTIONS_SHOWN: usize = 8;
 const EARLIER_HANDOFFS: usize = 2;
 /// Files listed as likely to be touched, or as changed.
 const LIKELY: usize = 5;
+/// Tokens of the brief for the kernel's hints.
+const HINT_TOKENS: usize = 250;
 /// Commits read for "usually changes with".
 const TOGETHER_COMMITS: usize = 300;
 /// How close in meaning (plus name) code must be to the goal to be listed.
@@ -110,14 +111,14 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             Ok(a.steps.iter().filter(|s| plan::add_step(n, s)).cloned().collect::<Vec<_>>())
         })?;
         for s in added {
-            state.event("step", &s, "")?;
+            state.record(Did::Step { text: s.clone() })?;
         }
     }
     if linkable(cx) {
         Links::link(&cx.home, &cx.cwd, &project.name)?;
     }
     state.touch_session(&work_folder(cx, &project.name))?;
-    state.event("open", &project.name, "")?;
+    state.record(Did::Open)?;
     let mut recorded = Vec::new();
     for d in &a.decisions {
         let input = crate::record::DecisionInput {
@@ -129,12 +130,12 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             commit: crate::code::head_commit(&cx.home, &project),
         };
         let w = crate::record::decision(&project, &input)?;
-        state.event("write", "decision", &format!("{} {}", w.id, w.what))?;
+        state.record(Did::Write { kind: "decision".into(), id: w.id.clone(), what: w.what.clone() })?;
         recorded.push(w.id);
     }
 
     let others: Vec<String> = linked.into_iter().filter(|p| *p != project.name).collect();
-    print!("{}", brief(cx, &project, &state, &first_line(&project.name, &how), &how, &others)?);
+    print!("{}", brief(cx, &project, &state, &first_line(&project.name, &how), &how, &others, false)?);
     if !recorded.is_empty() {
         println!("decisions recorded: {}", recorded.join(", "));
     }
@@ -146,12 +147,13 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
 
 /// The brief of the project linked to this folder, for a conversation that
 /// starts (a hook): what `pg open` with no name prints, and the
-/// conversation counts as having opened the project.
-pub fn brief_at_start(cx: &Context, project: &Project) -> Result<String> {
+/// conversation counts as having opened the project. `compacted`: it is
+/// the same conversation, whose context was made short.
+pub fn brief_at_start(cx: &Context, project: &Project, compacted: bool) -> Result<String> {
     let state = State::open(project)?;
     state.touch_session(&work_folder(cx, &project.name))?;
-    state.event("open", &project.name, "")?;
-    brief(cx, project, &state, &first_line(&project.name, &How::Continued), &How::Continued, &[])
+    state.record(Did::Open)?;
+    brief(cx, project, &state, &first_line(&project.name, &How::Continued), &How::Continued, &[], compacted)
 }
 
 /// The project a name means (see project/names.rs).
@@ -226,7 +228,15 @@ fn linkable(cx: &Context) -> bool {
     cx.cwd.parent().is_some() && home.as_deref() != Some(cx.cwd.as_path()) && !cx.cwd.starts_with(&cx.home.root)
 }
 
-fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How, others: &[String]) -> Result<String> {
+fn brief(
+    cx: &Context,
+    project: &Project,
+    state: &State,
+    first: &str,
+    how: &How,
+    others: &[String],
+    compacted: bool,
+) -> Result<String> {
     crate::output::mark("brief: start");
     // git takes a while to start (about 0.1 s on Windows): what the brief
     // will ask it runs from now on, side by side, while the rest is read
@@ -303,19 +313,14 @@ fn brief(cx: &Context, project: &Project, state: &State, first: &str, how: &How,
     if let Some(line) = since_last(cx, project, state, now)? {
         b.add(&line);
     }
-    let working: Vec<String> = state
-        .other_sessions(now - RECENT)?
-        .iter()
-        .filter(|s| !s.finished)
-        .take(3)
-        .map(|s| {
-            let folder = Path::new(&s.folder).file_name().map(|f| f.to_string_lossy().into_owned());
-            format!("{} ({})", folder.unwrap_or_else(|| "?".into()), ago(s.last, now))
-        })
-        .collect();
-    if !working.is_empty() {
-        b.add(&format!("other conversations at work, not finished: {}", working.join(", ")));
+    // what the kernel makes of the event log: conversations cut short, this
+    // one's work before it was compacted, how the project runs
+    let facts = super::perceive::facts(project, state, compacted)?;
+    let hints = crate::kernel::brief_hints(&facts, HINT_TOKENS);
+    for h in &hints {
+        b.add(&h.text);
     }
+    state.say(&hints.iter().map(|h| h.key.clone()).collect::<Vec<_>>())?;
 
     let index = Index::open(project)?;
     let query: String =
@@ -448,14 +453,6 @@ fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Re
         b.add(&format!("stack: {}", stack.join("; ")));
     }
     libraries_part(b, code, query);
-    let used = state.commands(4)?;
-    if !used.is_empty() {
-        let list: Vec<String> = used
-            .iter()
-            .map(|(c, n, exit)| format!("{c} ({n}x, last {})", if *exit == 0 { "passed" } else { "failed" }))
-            .collect();
-        b.add(&format!("run here before: {}", list.join(", ")));
-    }
     // the last run that ran tests (not a script or an API call)
     let last_tests = state.runs(None, 30)?.into_iter().find(|r| r.passed > 0 || !r.failing.is_empty());
     match last_tests {

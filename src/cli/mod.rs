@@ -12,6 +12,7 @@ mod link;
 mod ls;
 mod mv;
 mod open;
+mod perceive;
 mod read;
 mod ripple;
 mod rm;

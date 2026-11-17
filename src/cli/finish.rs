@@ -152,7 +152,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     state.set(&mine, &heading)?;
     // fixes shown whose tests still fail did not help (state/outcome.rs)
     state.outcomes_at_handoff()?;
-    state.event("finish", &project.name, summary.lines().next().unwrap_or(""))?;
+    state.record(crate::state::journal::Did::Finish { summary: summary.lines().next().unwrap_or("").to_string() })?;
 
     let mut out = format!("ok {}: {} closed", project.name, count(closed as i64, "step"));
     if left > 0 {

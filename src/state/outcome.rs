@@ -62,7 +62,11 @@ impl Track {
 impl State {
     /// A known fix was shown for `command` failing `tests`.
     pub fn fix_shown(&self, id: &str, command: &str, tests: &[String]) -> Result<()> {
-        self.event("fix-shown", id, &format!("{}\t{}", crate::testrun::normalized(command), tests.join("\t")))
+        self.record(super::journal::Did::FixShown {
+            id: id.to_string(),
+            command: command.to_string(),
+            tests: tests.to_vec(),
+        })
     }
 
     /// `command` passes now for the tests in `fixed`: the fixes shown to

@@ -137,7 +137,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     // what was shown: a record read right after it answered the question
     if !several && let Some(state) = &states[0] {
         let ids: Vec<&str> = hits.iter().take(shown + ONE_LINERS).map(|(_, h)| h.id.as_str()).collect();
-        let _ = state.event("find", &query, &ids.join(" "));
+        let _ = state.record(crate::state::journal::Did::Find {
+            query: query.clone(),
+            ids: ids.iter().map(|s| s.to_string()).collect(),
+        });
     }
     // what the best result is connected to, beyond these results
     if !several && let Some((_, best)) = hits.first() {

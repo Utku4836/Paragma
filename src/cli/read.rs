@@ -133,7 +133,7 @@ fn shown_in_full(project: &Project, index: &Index, id: &str) {
     if let Some((query, ids)) = state.last_find(PICK_WITHIN)
         && ids.iter().any(|x| x == id)
     {
-        let _ = state.event("picked", &query, id);
+        let _ = state.record(crate::state::journal::Did::Picked { query: query.clone(), id: id.to_string() });
     }
 }
 

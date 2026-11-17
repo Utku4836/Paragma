@@ -6,6 +6,7 @@ mod code;
 mod db;
 mod embed;
 mod index;
+mod kernel;
 mod libs;
 mod note;
 mod output;
