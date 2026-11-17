@@ -157,6 +157,12 @@ mod tests {
         let f = OpenOptions::new().write(true).open(d.path().join("lock")).unwrap();
         assert!(f.try_lock().is_err());
         drop(first);
-        assert!(f.try_lock().is_ok());
+        // free at once, or within a moment: on macOS a process another test
+        // is starting holds a copy of the lock until it runs its program
+        let start = std::time::Instant::now();
+        while f.try_lock().is_err() {
+            assert!(start.elapsed() < Duration::from_secs(2), "the lock stayed taken after it was dropped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
