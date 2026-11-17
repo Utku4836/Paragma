@@ -88,7 +88,18 @@ pub fn compact(output: &str, max: usize) -> Vec<String> {
                     || t.trim_start().starts_with(['|', '=', '-', '^', '>'])
                     || EXCERPT.is_match(t)
                 {
-                    block.push(t.clone());
+                    // a library's frames: said as a count, the project's own kept
+                    if super::explain::library_frame(t.trim()) {
+                        match block.last_mut() {
+                            Some(last) if last.starts_with("  ... ") && last.contains(" library frame") => {
+                                let n: i64 = last.split_whitespace().nth(1).and_then(|n| n.parse().ok()).unwrap_or(0);
+                                *last = format!("  ... {}", crate::output::count(n + 1, "library frame"));
+                            }
+                            _ => block.push("  ... 1 library frame".to_string()),
+                        }
+                    } else {
+                        block.push(t.clone());
+                    }
                     j += 1;
                 } else {
                     break;

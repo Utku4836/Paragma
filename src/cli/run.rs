@@ -128,10 +128,36 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
     let index = Index::open(project)?;
     let mut unexplained: Option<(String, Vec<String>)> = None;
-    if exit != 0 && !run.errors.is_empty() {
+    // the same errors as this conversation's last run of it: said already
+    let previous = state.my_last_run()?.filter(|p| p.command == command && p.exit != 0);
+    let signatures = |errors: &[String]| -> Vec<String> {
+        let mut v: Vec<String> = errors.iter().map(|e| record::signature::normalize(e)).collect();
+        v.sort();
+        v
+    };
+    let same_as_before = exit != 0
+        && !run.errors.is_empty()
+        && previous.as_ref().is_some_and(|p| signatures(&p.errors) == signatures(&run.errors));
+    let said = state.said()?;
+    let mut places: Vec<usize> = Vec::new();
+    if same_as_before {
+        b.add(&format!(
+            "errors: the same {} as the last run here (first: {})",
+            run.errors.len(),
+            one_line(&run.errors[0], 100)
+        ));
+    } else if exit != 0 && !run.errors.is_empty() {
         b.add("errors:");
+        // lines already said as part of an error above are not errors again
+        let mut told: Vec<String> = Vec::new();
         for line in run.errors.iter().take(EXPLAINED) {
+            if told.iter().any(|t| t.trim() == line.trim()) {
+                continue;
+            }
             b.add(line);
+            // what explains it: the values compared, its own frames
+            let (at, details) = testrun::explain::context(&output, line);
+            places.extend(at);
             let mut files_hit = Vec::new();
             if let Some(code) = &code {
                 for (file, n) in parse::locations(line) {
@@ -150,15 +176,24 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                     }
                 }
             }
+            for d in details {
+                b.add(&format!("    {d}"));
+                told.push(d);
+            }
             let known = match known(&index, project, line)? {
                 Some(k) => Some(k),
                 None => known_elsewhere(cx, project, line)?,
             };
             match known {
+                // its fix in full once a conversation; after that by its id
+                Some(k) if known_id(&k).is_some_and(|id| said.contains(&format!("known:{id}"))) => {
+                    b.add(&format!("  known: {} (its fix was shown above)", known_id(&k).unwrap_or("")));
+                }
                 Some(k) => {
                     b.add(&format!("  known: {k}"));
                     if let Some(id) = known_id(&k) {
                         state.fix_shown(id, &command, &run.failing)?;
+                        state.say(&[format!("known:{id}")])?;
                     }
                 }
                 None if unexplained.is_none() => unexplained = Some((line.clone(), files_hit)),
@@ -176,6 +211,19 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if let Some(c) = &code {
         for w in super::ripple::warnings(project, c, None, false) {
             b.add(&format!("ripple: {w}"));
+        }
+    }
+    // the whole output, for the part around an error
+    if exit != 0 && !run.errors.is_empty() {
+        let path = project.meta_dir().join("last-run.log");
+        if std::fs::write(&path, &output).is_ok() {
+            let lines = places.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
+            let at = match places.len() {
+                0 => String::new(),
+                1 => format!("; the error at line {lines}"),
+                _ => format!("; the errors at lines {lines}"),
+            };
+            b.add(&format!("(whole output: {}{at})", path.display()));
         }
     }
     let tests_seen = run.passed > 0 || !run.failing.is_empty();

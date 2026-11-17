@@ -4,6 +4,7 @@
 //! which got fixed.
 
 pub mod compact;
+pub mod explain;
 pub mod parse;
 
 /// One run of a command.
