@@ -126,7 +126,7 @@ pg setup
 
 In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all --global`, `pg setup --list`.
 
-**MCP.** A client that speaks MCP can use `pg mcp`, a server over stdio: its tools are pg's commands, and its instructions carry the brief of the folder's project, so the agent starts with it even without hooks. Claude Code: `claude mcp add paragma -- pg mcp`.
+**MCP.** Apps that start MCP servers can run Paragma as one: the app gets the project's brief when a conversation starts and pg's commands as tools, which helps most in apps without a shell or hooks. In `pg setup` choose **MCP** and an app (Claude Code, Claude Desktop, Codex, Antigravity, Cursor; for every conversation), or `pg setup all --mcp`; `--no-mcp` takes it out. Where Paragma's hooks already give the brief, the server does not repeat it.
 
 ## Commands
 

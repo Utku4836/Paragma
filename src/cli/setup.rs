@@ -19,7 +19,7 @@
 
 use super::setup_screen as screen;
 use super::{Context, USAGE, fail};
-use crate::agents::{self, Agent, hooks};
+use crate::agents::{self, Agent, hooks, mcp};
 use crate::project::Home;
 use crate::skills;
 use crate::terminal;
@@ -48,6 +48,15 @@ pub struct Args {
     #[arg(long)]
     no_hooks: bool,
 
+    /// Paragma as an MCP server in the app, for every conversation (Claude Code, Claude Desktop, Codex,
+    /// Antigravity, Cursor): the app starts it, gets the brief and pg's commands as tools
+    #[arg(long, conflicts_with_all = ["no_mcp", "hooks", "no_hooks", "dir"])]
+    mcp: bool,
+
+    /// Take Paragma's MCP server out of the app
+    #[arg(long, conflicts_with_all = ["hooks", "no_hooks", "dir"])]
+    no_mcp: bool,
+
     /// The agents, where they read instructions, and whether Paragma is set up there
     #[arg(long)]
     list: bool,
@@ -68,6 +77,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         list(&style);
         return Ok(());
     };
+    if a.mcp || a.no_mcp {
+        return mcp_setup(&style, id, a.mcp);
+    }
     let chosen: Vec<Agent> = if id == "all" {
         agents::known().into_iter().filter(|x| x.installed).collect()
     } else {
@@ -121,6 +133,36 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     Ok(())
 }
 
+/// Puts Paragma's MCP server into an app (or all found), or takes it out.
+fn mcp_setup(style: &Style, id: &str, add: bool) -> Result<()> {
+    let clients: Vec<mcp::Client> = if id == "all" {
+        mcp::clients().into_iter().filter(|c| c.installed).collect()
+    } else {
+        let names: Vec<&str> = mcp::clients().iter().map(|c| c.id).collect();
+        vec![mcp::find(id).ok_or_else(|| fail(USAGE, format!("no MCP app {id:?} (apps: {}, all)", names.join(", "))))?]
+    };
+    for c in &clients {
+        println!("{}", mcp_connect(style, c, add)?);
+    }
+    Ok(())
+}
+
+/// Adds or takes out Paragma's MCP server in one app; the line saying how.
+pub(super) fn mcp_connect(style: &Style, c: &mcp::Client, add: bool) -> Result<String> {
+    let change = if add { mcp::install(c, &std::env::current_exe()?)? } else { mcp::remove(c)? };
+    let what = match (add, change) {
+        (true, hooks::Change::Written) => "MCP server added",
+        (true, hooks::Change::Unchanged) => "MCP server already up to date",
+        (false, hooks::Change::Written) => "MCP server taken out",
+        (false, hooks::Change::Unchanged) => "no MCP server of Paragma there",
+    };
+    let place = match &c.cli {
+        Some(cli) => format!("{} mcp, every conversation", cli.file_stem().unwrap_or_default().to_string_lossy()),
+        None => c.files.iter().map(|f| agents::short(f)).collect::<Vec<_>>().join(", "),
+    };
+    Ok(format!("  {} {:<14} {}  {}", style.ok("✓"), c.name, style.dim(&place), style.dim(what)))
+}
+
 /// Writes the section for an agent into `path`, and its hooks into
 /// `hooks_file` when given; the lines saying how it went.
 pub(super) fn connect(
@@ -149,6 +191,10 @@ pub(super) fn connect(
 }
 
 fn list(style: &Style) {
+    for c in mcp::clients().iter().filter(|c| c.installed) {
+        let state = if mcp::installed(c) { style.ok("MCP server set up") } else { "no MCP server".to_string() };
+        println!("  {} {:<14} {:<15} {}", style.accent("●"), c.name, c.id, state);
+    }
     for agent in agents::known() {
         let mark = if agent.installed { style.accent("●") } else { style.dim("○") };
         let state = if skills::installed(&agent.global) {

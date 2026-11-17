@@ -4,6 +4,7 @@
 
 mod conversations;
 pub mod hooks;
+pub mod mcp;
 
 pub use conversations::Conversation;
 
@@ -27,6 +28,15 @@ impl Agent {
     pub fn conversations(&self) -> Vec<Conversation> {
         conversations::of(self.id)
     }
+}
+
+/// Where a program is on the PATH (with its .exe, .cmd or .bat on Windows).
+pub fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let exts: Vec<&str> = if cfg!(windows) { vec![".exe", ".cmd", ".bat", ""] } else { vec![""] };
+    std::env::split_paths(&path)
+        .flat_map(|dir| exts.iter().map(move |e| dir.join(format!("{name}{e}"))).collect::<Vec<_>>())
+        .find(|p| p.is_file())
 }
 
 fn on_path(names: &[&str]) -> bool {

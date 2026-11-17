@@ -1,12 +1,13 @@
-//! The screen of `pg setup` in a terminal: choose instructions or hooks,
-//! then an agent (with hooks: Claude Code or Codex), then where Paragma
-//! goes (every conversation, one conversation's folder, this folder), then
+//! The screen of `pg setup` in a terminal: choose instructions, hooks or
+//! MCP, then an agent (with hooks: Claude Code or Codex; with MCP: the apps
+//! that start MCP servers), then where Paragma goes (every conversation,
+//! one conversation's folder, this folder; MCP: every conversation), then
 //! confirm. Arrow keys move, Enter goes on, Esc goes back.
 
 use super::Context;
 use super::screen::{banner, draw, fit, row};
-use super::setup::{Style, connect};
-use crate::agents::{self, Agent, Conversation, hooks};
+use super::setup::{Style, connect, mcp_connect};
+use crate::agents::{self, Agent, Conversation, hooks, mcp};
 use crate::output;
 use crate::terminal::{self, Key};
 use anyhow::Result;
@@ -16,11 +17,15 @@ use std::path::PathBuf;
 const SCOPES: [&str; 4] = ["Every conversation", "One conversation", "This folder", "Back"];
 
 /// The choices on the first screen: (name, what it does).
-const MODES: [(&str, &str); 2] = [
+const MODES: [(&str, &str); 3] = [
     ("Instructions", "a short section in the agent's instructions file; the agent calls pg when it needs it"),
     (
         "Hooks",
         "the same, and the agent runs Paragma by itself: the brief, known fixes, the handoff, also when it forgets to",
+    ),
+    (
+        "MCP",
+        "the app starts Paragma as a server: the brief at the start, pg's commands as tools; for apps without a shell or hooks",
     ),
 ];
 
@@ -41,6 +46,9 @@ struct Setup<'a> {
     agents: Vec<Agent>,
     /// Hooks chosen on the first screen.
     hooks: bool,
+    /// MCP chosen on the first screen: the apps are listed instead.
+    mcp: bool,
+    clients: Vec<mcp::Client>,
     screen: Screen,
     /// The highlighted row of the current list.
     cur: usize,
@@ -71,6 +79,8 @@ pub fn run(cx: &Context, style: &Style) -> Result<bool> {
         cwd: cx.cwd.clone(),
         agents: Vec::new(),
         hooks: false,
+        mcp: false,
+        clients: Vec::new(),
         screen: Screen::Mode,
         cur: 0,
         top: 0,
@@ -133,6 +143,59 @@ impl Setup<'_> {
                     self.row(&mut out, i == self.cur, &line);
                 }
                 "↑↓ move   enter choose   q quit"
+            }
+            Screen::Agents if self.mcp => {
+                out.push_str(&format!("  {}\n\n", st.bold("Paragma as an MCP server, in an app")));
+                if self.clients.is_empty() {
+                    out.push_str(&format!(
+                        "  {}\n",
+                        st.dim("No app that starts MCP servers was found (Claude Code, Claude Desktop, Codex, Antigravity, Cursor).")
+                    ));
+                }
+                for (i, c) in self.clients.iter().enumerate() {
+                    let state =
+                        if mcp::installed(c) { format!("  {}", st.ok("✓ MCP server")) } else { String::new() };
+                    self.row(&mut out, i == self.cur, &format!("{}{state}", fit(c.name, 16)));
+                }
+                out.push_str(&format!(
+                    "\n  {} {}\n",
+                    st.accent("◆"),
+                    st.dim("An MCP server is for every conversation of the app.")
+                ));
+                "↑↓ move   enter choose   esc back   q quit"
+            }
+            Screen::Confirm if self.mcp => {
+                let c = &self.clients[self.agent];
+                let set = mcp::installed(c);
+                let title = if set {
+                    format!("{} has Paragma's MCP server: update it?", c.name)
+                } else {
+                    format!("Add Paragma's MCP server to {}?", c.name)
+                };
+                out.push_str(&format!("  {}\n\n", st.bold(&title)));
+                let place = match &c.cli {
+                    Some(cli) => format!(
+                        "with {} mcp add, for every conversation",
+                        cli.file_stem().unwrap_or_default().to_string_lossy()
+                    ),
+                    None => c.files.iter().map(|f| agents::short(f)).collect::<Vec<_>>().join(", "),
+                };
+                out.push_str(&format!("  {} {}\n", st.dim("Where:"), place));
+                out.push_str(&format!(
+                    "  {}\n",
+                    st.dim(
+                        "At the start of a conversation the app gets the project's brief; pg's commands are its tools."
+                    )
+                ));
+                if mcp::hooks_give_the_brief(c.id, &self.cwd) {
+                    out.push_str(&format!(
+                        "  {} {}\n",
+                        st.accent("◆"),
+                        st.dim("Paragma's hooks already give the brief here: the server will not say it again.")
+                    ));
+                }
+                out.push_str(&format!("  {}\n", st.dim("Every other server and setting stays as it is.")));
+                if set { "enter / y update   r take it out   esc / n back" } else { "enter / y add   esc / n back" }
             }
             Screen::Agents => {
                 let title =
@@ -292,6 +355,7 @@ impl Setup<'_> {
     fn rows(&self) -> usize {
         match self.screen {
             Screen::Mode => MODES.len(),
+            Screen::Agents if self.mcp => self.clients.len(),
             Screen::Agents => self.agents.len(),
             Screen::Scope => SCOPES.len(),
             Screen::Conversations => self.matching().len(),
@@ -331,7 +395,14 @@ impl Setup<'_> {
             Screen::Mode => {
                 if matches!(k, Key::Esc | Key::Char('q')) {
                     self.quit = true;
+                } else if enter && self.cur == 2 {
+                    self.mcp = true;
+                    self.hooks = false;
+                    self.clients = mcp::clients().into_iter().filter(|c| c.installed).collect();
+                    self.message = None;
+                    self.go(Screen::Agents, 0);
                 } else if enter {
+                    self.mcp = false;
                     self.hooks = self.cur == 1;
                     let hooks = self.hooks;
                     self.agents = agents::known()
@@ -346,9 +417,14 @@ impl Setup<'_> {
                 if k == Key::Char('q') {
                     self.quit = true;
                 } else if back {
-                    let mode = usize::from(self.hooks);
+                    let mode = if self.mcp { 2 } else { usize::from(self.hooks) };
                     self.message = None;
                     self.go(Screen::Mode, mode);
+                } else if enter && n > 0 && self.mcp {
+                    self.agent = self.cur;
+                    self.message = None;
+                    self.back = Screen::Agents;
+                    self.go(Screen::Confirm, 0);
                 } else if enter && n > 0 {
                     self.agent = self.cur;
                     self.message = None;
@@ -401,6 +477,16 @@ impl Setup<'_> {
                 }
                 _ => {}
             },
+            Screen::Confirm if self.mcp => {
+                if enter || k == Key::Char('y') || k == Key::Char('Y') {
+                    self.install_mcp(true);
+                } else if k == Key::Char('r') && mcp::installed(&self.clients[self.agent]) {
+                    self.install_mcp(false);
+                } else if back || k == Key::Char('n') || k == Key::Char('N') {
+                    let agent = self.agent;
+                    self.go(Screen::Agents, agent);
+                }
+            }
             Screen::Confirm => {
                 if enter || k == Key::Char('y') || k == Key::Char('Y') {
                     self.install();
@@ -447,6 +533,20 @@ impl Setup<'_> {
                 lines.iter().map(|l| l.trim_start()).collect::<Vec<_>>().join("\n  ")
             }
             Err(e) => self.style.bad(&format!("✗ {}: {e}", a.name)),
+        });
+        let agent = self.agent;
+        self.go(Screen::Agents, agent);
+    }
+
+    /// Adds (or takes out) Paragma's MCP server in the chosen app.
+    fn install_mcp(&mut self, add: bool) {
+        let c = &self.clients[self.agent];
+        self.message = Some(match mcp_connect(self.style, c, add) {
+            Ok(line) => {
+                self.done.push(line.clone());
+                line.trim_start().to_string()
+            }
+            Err(e) => self.style.bad(&format!("✗ {}: {e}", c.name)),
         });
         let agent = self.agent;
         self.go(Screen::Agents, agent);

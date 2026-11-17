@@ -14,12 +14,18 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
 #[derive(clap::Args)]
-pub struct Args {}
+pub struct Args {
+    /// The app that starts it (pg setup writes it): with Paragma's hooks in
+    /// that app, the brief comes from them and is not said again
+    #[arg(long)]
+    client: Option<String>,
+}
 
 /// The protocol versions this server speaks, newest first.
 const VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-pub fn run(cx: &Context, _a: Args) -> Result<()> {
+pub fn run(cx: &Context, a: Args) -> Result<()> {
+    let hooked = a.client.as_deref().is_some_and(|c| crate::agents::mcp::hooks_give_the_brief(c, &cx.cwd));
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -28,7 +34,7 @@ pub fn run(cx: &Context, _a: Args) -> Result<()> {
             continue;
         }
         let reply = match serde_json::from_str::<Value>(&line) {
-            Ok(msg) => answer(cx, &msg),
+            Ok(msg) => answer(cx, &msg, hooked),
             Err(e) => Some(error(Value::Null, -32700, &format!("not JSON: {e}"))),
         };
         if let Some(r) = reply {
@@ -47,8 +53,9 @@ fn ok(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
-/// The reply to one message; None for a notification.
-fn answer(cx: &Context, msg: &Value) -> Option<Value> {
+/// The reply to one message; None for a notification. `hooked`: the app's
+/// hooks give the brief.
+fn answer(cx: &Context, msg: &Value, hooked: bool) -> Option<Value> {
     let id = msg.get("id").cloned()?; // a notification (no id) gets no reply
     let method = msg["method"].as_str().unwrap_or("");
     Some(match method {
@@ -61,7 +68,7 @@ fn answer(cx: &Context, msg: &Value) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": "paragma", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": instructions(cx),
+                    "instructions": instructions(cx, hooked),
                 }),
             )
         }
@@ -83,12 +90,14 @@ fn answer(cx: &Context, msg: &Value) -> Option<Value> {
     })
 }
 
-/// How to use Paragma, and the brief of the project linked to the folder.
-fn instructions(cx: &Context) -> String {
+/// How to use Paragma, and the brief of the project linked to the folder
+/// (unless the app's hooks give it: the agent would read it twice).
+fn instructions(cx: &Context, hooked: bool) -> String {
     let core = crate::skills::CORE;
     let tools = "Here the pg commands are tools: pg_open, pg_find, pg_read, pg_write, pg_run, pg_steps, pg_finish, \
                  pg_tell, and pg for any other command (its arguments as a list).";
     let brief = match &cx.project {
+        Some(_) if hooked => "\n\nParagma's hooks give this conversation the project's brief at its start.".to_string(),
         Some(_) => {
             let (code, text) = pg(cx, &["open".to_string()]);
             if code == 0 { format!("\n\nThe brief of this folder's project (pg open):\n{text}") } else { String::new() }
