@@ -9,6 +9,7 @@ description: Use to look up or record project knowledge with Paragma - rules, de
 - `pg read <id>` (`e12`, `r3`, `d7`, `n40`; `shop:e12` in another project) or a path. What this conversation was shown in full lately comes back as one line: it is already in your context; `pg read` shows it again.
 - `connected:` after a record (and after the best result of a search): what it replaced, notes on the same code, links, what was written in the same work. Read those before changing what it governs.
 - `pg find "..." --in <project>` or `--all` for other projects.
+- `pg doctor` lists the records that may be outdated (their code is gone or its signature changed: `pg write --confirm <id>` when still right) and what could be tidier (notes about the same thing, a note on unrelated topics, a folder with one note), each with the command that does it.
 
 ## Record it
 - A rule from the user: `pg write --rule "<one sentence>" --group <Group>`. Tie it to code: end it with `(applies: payments/, pricing/vat.go)`.

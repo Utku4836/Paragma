@@ -10,6 +10,7 @@ mod git_screen;
 pub mod hook;
 mod link;
 mod ls;
+mod mcp;
 mod mv;
 mod open;
 mod perceive;
@@ -98,6 +99,8 @@ enum Command {
     Skill(skill::Args),
     /// Back the memory up to GitHub and keep it the same on every computer
     Git(git::Args),
+    /// Paragma as an MCP server over stdio, for clients without hooks: claude mcp add paragma -- pg mcp
+    Mcp(mcp::Args),
     /// Answers an agent's hook (put in place by pg setup): the event as JSON on stdin
     #[command(hide = true)]
     Hook(hook::Args),
@@ -217,6 +220,7 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Rm(a) => rm::run(cx, a),
         Command::Sleep(a) => sleep::run(cx, a),
         Command::Tell(a) => tell::run(cx, a),
+        Command::Mcp(a) => mcp::run(cx, a),
         Command::Doctor(a) => doctor::run(cx, a),
         Command::Setup(a) => setup::run(cx, a),
         Command::Skill(a) => skill::run(cx, a),

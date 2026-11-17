@@ -33,7 +33,9 @@ pub fn news(state: &State) -> Result<Vec<String>> {
 
 pub fn facts(_project: &Project, state: &State, compacted: bool) -> Result<Facts> {
     let now = now();
-    Ok(Facts {
+    crate::output::mark("perceive: start");
+    let found = super::sleep::found(state);
+    let facts = Facts {
         now,
         me: conversation::key().to_string(),
         journal: state.journal(now - LOOK_BACK)?,
@@ -41,8 +43,10 @@ pub fn facts(_project: &Project, state: &State, compacted: bool) -> Result<Facts
         folders: state.folders(now - LOOK_BACK)?,
         compacted,
         said: state.said()?,
-        outdated: super::sleep::found(state).outdated,
-        tidy: super::sleep::found(state).tidy,
+        outdated: found.outdated,
+        tidy: found.tidy,
         said_log: state.said_log(now - LOOK_BACK * 4)?,
-    })
+    };
+    crate::output::mark("perceive: done");
+    Ok(facts)
 }

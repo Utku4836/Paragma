@@ -126,6 +126,8 @@ pg setup
 
 In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all --global`, `pg setup --list`.
 
+**MCP.** A client that speaks MCP can use `pg mcp`, a server over stdio: its tools are pg's commands, and its instructions carry the brief of the folder's project, so the agent starts with it even without hooks. Claude Code: `claude mcp add paragma -- pg mcp`.
+
 ## Commands
 
 The section `pg setup` writes is short: when to call `pg`. The details are in three skills the agent reads when it needs them (`pg skill coding`, `pg skill projects`, `pg skill knowledge`, also kept as files in `~/.paragma/skills/`), and `pg <command> --help` explains every option.
@@ -142,14 +144,15 @@ pg write --decision "..." --why "..." --alternatives "..."
 pg write --error "<error line>" --cause "..." --fix "..."
 pg write payments/provider --file notes.md      # a note; long text from a file or stdin (-)
 pg finish --done 1 "what changed, what is next"  # tick off steps, leave the handoff
-pg steps                             # the steps with their numbers (--defer 4, --drop 4, --edit 4 "text")
+pg steps                             # the steps with their numbers (--take 4, --defer 4, --drop 4, --edit 4 "text")
+pg tell "I am changing refund.go"    # a note the other conversations on the project see once
 pg ask "Which address on invoices?"  # a question that waits on the user; the brief lists it until pg answer 1 "..."
 pg ripple                            # what a change reaches: callers left as they were, tests to run
 pg tree                              # the code: files and symbols, with the notes about them marked
 pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor
 ```
 
-Many `pg` calls can run at once, from several conversations, on one project or many. A write is whole or not there at all, also when its process is killed halfway. `pg rm` moves notes to `.archive/` instead of deleting them. pg's own index files are made again from the notes when they are damaged (kept aside as `.broken`); `pg doctor` also looks for damage deep inside them.
+Several conversations on one project see each other: who is at work, the steps another has taken, the notes they left, and what a conversation that stopped without a handoff did. Many `pg` calls can run at once, from several conversations, on one project or many. A write is whole or not there at all, also when its process is killed halfway. `pg rm` moves notes to `.archive/` instead of deleting them. pg's own index files are made again from the notes when they are damaged (kept aside as `.broken`); `pg doctor` also looks for damage deep inside them.
 
 ### Secrets
 
@@ -182,6 +185,7 @@ Run `pg git` again to see the account, the repository and the last sync, to chan
 - **What a change reaches.** `pg ripple` compares the code with the last commit: a function whose signature changed, renamed or removed, with the callers the change left as they were and the tests that reach it; a shader struct, GraphQL or Protobuf type or SQL table whose fields changed, with the other code that names them. `pg run`, the hooks and `pg finish` say it by themselves; `pg ripple Refund` tells what reaches a function before changing it.
 - **Libraries at their versions.** The libraries a project locks (Cargo.lock, node_modules, go.mod, a virtual environment) are read from the source already on the computer, when an agent asks: `pg find "serde_json Value get"` gives the real signature, doc, example, the feature it needs and deprecation at that version; a failed build that looked for a name a library does not have gets the right one from `pg run`; an upgrade is pointed out in the brief with what changed in what the code calls.
 - **Records that merge.** Writing a rule, decision or error that is already known updates the existing one instead of adding a copy; a decision that contradicts an earlier one is pointed out.
+- **A pure core.** What pg says is decided by a kernel that reads only facts (the event log, the runs, what was already said) and never a file or the clock: small experts each notice one thing (a conversation cut short, the commands that work, a note whose code is gone, notes that could be tidier), and attention chooses what fits the agent's context, never twice. Each kind of hint is weighted by how often agents acted on it; a note fades by its uses (ACT-R). Heavy looks over the whole memory run after `pg finish`, in the background.
 - **One binary.** `pg` is written in Rust: no runtime, no server, and no network unless you connect `pg git` (it uses git and curl). The indexes next to the notes can be deleted at any time and are rebuilt.
 
 ## How it is tested
