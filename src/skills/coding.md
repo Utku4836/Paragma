@@ -24,14 +24,15 @@ description: Use when changing code with Paragma memory - finding where things a
 - The brief: `libraries:` the ones the goal names, `upgraded:` what changed in what this code calls after an upgrade.
 
 ## Test
-- `pg run -- <test command>` instead of running it directly: failing tests marked new, failing already or flaky; each error line with the function it points at and the fix memory has (from this project or another). Fixed tests are named too. It exits with the command's exit code.
+- `pg run -- <test command>` instead of running it directly: failing tests marked new, failing already or flaky; each error line with the function it points at, the values an assertion compared (long ones cut to where they differ), the project's own stack frames, and the fix memory has (from this project or another). The same errors as your last run are said in one line. Fixed tests are named too. It exits with the command's exit code.
+- `how it runs here:` in the brief: the test, build and check commands that passed in this project. Use them as they are.
 - The brief names the tests to run first for the likely code (`go test ./payments/`).
 - Any command that needs a key: `pg run -- curl -H "Authorization: Bearer $STRIPE_TEST" ...`. `$NAME` is put in on every system; the value never shows.
 
 ## Errors
-- `pg run` shows the output made short (errors whole, warnings grouped, repeats and progress counted); when it left some out, it says the file with all of it.
+- `pg run` shows the output made short (errors whole, warnings grouped, repeats and progress counted, a library's frames counted); a failure names the file with all of it and the lines of its errors: read only those.
 - A failure memory knows: `pg run` prints `known: e12 ... fix: ...`. Read it: `pg read e12`.
-- Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated. When a test that failed passes, `pg run` prints this command with the change that fixed it filled in: say what was wrong and how, then run it.
+- Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated. When a test that failed passes, `pg run` prints this command with the change that fixed it filled in (the functions changed after the failing run): say what was wrong and how, then run it.
 - `(code changed since it was written: ...)` on a note: the code it describes changed after it was written. Check before relying on it.
 
 ## Before you finish

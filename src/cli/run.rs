@@ -51,6 +51,8 @@ const TIMED_OUT: i32 = 124;
 const HISTORY: usize = 10;
 /// Error lines explained.
 const EXPLAINED: usize = 3;
+/// An output longer than this many lines is named, with where its errors are.
+const WHOLE_OUTPUT: usize = 20;
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let command = join(&a.command);
@@ -135,10 +137,19 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         v.sort();
         v
     };
+    let said = state.said()?;
+    // ...unless memory has a fix for one of them not shown yet
+    let news = run.errors.iter().take(EXPLAINED).any(|line| {
+        known(&index, project, line)
+            .ok()
+            .flatten()
+            .and_then(|k| known_id(&k).map(|id| !said.contains(&format!("known:{id}"))))
+            .unwrap_or(false)
+    });
     let same_as_before = exit != 0
         && !run.errors.is_empty()
+        && !news
         && previous.as_ref().is_some_and(|p| signatures(&p.errors) == signatures(&run.errors));
-    let said = state.said()?;
     let mut places: Vec<usize> = Vec::new();
     if same_as_before {
         b.add(&format!(
@@ -213,8 +224,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             b.add(&format!("ripple: {w}"));
         }
     }
-    // the whole output, for the part around an error
-    if exit != 0 && !run.errors.is_empty() {
+    // the whole output, for the part around an error (a short one was all said)
+    if exit != 0 && !run.errors.is_empty() && output.lines().filter(|l| !l.trim().is_empty()).count() > WHOLE_OUTPUT {
         let path = project.meta_dir().join("last-run.log");
         if std::fs::write(&path, &output).is_ok() {
             let lines = places.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");

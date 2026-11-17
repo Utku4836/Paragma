@@ -68,6 +68,12 @@ const QUESTIONS_SHOWN: usize = 8;
 const EARLIER_HANDOFFS: usize = 2;
 /// Files listed as likely to be touched, or as changed.
 const LIKELY: usize = 5;
+/// What being the most central code to the work adds to a file's score:
+/// none for now. Measured on this repository's history (a commit's subject
+/// as the goal, its files as the answer, bench/local/likely_code.py):
+/// 0.05 changed nothing, 0.1 to 0.4 named the right file first less often
+/// (40 of 64, then 39, 35, 29). PG_RANK=<weight> tries it on other code.
+const CENTRAL: f32 = 0.0;
 /// Tokens of the brief for the kernel's hints.
 const HINT_TOKENS: usize = 250;
 /// Commits read for "usually changes with".
@@ -447,6 +453,46 @@ fn libraries_part(b: &mut Budget, code: &CodeIndex, query: &str) {
     }
 }
 
+/// Adds to each likely file's score how central its code is to the work:
+/// personalized PageRank over the call graph, starting from the changed
+/// code and from the code closest in meaning (its score as the weight).
+fn central(
+    code: &CodeIndex,
+    best: &mut [(String, String, String, f32)],
+    changes: &[work::Change],
+    weight: f32,
+) -> Result<()> {
+    let (nodes, edges) = code.call_graph()?;
+    if nodes.is_empty() || edges.is_empty() {
+        return Ok(());
+    }
+    let mut personal = vec![0.0f64; nodes.len()];
+    for (i, (folder, path, qualified)) in nodes.iter().enumerate() {
+        if let Some(e) = best.iter().find(|e| e.0 == *folder && e.1 == *path && e.2 == *qualified) {
+            personal[i] += e.3.max(0.0) as f64;
+        }
+        if changes.iter().any(|c| c.folder == *folder && c.path == *path) {
+            personal[i] += 0.5;
+        }
+    }
+    let rank = crate::kernel::rank::pagerank(nodes.len(), &edges, &personal, 0.85, 30);
+    // a file: its most central symbol
+    let mut by_file: std::collections::HashMap<(&str, &str), f64> = std::collections::HashMap::new();
+    for (i, (folder, path, _)) in nodes.iter().enumerate() {
+        let e = by_file.entry((folder.as_str(), path.as_str())).or_insert(0.0);
+        *e = e.max(rank[i]);
+    }
+    let max = best.iter().filter_map(|e| by_file.get(&(e.0.as_str(), e.1.as_str()))).copied().fold(0.0, f64::max);
+    if max <= 0.0 {
+        return Ok(());
+    }
+    for e in best.iter_mut() {
+        let r = by_file.get(&(e.0.as_str(), e.1.as_str())).copied().unwrap_or(0.0);
+        e.3 += weight * (r / max) as f32;
+    }
+    Ok(())
+}
+
 fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Result<()> {
     let stack: Vec<String> = code.folders.iter().flat_map(|f| work::stack(&f.dir)).collect();
     if !stack.is_empty() {
@@ -488,6 +534,12 @@ fn code_part(b: &mut Budget, code: &CodeIndex, state: &State, query: &str) -> Re
             Some(e) => *e = (s.folder.clone(), s.path.clone(), s.qualified.clone(), score),
             None => best.push((s.folder.clone(), s.path.clone(), s.qualified.clone(), score)),
         }
+    }
+    // how central each is to the work: what the changed code and the code
+    // nearest the goal call, and what calls them (kernel/rank.rs)
+    let weight = std::env::var("PG_RANK").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(CENTRAL);
+    if weight > 0.0 {
+        central(code, &mut best, &changes, weight)?;
     }
     best.sort_by(|a, b| b.3.total_cmp(&a.3));
     let top = best.first().map(|e| e.3).unwrap_or(0.0);

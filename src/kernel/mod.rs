@@ -19,6 +19,7 @@
 
 pub mod attention;
 pub mod experts;
+pub mod rank;
 
 use crate::state::journal::Entry;
 use crate::testrun::Run;

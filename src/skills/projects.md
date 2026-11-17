@@ -9,7 +9,7 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - Same name written another way (`Shop API`, `shop-api`) or a small typo continues the project. A name sharing only a word starts a new one and names the similar project: if it is the same work, `pg open <that name>`.
 - A new conversation on earlier work: `pg open` alone in the code's folder (or its folder's name). Do not guess a new name.
 - Give every step of the user's plan, also those for later conversations, and every decision, in their words with the names and signatures they gave: the next conversation only knows what was written.
-- The brief: goal, open steps, the last handoff in full and earlier ones in one line, what changed since, other conversations still at work, the stack and commands used here, rules, decisions and errors for the goal, likely code, secrets by title.
+- The brief: goal, open steps, the last handoff in full and earlier ones in one line, what changed since, other conversations still at work, a conversation that stopped without a handoff and what it did (`stopped without a handoff`), after compaction what this conversation did before, how the project runs (`how it runs here`), rules, decisions and errors for the goal, likely code, secrets by title. Nothing is said twice in a conversation.
 - A short question or one-off task needs no project: `pg find` searches every project.
 
 ## While working

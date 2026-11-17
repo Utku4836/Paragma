@@ -381,6 +381,37 @@ impl CodeIndex {
         Ok(rows)
     }
 
+    /// The call graph: every function and type (folder, path, qualified
+    /// name), and an edge from each to what it calls, by name. A name many
+    /// symbols share ("new", "len") says nothing of which one is meant: no
+    /// edge.
+    pub fn call_graph(&self) -> Result<CallGraph> {
+        let mut st = self
+            .db
+            .prepare_cached("SELECT folder, path, qualified, name, calls FROM symbols WHERE kind != 'section'")?;
+        let rows: Vec<(String, String, String, String, String)> = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, r) in rows.iter().enumerate() {
+            by_name.entry(r.3.as_str()).or_default().push(i);
+        }
+        let mut edges = Vec::new();
+        for (i, r) in rows.iter().enumerate() {
+            for called in r.4.split(' ').filter(|c| !c.is_empty()) {
+                let name = called.rsplit(['.', ':']).next().unwrap_or(called);
+                match by_name.get(name) {
+                    Some(targets) if targets.len() <= MANY_NAMED => {
+                        edges.extend(targets.iter().filter(|&&t| t != i).map(|&t| (i, t)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let nodes = rows.into_iter().map(|r| (r.0, r.1, r.2)).collect();
+        Ok((nodes, edges))
+    }
+
     /// Symbols closest in meaning to a text, with their similarity.
     pub fn nearest(&self, text: &str, n: usize) -> Result<Vec<(Sym, f32)>> {
         self.nearest_where(text, n, "kind != 'section'")
@@ -440,6 +471,12 @@ impl CodeIndex {
 /// A file to read again: its folder, its path, and its (mtime, size) now
 /// (None: it is gone).
 type Stale = (String, String, Option<(i64, u64)>);
+
+/// The symbols (folder, path, qualified name) and the calls between them.
+pub type CallGraph = (Vec<(String, String, String)>, Vec<(usize, usize)>);
+
+/// Symbols sharing a name beyond this: a call to it is not followed.
+const MANY_NAMED: usize = 4;
 
 const SELECT: &str =
     "SELECT folder, path, name, qualified, kind, start, end, signature, doc, calls, body_hash FROM symbols";
