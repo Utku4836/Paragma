@@ -53,6 +53,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 proptest = "1"
 tempfile = "3"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(paragma_local)"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

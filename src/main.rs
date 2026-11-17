@@ -20,7 +20,7 @@ mod terminal;
 mod testrun;
 mod upgrade;
 
-#[cfg(test)]
+#[cfg(all(test, paragma_local))]
 mod robust_tests;
 
 fn main() -> std::process::ExitCode {
