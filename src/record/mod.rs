@@ -581,43 +581,6 @@ fn free_path(project: &Project, folder: &str, title: &str) -> String {
     rel
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_frame_only_error_line_says_nothing_to_compare() {
-        let m = |l: &str| content_words(&signature::message(&signature::normalize(l)));
-        // the panic's message is on the next line
-        assert_eq!(m(r"thread 'skills::tests::the_core_stays_short' (12848) panicked at src\skills\mod.rs:98:9:"), 0);
-        assert_eq!(m("Traceback (most recent call last):"), 0);
-        assert!(m("thread 'main' panicked at stdio.rs: failed printing to stdout: Broken pipe (os error 232)") >= 2);
-        assert!(m("error[E0425]: cannot find value `rate` in this scope") >= 2);
-        assert!(m("AssertionError: assert 2 == 3") >= 2);
-    }
-
-    #[test]
-    fn contradictions() {
-        assert!(contradicts("Refund window is 30 days.", "Refund window is 14 days."));
-        assert!(contradicts("Discounts apply before VAT.", "Discounts do not apply before VAT."));
-        assert!(!contradicts("Use ULIDs for public ids.", "Public ids are ULIDs."));
-    }
-
-    #[test]
-    fn titles() {
-        assert_eq!(title_of("Use ULIDs for public IDs. They sort by time."), "Use ULIDs for public IDs");
-        let long = "Discount codes are validated on the server only and the client never computes any price at all";
-        assert!(title_of(long).chars().count() <= 60);
-        // a dot inside a word or number is not a sentence's end
-        assert_eq!(title_of("3.0 ships git, library API and impact"), "3.0 ships git, library API and impact");
-        assert_eq!(title_of("state.db is not synced. A new computer starts empty."), "state.db is not synced");
-        assert_eq!(title_of("Pin tree-sitter to v0.27.1; newer breaks grammars"), "Pin tree-sitter to v0.27.1");
-        assert_eq!(title_of("Is it fast? Yes."), "Is it fast");
-        assert_eq!(title_of("Use rustls.\nNot openssl."), "Use rustls");
-        assert_eq!(title_of("Ends with a dot."), "Ends with a dot");
-        // an ordinal ("2nd round") is not a sentence's end; a number ending one is
-        assert_eq!(title_of("Tema 2. tur uygulandı. Sonra 3. tur."), "Tema 2. tur uygulandı");
-        assert_eq!(title_of("Shipping is 135 TL. Free above 1000 TL."), "Shipping is 135 TL");
-        assert_eq!(title_of("Version 2. Then more."), "Version 2");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/record/mod.rs"]
+mod tests;

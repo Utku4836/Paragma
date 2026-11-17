@@ -135,45 +135,6 @@ fn is_heading(line: &str, name: &str) -> bool {
     line.strip_prefix("## ").is_some_and(|h| h.trim().eq_ignore_ascii_case(name))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sections_are_read_and_replaced() {
-        let mut n = Note::parse("## Goal\nShip it.\n\n## Steps\n- [ ] a\n");
-        assert_eq!(n.section("goal").as_deref(), Some("Ship it."));
-        n.set_section("Goal", "Ship it today.");
-        n.set_section("Handoffs", "### x\ndone");
-        assert_eq!(n.body, "## Goal\nShip it today.\n\n## Steps\n- [ ] a\n\n## Handoffs\n### x\ndone\n");
-        assert_eq!(n.section("Steps").as_deref(), Some("- [ ] a"));
-        assert_eq!(n.section("Nothing"), None);
-    }
-
-    const ERROR: &str = "---\nid: e45\ntype: error\nfiles: [catalog/catalog.go, .gitattributes]\nseen: 3\n---\n## Symptom\nTests fail.\n\n## Fix\nNormalise line endings.\n";
-
-    #[test]
-    fn parses_props_and_sections() {
-        let n = Note::parse(ERROR);
-        assert_eq!(n.id(), Some("e45"));
-        assert_eq!(n.kind(), Kind::Error);
-        assert_eq!(
-            n.props.get("files"),
-            Some(&Value::List(vec!["catalog/catalog.go".into(), ".gitattributes".into()]))
-        );
-        assert_eq!(n.props.text("seen"), Some("3"));
-    }
-
-    #[test]
-    fn renders_what_it_parsed() {
-        assert_eq!(Note::parse(ERROR).render(), ERROR);
-    }
-
-    #[test]
-    fn a_file_without_props_is_a_plain_note() {
-        let n = Note::parse("# Shader notes\nUse half floats.\n");
-        assert_eq!(n.kind(), Kind::Note);
-        assert_eq!(n.title(), "Shader notes");
-        assert_eq!(n.render(), "# Shader notes\nUse half floats.\n");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/note/mod.rs"]
+mod tests;

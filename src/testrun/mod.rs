@@ -119,42 +119,6 @@ pub fn broken_by(runs: &[Run], files: &[String]) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn one_history_for_the_same_command() {
-        assert_eq!(normalized("go test ./..."), "go test ./...");
-        assert_eq!(normalized("go test ./... 2>&1 | head -100"), "go test ./...");
-        assert_eq!(normalized("cd \"C:/dev/app\" && go test ./... 2>&1"), "go test ./...");
-        assert_eq!(normalized("go test ./...  |  tail -20"), "go test ./...");
-        assert_eq!(normalized("npm test | Select-Object -Last 30"), "npm test");
-        // a pipe into something else, or a chain that is not a cd: as given
-        assert_eq!(normalized("cat log | sort"), "cat log | sort");
-        assert_eq!(normalized("make build && make test"), "make build && make test");
-    }
-
-    fn run(failing: &[&str], exit: i32) -> Run {
-        Run { failing: failing.iter().map(|s| s.to_string()).collect(), exit, passed: 3, ..Default::default() }
-    }
-
-    #[test]
-    fn new_already_flaky_fixed() {
-        let history = vec![run(&["A", "C"], 1), run(&["A"], 1), run(&["C"], 1)];
-        let v = judge(&run(&["A", "B", "C"], 1), &history);
-        assert_eq!(v.new, vec!["B"]);
-        assert_eq!(v.already, vec![("A".to_string(), 3)]);
-        assert_eq!(v.flaky, vec!["C"]);
-        let v = judge(&run(&[], 0), &history);
-        assert_eq!(v.fixed, vec!["A", "C"]);
-    }
-
-    #[test]
-    fn tests_broken_by_a_file() {
-        let mut r1 = run(&["TestRefund"], 1);
-        r1.changed = vec!["payments/refund.go".into()];
-        let r0 = run(&[], 0);
-        assert_eq!(broken_by(&[r1, r0], &["payments/refund.go".into()]), vec!["TestRefund"]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/testrun/mod.rs"]
+mod tests;

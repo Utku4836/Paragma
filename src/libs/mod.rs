@@ -695,32 +695,6 @@ fn diff(old: &[Item], new: &[Item], called: &HashSet<String>) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn what_a_failed_build_looked_for() {
-        let rust = "error[E0425]: cannot find function `language` in crate `tree_sitter_rust`\n --> src/lib.rs:4:20\nerror[E0599]: no method named `set_lang` found for struct `Parser` in the current scope\nerror[E0432]: unresolved import `serde_json::Valu`";
-        let m = missing(rust);
-        assert!(m.contains(&(Some("tree_sitter_rust".into()), "language".into(), None)), "{m:?}");
-        assert!(m.contains(&(None, "set_lang".into(), Some("Parser".into()))), "{m:?}");
-        assert!(m.contains(&(Some("serde_json".into()), "Valu".into(), None)), "{m:?}");
-        let ts = "src/a.ts(3,10): error TS2305: Module '\"lodash\"' has no exported member 'debounced'.";
-        assert_eq!(missing(ts), vec![(Some("lodash".into()), "debounced".into(), None)]);
-        let go = "./main.go:9:6: undefined: cobra.Comand";
-        assert_eq!(missing(go), vec![(Some("cobra".into()), "Comand".into(), None)]);
-        let py = "AttributeError: module 'requests' has no attribute 'gett'";
-        assert_eq!(missing(py), vec![(Some("requests".into()), "gett".into(), None)]);
-    }
-
-    #[test]
-    fn close_names() {
-        assert_eq!(closeness("language", "LANGUAGE"), Some(0));
-        assert_eq!(closeness("setLanguage", "set_language"), Some(1));
-        assert!(closeness("Comand", "Command").is_some());
-        assert!(closeness("get", "post").is_none());
-        assert_eq!(split_name("setLanguage"), "set Language");
-        assert_eq!(split_name("set_language"), "set language");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/libs/mod.rs"]
+mod tests;

@@ -246,38 +246,6 @@ impl State {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_event_reads_back_as_written() {
-        let all = [
-            Did::Open,
-            Did::Find { query: "refund window".into(), ids: vec!["r1".into(), "e3".into()] },
-            Did::Picked { query: "refund".into(), id: "e3".into() },
-            Did::Write { kind: "rule".into(), id: "r4".into(), what: "created".into() },
-            Did::Secret { title: "Npm token".into(), new: true },
-            Did::Step { text: "Add the client".into() },
-            Did::Finish { summary: "Client added.".into() },
-            Did::Mv { from: "notes/a".into(), to: "b/".into() },
-            Did::Rm { what: "r3".into() },
-            Did::Edit { file: "src/a.rs".into() },
-            Did::AfterEdit { files: "src/a.rs".into(), ids: vec!["e1".into()] },
-            Did::AfterEditShown { of: 42 },
-            Did::Run { command: "cargo test".into(), passed: false, failing: 2 },
-            Did::Run { command: "cargo test".into(), passed: true, failing: 0 },
-            Did::Fixed { line: "a.rs:3: boom".into(), tests: vec!["t1".into(), "t2".into()] },
-            Did::FixShown { id: "e1".into(), command: "cargo test".into(), tests: vec!["t1".into()] },
-            Did::Offered { what: "rule".into(), about: "Always round once.".into() },
-            Did::AskedFinish,
-            Did::Take { step: 3 },
-            Did::Told { text: "I am changing refund.go".into() },
-            Did::Other { action: "future".into(), target: "x".into(), detail: "y".into() },
-        ];
-        for d in all {
-            let (a, t, x) = d.row();
-            assert_eq!(Did::from_row(&a, &t, &x), d, "{a} {t} {x}");
-        }
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/state/journal.rs"]
+mod tests;

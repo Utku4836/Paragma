@@ -73,14 +73,6 @@ pub fn fit(s: &str, n: usize) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fit_cuts_and_pads() {
-        assert_eq!(fit("abc", 5), "abc  ");
-        assert_eq!(fit("abcdef", 4), "abc…");
-        assert_eq!(fit("şğü", 3), "şğü");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/cli/screen.rs"]
+mod tests;

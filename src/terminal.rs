@@ -190,21 +190,6 @@ mod sys {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keys_are_named() {
-        assert_eq!(name(b"\x1b[A"), Key::Up);
-        assert_eq!(name(b"\x1bOB"), Key::Down);
-        assert_eq!(name(b"\r"), Key::Enter);
-        assert_eq!(name(b"\x1b"), Key::Esc);
-        assert_eq!(name(b"\x03"), Key::Quit);
-        assert_eq!(name(b"y"), Key::Char('y'));
-        assert_eq!(name("ş".as_bytes()), Key::Char('ş'));
-        assert_eq!(name(b"\x1b[5~"), Key::Other);
-        assert_eq!(parse(b"\x1b[A\x1b[Bq\r\n"), [Key::Up, Key::Down, Key::Char('q'), Key::Enter]);
-        assert_eq!(parse("aş\x1b".as_bytes()), [Key::Char('a'), Key::Char('ş'), Key::Esc]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../unit/src/terminal.rs"]
+mod tests;

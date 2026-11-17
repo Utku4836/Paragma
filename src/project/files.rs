@@ -120,49 +120,6 @@ pub fn read_text(path: &Path) -> std::io::Result<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn writes_replace_whole_files() {
-        let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("a/b/note.md");
-        write_atomic(&p, b"one").unwrap();
-        write_atomic(&p, b"two").unwrap();
-        assert_eq!(read_text(&p).unwrap(), "two");
-        let leftovers = std::fs::read_dir(p.parent().unwrap()).unwrap().count();
-        assert_eq!(leftovers, 1);
-    }
-
-    #[test]
-    fn leftovers_of_dead_writers_are_cleared() {
-        let d = tempfile::tempdir().unwrap();
-        // no process has this number (above any a system gives), and this one is alive
-        let dead = d.path().join(".note.md.4000000000.tmp");
-        let alive = d.path().join(format!(".note.md.{}.tmp", std::process::id()));
-        for p in [&dead, &alive] {
-            std::fs::write(p, "half").unwrap();
-        }
-        std::fs::write(d.path().join("note.md"), "whole").unwrap();
-        std::fs::write(d.path().join(".hidden.tmp"), "not ours").unwrap();
-        assert_eq!(clear_leftovers(d.path()), 1);
-        assert!(!dead.exists() && alive.exists() && d.path().join(".hidden.tmp").exists());
-    }
-
-    #[test]
-    fn the_lock_is_exclusive_until_dropped() {
-        let d = tempfile::tempdir().unwrap();
-        let first = WriteLock::take(d.path()).unwrap();
-        let f = OpenOptions::new().write(true).open(d.path().join("lock")).unwrap();
-        assert!(f.try_lock().is_err());
-        drop(first);
-        // free at once, or within a moment: on macOS a process another test
-        // is starting holds a copy of the lock until it runs its program
-        let start = std::time::Instant::now();
-        while f.try_lock().is_err() {
-            assert!(start.elapsed() < Duration::from_secs(2), "the lock stayed taken after it was dropped");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/project/files.rs"]
+mod tests;

@@ -62,21 +62,6 @@ fn changing(run: &str) -> String {
     run.to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::normalize;
-
-    #[test]
-    fn what_changes_between_runs_is_taken_out() {
-        assert_eq!(
-            normalize(
-                "C:\\dev\\shop\\catalog\\catalog_test.go:8: catalog checksum mismatch: got 8c77cb095cbd want 4ff52f25fc9d"
-            ),
-            "catalog_test.go:<n>: catalog checksum mismatch: got <hex> want <hex>"
-        );
-        assert_eq!(normalize("\n  database is locked (5)\nmore"), "database is locked (<n>)");
-        assert_eq!(normalize("order 01JBX3K9Q8ZJ4N6V2T7R5M1C0D not found"), "order <id> not found");
-        assert_eq!(normalize("utf8 decode failed in main.rs"), "utf8 decode failed in main.rs");
-        assert_eq!(super::message("refund_test.go:<n>: window: got <n>"), "window: got");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/record/signature.rs"]
+mod tests;

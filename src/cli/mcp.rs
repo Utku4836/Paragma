@@ -284,32 +284,6 @@ fn tools() -> Value {
     ])
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tool_calls_are_pg_arguments() {
-        let a = |v: Value| v;
-        assert_eq!(
-            command("pg_open", &a(json!({ "name": "shop", "goal": "Refunds", "steps": ["A", "B"] }))),
-            Some(
-                vec!["open", "shop", "--goal", "Refunds", "--step", "A", "--step", "B"]
-                    .into_iter()
-                    .map(String::from)
-                    .collect()
-            )
-        );
-        assert_eq!(
-            command("pg_write", &a(json!({ "error": "x.go:1: boom", "fix": "retry" }))),
-            Some(vec!["write", "--error", "x.go:1: boom", "--fix", "retry"].into_iter().map(String::from).collect())
-        );
-        assert_eq!(
-            command("pg_run", &a(json!({ "command": "go test ./..." }))),
-            Some(vec!["run", "--", "go test ./..."].into_iter().map(String::from).collect())
-        );
-        assert_eq!(command("pg_find", &a(json!({}))), None);
-        assert_eq!(command("pg", &a(json!({ "args": ["mcp"] }))), None);
-        assert_eq!(command("nothing", &a(json!({}))), None);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/cli/mcp.rs"]
+mod tests;

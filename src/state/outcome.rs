@@ -170,32 +170,6 @@ impl State {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn track(helped: usize, count: usize, failed_last: usize) -> Track {
-        Track { helped: helped as f64, all: count as f64, helped_count: helped, count, failed_last }
-    }
-
-    #[test]
-    fn little_data_moves_nothing_and_much_moves_a_little() {
-        assert_eq!(track(0, 0, 0).factor(), 1.0);
-        assert_eq!(track(1, 1, 0).factor(), 1.0);
-        let good = track(5, 5, 0).factor();
-        let bad = track(0, 5, 5).factor();
-        assert!(good > 1.1 && good <= 1.0 + MOST, "{good}");
-        assert!((1.0 - MOST..0.9).contains(&bad), "{bad}");
-        assert!((track(3, 6, 0).factor() - 1.0).abs() < 1e-9);
-        // never past the bound, however many
-        assert!(track(1000, 1000, 0).factor() <= 1.0 + MOST + 1e-9);
-    }
-
-    #[test]
-    fn what_an_agent_is_told() {
-        assert_eq!(track(0, 0, 0).describe(), None);
-        assert_eq!(track(1, 1, 0).describe().unwrap(), "helped 1 of 1 time");
-        assert_eq!(track(3, 4, 1).describe().unwrap(), "helped 3 of 4 times");
-        assert!(track(1, 3, 2).describe().unwrap().starts_with("did not help the last 2 times"));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/state/outcome.rs"]
+mod tests;

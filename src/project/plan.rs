@@ -313,66 +313,6 @@ pub fn add_handoff(note: &mut Note, heading: &str, text: &str, replaces: Option<
     note.set_section("Handoffs", &section.join("\n\n"));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn steps_open_and_close() {
-        let mut n = Note::default();
-        set_goal(&mut n, "Refunds through the new provider.");
-        assert!(add_step(&mut n, "Add the client"));
-        assert!(add_step(&mut n, "Move refunds"));
-        assert!(!add_step(&mut n, "Move refunds"));
-        assert_eq!(close_number(&mut n, 1).as_deref(), Some("Add the client"));
-        assert_eq!(close_number(&mut n, 1), None);
-        assert_eq!(close_number(&mut n, 9), None);
-        assert!(!close_step(&mut n, "Add the client"));
-        assert_eq!(
-            n.body,
-            "## Goal\nRefunds through the new provider.\n\n## Steps\n- [x] Add the client\n- [ ] Move refunds\n"
-        );
-        assert_eq!(goal(&n), "Refunds through the new provider.");
-        assert_eq!(steps(&n).iter().filter(|s| !s.done).count(), 1);
-    }
-
-    #[test]
-    fn steps_by_part_dropped_and_rewritten() {
-        let mut n = Note::default();
-        for s in ["Add the client", "Move refunds to the client", "Remove the old provider", "x"] {
-            add_step(&mut n, s);
-        }
-        // a part two open steps hold closes none
-        assert_eq!(close_part(&mut n, "the client"), Err(2));
-        assert_eq!(close_part(&mut n, "nothing like it"), Err(0));
-        assert_eq!(close_part(&mut n, "MOVE REFUNDS").as_deref(), Ok("Move refunds to the client"));
-        assert_eq!(close_part(&mut n, "the client").as_deref(), Ok("Add the client"));
-        assert_eq!(drop_number(&mut n, 4).as_deref(), Some("x"));
-        assert_eq!(drop_number(&mut n, 4), None);
-        assert_eq!(
-            edit_number(&mut n, 3, "Remove the old provider and its keys").as_deref(),
-            Some("Remove the old provider")
-        );
-        // a step taken out keeps its place: no other number changes
-        add_step(&mut n, "Release");
-        assert_eq!(close_number(&mut n, 5).as_deref(), Some("Release"));
-        assert_eq!(reopen_number(&mut n, 5).as_deref(), Some("Release"));
-        assert_eq!(reopen_number(&mut n, 5), None, "open already");
-        assert_eq!(close_number(&mut n, 4), None, "taken out");
-        let texts: Vec<String> = steps(&n).into_iter().filter(|s| !s.dropped).take(3).map(|s| s.text).collect();
-        assert_eq!(texts, ["Add the client", "Move refunds to the client", "Remove the old provider and its keys"]);
-    }
-
-    #[test]
-    fn the_newest_handoff_comes_first() {
-        let mut n = Note::default();
-        add_handoff(&mut n, "2026-10-31 09:00Z · web", "Login page done.", None);
-        add_handoff(&mut n, "2026-11-01 14:00Z · api", "Client half done.", None);
-        add_handoff(&mut n, "2026-11-01 14:10Z · api", "Client done.\nTests pass.", Some("2026-11-01 14:00Z · api"));
-        let h = handoffs(&n);
-        assert_eq!(h.len(), 2);
-        assert_eq!(h[0].heading, "2026-11-01 14:10Z · api");
-        assert_eq!(h[0].text, "Client done.\nTests pass.");
-        assert_eq!(h[1].text, "Login page done.");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/project/plan.rs"]
+mod tests;

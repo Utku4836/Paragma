@@ -112,24 +112,6 @@ pub fn check_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names() {
-        assert!(check_name("game-engine").is_ok());
-        assert!(check_name("Oyun Motoru").is_ok());
-        assert!(check_name("a/b").is_err());
-        assert!(check_name(".pg").is_err());
-        assert!(check_name(" x").is_err());
-    }
-
-    #[test]
-    fn note_files() {
-        let p = Project { name: "g".into(), dir: PathBuf::from("/h/g") };
-        assert_eq!(p.note_file("physics/collisions"), PathBuf::from("/h/g/physics/collisions.md"));
-        assert_eq!(p.note_file("/rules.md"), PathBuf::from("/h/g/rules.md"));
-        assert_eq!(p.rel(&PathBuf::from("/h/g/physics/collisions.md")), "physics/collisions.md");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/project/mod.rs"]
+mod tests;

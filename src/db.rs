@@ -120,31 +120,6 @@ fn still_broken(path: &Path) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn many_open_a_new_file_at_once() {
-        let d = tempfile::tempdir().unwrap();
-        let path = d.path().join("new.db");
-        let threads: Vec<_> = (0..16)
-            .map(|_| {
-                let path = path.clone();
-                std::thread::spawn(move || {
-                    let db = open(&path)?;
-                    db.execute_batch("CREATE TABLE IF NOT EXISTS t(x); INSERT INTO t VALUES (1);")?;
-                    anyhow::Ok(())
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().unwrap().unwrap();
-        }
-        let db = open(&path).unwrap();
-        let mode: String = db.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
-        assert_eq!(mode, "wal");
-        let rows: i64 = db.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
-        assert_eq!(rows, 16);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../unit/src/db.rs"]
+mod tests;

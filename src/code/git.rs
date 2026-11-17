@@ -227,12 +227,6 @@ pub fn changed_together(dir: &Path, commits: usize) -> HashMap<String, Vec<(Stri
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn hunks() {
-        assert_eq!(super::hunk("-10,2 +12,3 @@ fn x"), Some((12, 14)));
-        assert_eq!(super::hunk("-5 +5 @@"), Some((5, 5)));
-        assert_eq!(super::hunk("-5,2 +4,0 @@"), Some((4, 4)));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/code/git.rs"]
+mod tests;

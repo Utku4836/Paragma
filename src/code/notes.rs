@@ -216,21 +216,6 @@ fn follow(project: &Project, renames: &[Rename]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn paths_symbols_and_applies() {
-        assert!(covers("pricing/", "pricing/vat.go"));
-        assert!(covers("refund.go", "payments/refund.go"));
-        assert!(!covers("fund.go", "payments/refund.go"));
-        assert!(names("Total", "cart/cart.go", "Cart.Total"));
-        assert!(names("cart/cart.go#Total", "cart/cart.go", "Cart.Total"));
-        assert!(!names("other.go#Total", "cart/cart.go", "Cart.Total"));
-        assert_eq!(
-            applies("Amounts are int64. (applies: pricing/, payments/)").unwrap(),
-            vec!["pricing/", "payments/"]
-        );
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/code/notes.rs"]
+mod tests;

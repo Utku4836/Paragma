@@ -272,47 +272,6 @@ fn opencode(data: &Path) -> Vec<Conversation> {
     Vec::new()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_uris_become_folders() {
-        let p = from_file_uri("file:///c%3A/Users/me/My%20App").unwrap();
-        if cfg!(windows) {
-            assert_eq!(p, PathBuf::from(r"c:\Users\me\My App"));
-        } else {
-            assert_eq!(p, PathBuf::from("c:/Users/me/My App"));
-        }
-        assert_eq!(from_file_uri("file:///home/me/app").unwrap(), PathBuf::from("/home/me/app"));
-        assert!(from_file_uri("https://x").is_none());
-    }
-
-    #[test]
-    fn a_claude_session_gives_its_folder_and_last_title() {
-        let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("s.jsonl");
-        let lines = [
-            r#"{"type":"system","cwd":"/work/app"}"#,
-            r#"{"type":"user","isMeta":true,"message":{"content":"<command>"}}"#,
-            r#"{"type":"user","message":{"content":"> Fix the login\nmore"}}"#,
-            r#"{"type":"custom-title","customTitle":"Login"}"#,
-            r#"{"type":"custom-title","customTitle":"Login fix"}"#,
-        ];
-        std::fs::write(&p, lines.join("\n")).unwrap();
-        let (dir, title) = claude_session(&p).unwrap();
-        assert_eq!(dir, folder("/work/app"));
-        assert_eq!(title, "Login fix");
-        std::fs::write(&p, lines[..3].join("\n")).unwrap();
-        assert_eq!(claude_session(&p).unwrap().1, "Fix the login");
-        std::fs::write(&p, lines[..2].join("\n")).unwrap();
-        assert!(claude_session(&p).is_none(), "nothing typed: an empty session");
-    }
-
-    #[test]
-    fn a_codex_title_is_the_request_after_attachments() {
-        assert_eq!(codex_title("Fix the build\nmore"), "Fix the build");
-        let raw = "# Files mentioned by the user:\n\n## a.png: C:/a.png\nImage attachment: true\n\n## My request:\nmake it blue";
-        assert_eq!(codex_title(raw), "make it blue");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/agents/conversations.rs"]
+mod tests;

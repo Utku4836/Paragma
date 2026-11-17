@@ -43,30 +43,6 @@ pub fn pagerank(n: usize, edges: &[(usize, usize)], personal: &[f64], damping: f
     rank
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    #[test]
-    fn what_the_work_calls_ranks_above_what_it_does_not_reach() {
-        // 0 is the work; it calls 1, 1 calls 2; 3 and 4 call each other apart
-        let r = pagerank(5, &[(0, 1), (1, 2), (3, 4), (4, 3)], &[1.0, 0.0, 0.0, 0.0, 0.0], 0.85, 40);
-        assert!(r[1] > r[3] && r[2] > r[3] && r[1] > r[4], "{r:?}");
-        assert!((r.iter().sum::<f64>() - 1.0).abs() < 1e-6);
-    }
-
-    proptest! {
-        /// Any graph: as many ranks as nodes, none negative, adding up to 1.
-        #[test]
-        fn any_graph(n in 0..40usize, edges in prop::collection::vec((0..50usize, 0..50usize), 0..120),
-                     personal in prop::collection::vec(-1.0..3.0f64, 0..50)) {
-            let r = pagerank(n, &edges, &personal, 0.85, 30);
-            prop_assert_eq!(r.len(), n);
-            prop_assert!(r.iter().all(|x| *x >= 0.0 && x.is_finite()));
-            if n > 0 {
-                prop_assert!((r.iter().sum::<f64>() - 1.0).abs() < 1e-6, "{}", r.iter().sum::<f64>());
-            }
-        }
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/kernel/rank.rs"]
+mod tests;

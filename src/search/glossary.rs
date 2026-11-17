@@ -59,38 +59,6 @@ fn matches(word: &str, term: &str) -> bool {
     term.starts_with(word) && w >= 6 && t - w <= 2
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn words(q: &str) -> Vec<String> {
-        super::super::query::words(q)
-    }
-
-    #[test]
-    fn endings_and_short_words() {
-        assert!(matches("iadesi", "iade"));
-        assert!(matches("redondea", "redondear"));
-        assert!(matches("reembolsos", "reembolso"));
-        assert!(!matches("paralel", "para"));
-        assert!(!matches("parametre", "para"));
-        assert!(!matches("cid", "ci"));
-        assert!(matches("ci", "ci"));
-    }
-
-    #[test]
-    fn a_turkish_question_finds_the_english_terms() {
-        let q = "KDV nasıl yuvarlanır";
-        let related = related_words(q, &words(q));
-        assert!(related.contains(&"vat".to_string()) && related.contains(&"rounding".to_string()), "{related:?}");
-        let q = "para iadesi ne zaman yapılır";
-        let related = related_words(q, &words(q));
-        assert!(related.contains(&"refund".to_string()) && related.contains(&"money".to_string()), "{related:?}");
-    }
-
-    #[test]
-    fn phrases_match_as_phrases() {
-        let q = "reglas de la base de datos";
-        assert!(related_words(q, &words(q)).contains(&"database".to_string()));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/search/glossary.rs"]
+mod tests;

@@ -179,54 +179,6 @@ pub fn folder_key(p: &Path) -> String {
     if cfg!(windows) { s.to_lowercase() } else { s }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_folder_and_the_folders_below_it_know_their_project() {
-        let d = tempfile::tempdir().unwrap();
-        let home = Home { root: d.path().to_path_buf() };
-        let api = d.path().join("dev/shop-api");
-        let links = serde_json::json!({
-            folder_key(&api): [{"project": "old", "used": 1}, {"project": "shop", "used": 2}],
-        });
-        std::fs::create_dir_all(home.projects_dir()).unwrap();
-        std::fs::write(home.projects_dir().join(".links"), links.to_string()).unwrap();
-        let links = Links::load(&home);
-        assert_eq!(links.projects_of(&api.join("src/handlers")), vec!["shop", "old"]);
-        assert!(links.projects_of(&d.path().join("elsewhere")).is_empty());
-    }
-
-    #[test]
-    fn linking_renaming_and_forgetting() {
-        let d = tempfile::tempdir().unwrap();
-        let home = Home { root: d.path().to_path_buf() };
-        let (api, web) = (d.path().join("api"), d.path().join("web"));
-        Links::link(&home, &api, "shop").unwrap();
-        Links::link(&home, &web, "shop").unwrap();
-        Links::link(&home, &api, "billing").unwrap();
-        let links = Links::load(&home);
-        assert_eq!(links.projects_of(&api), vec!["billing", "shop"]);
-        assert_eq!(links.folders_of("shop").len(), 2);
-        Links::rename_project(&home, "shop", "store").unwrap();
-        Links::forget_project(&home, "billing").unwrap();
-        let links = Links::load(&home);
-        assert_eq!(links.projects_of(&api), vec!["store"]);
-        assert_eq!(links.projects_of(&web), vec!["store"]);
-    }
-
-    #[test]
-    fn a_folder_below_a_linked_one_is_not_linked_again() {
-        let d = tempfile::tempdir().unwrap();
-        let home = Home { root: d.path().to_path_buf() };
-        let api = d.path().join("shop-api");
-        Links::link(&home, &api, "shop").unwrap();
-        Links::link(&home, &api.join("src"), "shop").unwrap();
-        Links::link(&home, &api.join("src"), "billing").unwrap();
-        let links = Links::load(&home);
-        assert_eq!(links.folders_of("shop"), vec![folder_key(&api)]);
-        assert_eq!(links.projects_of(&api.join("src")), vec!["billing", "shop"]);
-        assert_eq!(links.folder_names(&api.join("src/x")), vec!["src", "shop-api"]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/state/links.rs"]
+mod tests;

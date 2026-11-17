@@ -209,53 +209,6 @@ fn sentences(s: &str) -> Vec<String> {
     out.into_iter().filter(|s| !s.trim().is_empty()).collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rules_and_lookalikes() {
-        assert!(find("From now on, always run the tests with -race.").is_some());
-        assert!(find("asla main'e direkt push etme").is_some());
-        assert_eq!(find("Fix it. Never push directly to main.").as_deref(), Some("Never push directly to main."));
-        assert!(find("The function always returns nil, that's the bug.").is_none());
-        assert!(find("Never mind, let's do the other thing.").is_none());
-        assert!(find("bu fonksiyon her zaman nil döndürüyor, sorun bu").is_none());
-        assert!(find("Make the error message say \"never retry\".").is_none());
-    }
-
-    /// Precision and recall on bench/prompt-rules.tsv, on the dev split
-    /// (SPLIT=held for the held-out one, measured once): cargo test
-    /// --release said_rule -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn measure() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/bench/prompt-rules.tsv");
-        let text = std::fs::read_to_string(path).unwrap();
-        let split = std::env::var("SPLIT").unwrap_or_else(|_| "dev".into());
-        {
-            let split = split.as_str();
-            let (mut tp, mut fp, mut fn_) = (0, 0, 0);
-            for line in text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
-                let parts: Vec<&str> = line.splitn(3, '\t').collect();
-                if parts[0] != split {
-                    continue;
-                }
-                let (rule, found) = (parts[1] == "rule", find(parts[2]).is_some());
-                match (rule, found) {
-                    (true, true) => tp += 1,
-                    (false, true) => {
-                        fp += 1;
-                        println!("{split} false alarm: {}", parts[2]);
-                    }
-                    (true, false) => {
-                        fn_ += 1;
-                        println!("{split} missed: {}", parts[2]);
-                    }
-                    _ => {}
-                }
-            }
-            println!("{split}: found {tp} of {} rules, {fp} false alarms", tp + fn_);
-        }
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/record/said_rule.rs"]
+mod tests;

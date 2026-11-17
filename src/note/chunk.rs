@@ -66,31 +66,6 @@ pub fn rule_line(line: &str) -> Option<(&str, &str)> {
     (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())).then_some((id, text))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rules_are_one_piece_each() {
-        let n = Note::parse(
-            "---\ntype: rules\n---\n## Money\n- r1: Amounts are int64.\n- r2: Round half up.\n\n## Time\n- r3: Use clock.Now.\n- not a rule\n",
-        );
-        let c = chunks(&n, "rules");
-        assert_eq!(c.len(), 3);
-        assert_eq!(
-            (c[0].id.as_str(), c[0].heading.as_str(), c[0].text.as_str()),
-            ("r1", "Money", "Amounts are int64.")
-        );
-        assert_eq!(c[2].heading, "Time");
-    }
-
-    #[test]
-    fn short_notes_stay_whole_and_long_ones_split() {
-        let short = Note::parse("---\nid: e1\ntype: error\n---\n## Fix\nDo it.\n");
-        assert_eq!(chunks(&short, "x").len(), 1);
-        let long = Note::parse(&format!("## A\n{}\n## B\n{}\n", "a".repeat(900), "b".repeat(900)));
-        let c = chunks(&long, "n9");
-        assert_eq!(c.iter().map(|c| c.heading.as_str()).collect::<Vec<_>>(), vec!["A", "B"]);
-        assert_eq!(c[0].id, "n9");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/note/chunk.rs"]
+mod tests;

@@ -542,13 +542,6 @@ fn kill_tree(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn commands_are_joined_for_the_shell() {
-        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(super::join(&args(&["go", "test", "./..."])), "go test ./...");
-        assert_eq!(super::join(&args(&["pytest", "-k", "refund window"])), "pytest -k \"refund window\"");
-        assert_eq!(super::join(&args(&["npm test && echo ok"])), "npm test && echo ok");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/cli/run.rs"]
+mod tests;

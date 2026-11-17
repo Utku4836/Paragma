@@ -251,39 +251,6 @@ pub fn line(links: &[Link]) -> Option<String> {
     Some(format!("connected: {}", parts.join(" · ")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn links_name_one_note() {
-        let text = "See [[projects/omni/design]], [[design#Goals]], [[Design|the design]] and ![[pic.png]].";
-        assert_eq!(wiki_links(text), vec!["projects/omni/design", "design", "Design", "pic.png"]);
-        let paths = [
-            "projects/omni/design.md",
-            "design.md",
-            "projects/omni/intro.md",
-            "other/00 - Index.md",
-            "projects/omni/00 - Index.md",
-        ];
-        assert_eq!(resolve("projects/omni/design", "x.md", &paths).as_deref(), Some("projects/omni/design.md"));
-        assert_eq!(resolve("omni/design", "x.md", &paths).as_deref(), Some("projects/omni/design.md"));
-        // two notes named design: the one in the linking note's folder
-        assert_eq!(resolve("design", "projects/omni/intro.md", &paths).as_deref(), Some("projects/omni/design.md"));
-        assert_eq!(resolve("Design", "top.md", &paths).as_deref(), Some("design.md"));
-        assert_eq!(
-            resolve("00 - Index", "projects/omni/intro.md", &paths).as_deref(),
-            Some("projects/omni/00 - Index.md")
-        );
-        assert_eq!(resolve("00 - Index", "top.md", &paths).as_deref(), Some("other/00 - Index.md"));
-        assert_eq!(resolve("x", "top.md", &["a/x.md", "b/x.md"]), None, "two equally near");
-        assert_eq!(resolve("missing", "x.md", &paths), None);
-    }
-
-    #[test]
-    fn a_folder_and_a_file_in_it_are_the_same_place() {
-        assert!(same_place("payments/", "payments/refund.go"));
-        assert!(same_place("payments/refund.go", "payments/refund.go"));
-        assert!(!same_place("pay", "payments/refund.go"));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/search/graph.rs"]
+mod tests;

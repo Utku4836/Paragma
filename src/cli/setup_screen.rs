@@ -482,59 +482,6 @@ impl Setup<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn screen<'a>(home: &'a crate::project::Home, style: &'a Style) -> Setup<'a> {
-        Setup {
-            home,
-            style,
-            cwd: PathBuf::from("."),
-            agents: Vec::new(),
-            hooks: false,
-            screen: Screen::Mode,
-            cur: 0,
-            top: 0,
-            agent: 0,
-            conversations: Vec::new(),
-            search: String::new(),
-            target: PathBuf::new(),
-            place: String::new(),
-            back: Screen::Agents,
-            message: None,
-            done: Vec::new(),
-            trust_codex: false,
-            quit: false,
-        }
-    }
-
-    #[test]
-    fn hooks_list_only_the_agents_that_have_them() {
-        let home = crate::project::Home { root: PathBuf::from("unused") };
-        let style = Style::plain();
-        let mut s = screen(&home, &style);
-        let first = s.view();
-        assert!(first.contains("How should agents use Paragma?"), "{first}");
-        assert!(first.contains("› Instructions") && first.contains("Hooks"), "{first}");
-
-        s.key(Key::Down).unwrap();
-        s.key(Key::Enter).unwrap();
-        assert!(s.screen == Screen::Agents && s.hooks);
-        assert!(s.agents.iter().all(|a| hooks::AGENTS.contains(&a.id)));
-        let agents = s.view();
-        assert!(agents.contains("Hooks work with Claude Code and Codex only, for now."), "{agents}");
-
-        // back to the first screen, on the row chosen; instructions list every agent found
-        s.key(Key::Esc).unwrap();
-        assert!(s.screen == Screen::Mode && s.cur == 1);
-        s.key(Key::Up).unwrap();
-        s.key(Key::Enter).unwrap();
-        assert!(!s.hooks);
-        let found = agents::known().into_iter().filter(|a| a.installed).count();
-        assert_eq!(s.agents.len(), found);
-        assert!(!s.view().contains("only, for now"));
-        s.key(Key::Char('q')).unwrap();
-        assert!(s.quit);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/cli/setup_screen.rs"]
+mod tests;

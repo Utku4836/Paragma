@@ -181,7 +181,7 @@ impl Style {
     }
 
     /// No colours (tests).
-    #[cfg(test)]
+    #[cfg(all(test, paragma_local))]
     pub(super) fn plain() -> Style {
         Style { on: false }
     }

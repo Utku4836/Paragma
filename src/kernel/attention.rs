@@ -25,52 +25,6 @@ pub fn choose(mut hints: Vec<Hint>, said: &HashSet<String>, tokens: usize) -> Ve
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    fn hint(key: &str, weight: u32, text: &str) -> Hint {
-        Hint { key: key.into(), weight, text: text.into(), why: String::new() }
-    }
-
-    #[test]
-    fn weightiest_first_never_twice_within_budget() {
-        let said: HashSet<String> = ["old".to_string()].into();
-        let out = choose(
-            vec![
-                hint("low", 10, "low"),
-                hint("old", 99, "said before"),
-                hint("high", 90, "high"),
-                hint("high", 80, "the same again"),
-                hint("long", 50, &"word ".repeat(200)),
-            ],
-            &said,
-            30,
-        );
-        let keys: Vec<&str> = out.iter().map(|h| h.key.as_str()).collect();
-        assert_eq!(keys, ["high", "low"]);
-    }
-
-    proptest! {
-        /// Any hints: within the budget, none said before, no key twice,
-        /// heavier never after lighter, and the same answer every time.
-        #[test]
-        fn any_hints(raw in prop::collection::vec(("[a-e]", 0..100u32, "[a-z ]{0,80}"), 0..30),
-                     said in prop::collection::hash_set("[a-e]", 0..3), tokens in 0..200usize) {
-            let hints: Vec<Hint> = raw.iter().map(|(k, w, t)| hint(k, *w, t)).collect();
-            let out = choose(hints.clone(), &said, tokens);
-            let cost: usize = out.iter().map(|h| crate::output::tokens(&h.text) + 1).sum();
-            prop_assert!(cost <= tokens);
-            let mut keys = HashSet::new();
-            for h in &out {
-                prop_assert!(!said.contains(&h.key));
-                prop_assert!(keys.insert(h.key.clone()));
-            }
-            prop_assert!(out.windows(2).all(|w| w[0].weight >= w[1].weight));
-            let mut shuffled = hints;
-            shuffled.reverse();
-            prop_assert_eq!(choose(shuffled, &said, tokens), out);
-        }
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/kernel/attention.rs"]
+mod tests;

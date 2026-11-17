@@ -176,22 +176,6 @@ pub fn from_bytes(b: &[u8]) -> Vec<f32> {
     b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn related_texts_are_close() {
-        let e = encoder();
-        let refund = e.encode("Refunds are allowed only within 30 days of the payment.");
-        let tr = e.encode("para iadesi ödemeden sonra kaç gün içinde yapılabilir");
-        let other = e.encode("The shader compiles the vertex buffer on the GPU.");
-        assert!(similarity(&refund, &tr) > similarity(&other, &tr));
-        assert!((similarity(&refund, &refund) - 1.0).abs() < 1e-4);
-    }
-
-    #[test]
-    fn unknown_text_is_zero() {
-        assert!(encoder().encode("").iter().all(|x| *x == 0.0));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/embed/mod.rs"]
+mod tests;

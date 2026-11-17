@@ -112,25 +112,6 @@ fn split_code_name(s: &str) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn kinds() {
-        assert_eq!(classify("catalog_test.go:8: catalog checksum mismatch: got 8c77 want 4ff5"), QueryKind::ErrorLine);
-        assert_eq!(classify("database is locked (5)"), QueryKind::ErrorLine);
-        assert_eq!(classify("payments/refund.go"), QueryKind::Code);
-        assert_eq!(classify("ErrRefundWindow"), QueryKind::Code);
-        assert_eq!(classify("how long can a customer get a refund"), QueryKind::Sentence);
-        assert_eq!(classify("refund"), QueryKind::Words);
-    }
-
-    #[test]
-    fn code_names_are_split() {
-        assert_eq!(words("ErrRefundWindow"), vec!["errrefundwindow", "err", "refund", "window"]);
-        assert_eq!(words("user_id HTTPServer"), vec!["user_id", "user", "id", "httpserver", "http", "server"]);
-        assert_eq!(words("para iadesi"), vec!["para", "iadesi"]);
-        assert_eq!(words("how do I change the database schema"), vec!["change", "database", "schema"]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/search/query.rs"]
+mod tests;

@@ -156,41 +156,6 @@ pub fn differ(a: &str, b: &str) -> (String, String) {
     (cut(&ac), cut(&bc))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_assertion_brings_its_values() {
-        let out = "running 1 test\nthread 'refund' panicked at src/refund.rs:9:5:\nassertion `left == right` failed\n  left: 100\n right: 0\nnote: run with `RUST_BACKTRACE=1`\ntest refund ... FAILED\n";
-        let (at, d) = context(out, "thread 'refund' panicked at src/refund.rs:9:5:");
-        assert_eq!(at, Some(2));
-        assert_eq!(d, ["assertion `left == right` failed", "left: 100", "right: 0"]);
-        // a panic's own message, not indented
-        let out = "thread 'w' panicked at src/lib.rs:6:5:\nrefund window must be 30 days, got 29\nnote: run with `RUST_BACKTRACE=1`\n\n";
-        assert_eq!(context(out, "thread 'w' panicked at src/lib.rs:6:5:").1, ["refund window must be 30 days, got 29"]);
-    }
-
-    #[test]
-    fn long_values_are_cut_where_they_differ() {
-        let a = format!("{}X{}", "a".repeat(200), "b".repeat(50));
-        let b = format!("{}Y{}", "a".repeat(200), "b".repeat(50));
-        let out = format!("FAIL x\nError: mismatch\n  Expected: {a}\n  Received: {b}\n");
-        let (_, d) = context(&out, "Error: mismatch");
-        assert_eq!(d.len(), 2, "{d:?}");
-        assert!(d[0].starts_with("Expected: …(170 same) ") && d[0].contains("aX") && d[0].len() < 120, "{d:?}");
-        assert!(d[1].contains("aY"), "{d:?}");
-    }
-
-    #[test]
-    fn library_frames_are_counted() {
-        let out = "Error: boom\n    at refund (/app/src/refund.js:3:9)\n    at Module._compile (node:internal/modules/cjs/loader:1256:14)\n    at Object.<anonymous> (/app/node_modules/jest/run.js:1:1)\n    at main (/app/src/main.js:7:1)\n";
-        let (_, d) = context(out, "Error: boom");
-        assert_eq!(d, ["at refund (/app/src/refund.js:3:9)", "... 2 library frames", "at main (/app/src/main.js:7:1)"]);
-    }
-
-    #[test]
-    fn a_line_not_in_the_output_has_no_context() {
-        assert_eq!(context("a\nb\n", "c"), (None, Vec::new()));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/testrun/explain.rs"]
+mod tests;

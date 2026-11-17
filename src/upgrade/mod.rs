@@ -115,55 +115,6 @@ fn instructions_hash() -> u64 {
     h
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_new_version_updates_the_sections_it_wrote_and_nothing_else() {
-        let d = tempfile::tempdir().unwrap();
-        let home = Home { root: d.path().join("home") };
-        std::fs::create_dir_all(&home.root).unwrap();
-        let mine = d.path().join("app").join("AGENTS.md");
-        std::fs::create_dir_all(mine.parent().unwrap()).unwrap();
-        let old = "# Mine\nKeep this.\n\n<!-- paragma:start -->\nold instructions\n<!-- paragma:end -->\n\nAfter.\n";
-        std::fs::write(&mine, old).unwrap();
-        remember_setup(&home, &mine);
-        remember_setup(&home, &mine);
-        assert_eq!(set_up_list(&home).len(), 1);
-        let theirs = d.path().join("other").join("AGENTS.md");
-        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
-        std::fs::write(&theirs, "no section here\n").unwrap();
-        remember_setup(&home, &theirs);
-
-        run(&home);
-        let text = std::fs::read_to_string(&mine).unwrap();
-        assert!(text.starts_with("# Mine\nKeep this.\n\n<!-- paragma:start -->\n## Memory (Paragma)"));
-        assert!(text.ends_with("<!-- paragma:end -->\n\nAfter.\n"));
-        assert!(!text.contains("old instructions"));
-        assert_eq!(std::fs::read_to_string(&theirs).unwrap(), "no section here\n");
-        assert!(home.root.join("skills").join("paragma-coding").join("SKILL.md").is_file());
-
-        // stamped: the next command leaves the files alone
-        std::fs::write(&mine, old).unwrap();
-        run(&home);
-        assert_eq!(std::fs::read_to_string(&mine).unwrap(), old);
-    }
-
-    #[test]
-    fn an_older_version_leaves_a_newer_ones_instructions_alone() {
-        let d = tempfile::tempdir().unwrap();
-        let home = Home { root: d.path().join("home") };
-        std::fs::create_dir_all(&home.root).unwrap();
-        let mine = d.path().join("AGENTS.md");
-        let newer = "<!-- paragma:start -->\nnewer instructions\n<!-- paragma:end -->\n";
-        std::fs::write(&mine, newer).unwrap();
-        remember_setup(&home, &mine);
-        std::fs::write(home.root.join(STAMP), "99.0.0 0000000000000000\n").unwrap();
-        run(&home);
-        assert_eq!(std::fs::read_to_string(&mine).unwrap(), newer);
-        assert!(numbers("0.2.10") > numbers("0.2.9"));
-        assert!(numbers("0.3.0-rc.1") > numbers("0.2.9"));
-        assert_eq!(numbers(""), [0]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/upgrade/mod.rs"]
+mod tests;

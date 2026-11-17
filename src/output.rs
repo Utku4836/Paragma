@@ -113,39 +113,6 @@ pub fn mark(what: &str) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn budget_stops_when_full() {
-        let mut b = Budget::new(10);
-        assert!(b.add("short"));
-        assert!(!b.add(&"x".repeat(100)));
-        assert_eq!(b.out, "short\n");
-    }
-
-    #[test]
-    fn counts() {
-        assert_eq!(count(1, "note"), "1 note");
-        assert_eq!(count(0, "note"), "0 notes");
-    }
-
-    #[test]
-    fn dates() {
-        assert_eq!(date(0), "1970-01-01");
-        assert_eq!(date(1_792_000_000), "2026-10-14");
-        assert_eq!(parse_date("2026-10-14"), Some(1_792_000_000 - 1_792_000_000 % 86_400));
-        assert_eq!(parse_date("1970-01-01"), Some(0));
-        assert_eq!(parse_date("soon"), None);
-        assert_eq!(date_time(1_792_000_000 + 3 * 3600 + 120), "2026-10-14 20:48Z");
-        assert_eq!(ago(100, 100 + 7200), "2 h ago");
-        assert_eq!(ago(0, 100 * 86_400), "on 1970-01-01");
-    }
-
-    #[test]
-    fn one_line_skips_headings() {
-        assert_eq!(one_line("## Fix\nNormalise line endings.\nMore.", 100), "Normalise line endings.");
-        assert_eq!(one_line("abcdefghij", 4), "abcd...");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../unit/src/output.rs"]
+mod tests;

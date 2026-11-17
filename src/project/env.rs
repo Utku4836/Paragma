@@ -258,49 +258,6 @@ fn private(p: &std::path::Path) {
     let _ = p;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn secrets_are_kept_by_title() {
-        let d = tempfile::tempdir().unwrap();
-        let p = Project { name: "shop".into(), dir: d.path().to_path_buf() };
-        create(&p).unwrap();
-        assert!(load(&p).is_empty());
-        let (s, new) = set(&p, "Npm  Api", "npm_AbCdEf123456").unwrap();
-        assert!(new);
-        assert_eq!((s.name.as_str(), s.show().as_str()), ("NPM_API", "Npm Api ($NPM_API, npm_***)"));
-        set(&p, "Stripe Live", "sk_live \"quoted\" #x").unwrap();
-        let (s, new) = set(&p, "npm api", "npm_New9876543210").unwrap();
-        assert!(!new);
-        assert_eq!(s.name, "NPM_API");
-        let all = load(&p);
-        assert_eq!(all.len(), 2);
-        assert_eq!(all[0].value, "npm_New9876543210");
-        assert_eq!(all[1].value, "sk_live \"quoted\" #x");
-        assert_eq!(var_name("2fa seed"), "S_2FA_SEED");
-    }
-
-    #[test]
-    fn titles_values_and_commands() {
-        let s = |t: &str, n: &str, v: &str| Secret { title: t.into(), name: n.into(), value: v.into() };
-        let all = vec![
-            s("Stripe Live", "STRIPE_LIVE", "sk_live_AAAA1111"),
-            s("Stripe Test", "STRIPE_TEST", "sk_test_BBBB2222"),
-            s("Npm Api", "NPM_API", "npm_CCCC3333"),
-            s("Npm Api 2", "NPM_API_2", "npm_DDDD4444"),
-        ];
-        let titles = |q: &str| matching(&all, q).iter().map(|s| s.title.clone()).collect::<Vec<_>>();
-        assert_eq!(titles("stripe live key"), vec!["Stripe Live"]);
-        assert_eq!(titles("stripe key"), vec!["Stripe Live", "Stripe Test"]);
-        assert_eq!(titles("npm publish token"), vec!["Npm Api"]);
-        assert_eq!(titles("api keys").len(), 4);
-        assert!(titles("shader compile").is_empty());
-        assert_eq!(
-            substitute("curl -u $STRIPE_TEST: x ${NPM_API} $NPM_API_2 $NPM_APIX", &all),
-            "curl -u sk_test_BBBB2222: x npm_CCCC3333 npm_DDDD4444 $NPM_APIX"
-        );
-        assert_eq!(hide("got sk_live_AAAA1111 back", &all), "got $STRIPE_LIVE back");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/project/env.rs"]
+mod tests;

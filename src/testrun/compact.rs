@@ -254,62 +254,6 @@ fn merge_repeats(lines: &[String]) -> Vec<String> {
     out.into_iter().map(|(l, _, c)| if c > 1 { format!("{l} (×{c})") } else { l }).collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_rust_build_with_noise_errors_and_warnings() {
-        let mut log = String::new();
-        for i in 0..120 {
-            log.push_str(&format!("   Compiling crate{i} v0.{i}.0\n"));
-        }
-        for f in ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs", "src/e.rs", "src/f.rs"] {
-            log.push_str(&format!(
-                "warning: unused variable: `x`\n --> {f}:3:9\n  |\n3 |     let x = 1;\n  |         ^ help: prefix it with an underscore: `_x`\n\n"
-            ));
-        }
-        log.push_str("error[E0425]: cannot find value `rate` in this scope\n --> src/tax.rs:10:20\n   |\n10 |     net * rate\n   |           ^^^^ not found in this scope\n\n");
-        log.push_str("error: could not compile `shop` (bin \"shop\") due to 1 previous error; 6 warnings emitted\n");
-        let out = compact(&log, 30);
-        let text = out.join("\n");
-        assert!(text.contains("error[E0425]: cannot find value `rate` in this scope"), "{text}");
-        assert!(text.contains("--> src/tax.rs:10:20"), "{text}");
-        assert!(
-            text.contains("warning: unused variable: `x` (×6: src/a.rs:3, src/b.rs:3, src/c.rs:3, src/d.rs:3 +2)"),
-            "{text}"
-        );
-        assert!(text.contains("(120 progress lines left out)"), "{text}");
-        assert!(!text.contains("Compiling crate"), "{text}");
-        assert!(out.len() < 20, "{text}");
-    }
-
-    #[test]
-    fn an_error_in_the_middle_is_kept_and_repeats_merged() {
-        let mut log = String::from("starting\n");
-        for i in 0..50 {
-            log.push_str(&format!("GET /health 200 {i}ms\n"));
-        }
-        log.push_str(
-            "Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect (node:net:1555:16)\n",
-        );
-        for i in 0..50 {
-            log.push_str(&format!("GET /health 200 {i}ms\n"));
-        }
-        log.push_str("done\n");
-        let out = compact(&log, 12);
-        let text = out.join("\n");
-        assert!(text.starts_with("Error: connect ECONNREFUSED 127.0.0.1:5432"), "{text}");
-        // the error is said first, so the lines around it are one run
-        assert!(text.contains("GET /health 200 0ms (×100)"), "{text}");
-        assert!(text.ends_with("done"), "{text}");
-        assert!(out.len() <= 12, "{text}");
-    }
-
-    #[test]
-    fn colours_and_progress_bars_are_cleaned() {
-        let log = "\x1b[32mok\x1b[0m\n[=====>        ] 40%\r[==============] 100%\nadded 312 packages in 4s\nready\n";
-        let out = compact(log, 10);
-        assert_eq!(out, vec!["ok", "ready", "(2 progress lines left out)"]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/testrun/compact.rs"]
+mod tests;

@@ -453,51 +453,6 @@ fn python_named(dir: &Path) -> HashSet<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cargo_tables_and_the_lock() {
-        let toml = r#"
-[package]
-name = "app"
-
-[dependencies]
-serde = { version = "1", features = ["derive"] }
-json = { package = "serde_json", version = "1" }
-tree-sitter = "0.27.1"
-quiet = { version = "2", default-features = false }
-
-[dev-dependencies.tempfile]
-version = "3"
-"#;
-        let d = cargo_deps(toml);
-        assert_eq!(d["serde"].features, ["derive"]);
-        assert_eq!(d["json"].package, "serde_json");
-        assert!(d.contains_key("tree-sitter") && d.contains_key("tempfile"));
-        assert!(!d["quiet"].default_features);
-        let lock = "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.200\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.9\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n";
-        let l = cargo_lock(lock);
-        assert_eq!(l.len(), 2, "the app itself is not from a registry");
-        let vs: Vec<&String> = l.iter().map(|x| &x.1).collect();
-        assert_eq!(highest(vs.into_iter()).unwrap(), "1.0.200");
-    }
-
-    #[test]
-    fn names_as_code_writes_them() {
-        let d = |eco, name: &str| Dep {
-            eco,
-            name: name.into(),
-            version: "1".into(),
-            dir: None,
-            direct: true,
-            features: None,
-        };
-        assert_eq!(d("rust", "tree-sitter").code_name(), "tree_sitter");
-        assert!(d("rust", "tree-sitter").named_by("tree_sitter") && d("rust", "tree-sitter").named_by("Tree-Sitter"));
-        assert_eq!(d("go", "github.com/spf13/cobra").code_name(), "cobra");
-        assert!(d("go", "github.com/spf13/cobra").named_by("cobra"));
-        assert!(!d("npm", "react").named_by("reactive"));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/libs/deps.rs"]
+mod tests;

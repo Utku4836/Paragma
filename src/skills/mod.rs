@@ -73,28 +73,6 @@ pub fn write_copies(home: &Home) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_section_replaces_itself_and_keeps_the_rest() {
-        let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("AGENTS.md");
-        std::fs::write(&p, "# My rules\nBe brief.\n").unwrap();
-        assert!(install(&p).unwrap());
-        assert!(!install(&p).unwrap());
-        let text = std::fs::read_to_string(&p).unwrap();
-        assert!(text.starts_with("# My rules\nBe brief.\n\n<!-- paragma:start -->"));
-        std::fs::write(&p, text.replace("Memory lives in", "OLD")).unwrap();
-        assert!(install(&p).unwrap());
-        let again = std::fs::read_to_string(&p).unwrap();
-        assert_eq!(again.matches(START).count(), 1);
-        assert!(again.contains("Memory lives in") && !again.contains("OLD"));
-    }
-
-    #[test]
-    fn the_core_stays_short() {
-        assert!(crate::output::tokens(CORE) < 450, "{} tokens", crate::output::tokens(CORE));
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/skills/mod.rs"]
+mod tests;

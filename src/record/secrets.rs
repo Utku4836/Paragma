@@ -126,34 +126,6 @@ pub fn in_notes_lines(project: &crate::project::Project) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn secrets_are_masked() {
-        let (out, found) = mask("deploy with AKIAIOSFODNN7EXAMPLE and ghp_abcdefghijklmnopqrstuvwxyz0123456789");
-        assert_eq!(out, format!("deploy with {MASK} and {MASK}"));
-        assert_eq!(found, vec!["an AWS access key", "a GitHub token"]);
-        let (out, _) = mask("db: postgres://shop:s3cretpass@localhost/shop");
-        assert_eq!(out, format!("db: postgres://shop:{MASK}@localhost/shop"));
-        let (out, _) = mask("API_KEY=\"abcd1234efgh5678\" and password: hunter2222");
-        assert_eq!(out, format!("API_KEY=\"{MASK}\" and password: {MASK}"));
-        let (out, _) = mask("-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\nafter");
-        assert_eq!(out, format!("{MASK}\nafter"));
-    }
-
-    #[test]
-    fn placeholders_and_plain_words_stay() {
-        for text in [
-            "password: <from the vault>",
-            "API_KEY=${STRIPE_KEY}",
-            "token = ********",
-            "The token is read from the environment.",
-            "Use sk-learn for the model.",
-            "password reset emails expire after 30 minutes",
-        ] {
-            assert_eq!(mask(text).0, text, "{text}");
-        }
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/record/secrets.rs"]
+mod tests;

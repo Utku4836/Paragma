@@ -246,24 +246,6 @@ pub fn state_of(code: &CodeIndex, files: &[String], symbols: &[String]) -> Resul
     Ok((!entries.is_empty()).then(|| entries.join(", ")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn entries_old_and_new() {
-        assert_eq!(entry("a.go#F=0011aabb"), Some(("a.go#F", "0011aabb", None)));
-        assert_eq!(entry(" a.go#F=0011aabb/22334455"), Some(("a.go#F", "0011aabb", Some("22334455"))));
-        assert_eq!(entry("nothing"), None);
-    }
-
-    #[test]
-    fn drift_says_what_and_why() {
-        let d = Drift { gone: vec!["a.go#F".into()], signature: vec!["b.go#G".into(), "c.go#H".into()] };
-        assert_eq!(
-            d.text(),
-            "may be outdated since it was written: a.go#F is gone; the signature of b.go#G, c.go#H changed"
-        );
-        assert!(Drift::default().is_empty());
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/code/stale.rs"]
+mod tests;

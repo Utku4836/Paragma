@@ -68,52 +68,6 @@ pub fn gives_plan(message: &str) -> bool {
     steps && NOW_ONLY.is_match(m)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn set(split: &str) -> Vec<(bool, String)> {
-        include_str!("../../bench/prompt-plans.tsv")
-            .lines()
-            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-            .filter_map(|l| {
-                let mut p = l.splitn(3, '\t');
-                let (s, label, msg) = (p.next()?, p.next()?, p.next()?);
-                (s == split).then(|| (label == "plan", msg.to_string()))
-            })
-            .collect()
-    }
-
-    #[test]
-    fn the_messages_looked_at_while_building() {
-        let wrong: Vec<String> = set("dev")
-            .into_iter()
-            .filter(|(want, m)| gives_plan(m) != *want)
-            .map(|(want, m)| format!("{} {m}", if want { "missed" } else { "false alarm" }))
-            .collect();
-        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    }
-
-    /// The held messages, measured once: SPLIT=held cargo test measure -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn measure() {
-        let split = std::env::var("SPLIT").unwrap_or_else(|_| "dev".into());
-        let rows = set(&split);
-        let (mut hit, mut plans, mut alarms, mut others) = (0, 0, 0, 0);
-        for (want, m) in &rows {
-            let got = gives_plan(m);
-            if *want {
-                plans += 1;
-                hit += usize::from(got);
-            } else {
-                others += 1;
-                alarms += usize::from(got);
-            }
-            if got != *want {
-                println!("{} {m}", if *want { "missed" } else { "false alarm" });
-            }
-        }
-        println!("{split}: found {hit} of {plans} plans, {alarms} false alarms in {others} other messages");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/record/plan.rs"]
+mod tests;

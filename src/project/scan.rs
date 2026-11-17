@@ -69,20 +69,6 @@ pub fn folders(dir: &Path) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lists_notes_but_not_dot_folders() {
-        let d = tempfile::tempdir().unwrap();
-        for f in ["a.md", "x/b.md", "x/y/c.md", ".pg/index.md", "x/readme.txt"] {
-            let p = d.path().join(f);
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(p, "text").unwrap();
-        }
-        let rels: Vec<String> = notes(d.path()).into_iter().map(|f| f.rel).collect();
-        assert_eq!(rels, vec!["a.md", "x/b.md", "x/y/c.md"]);
-        assert_eq!(folders(d.path()), vec!["x", "x/y"]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/project/scan.rs"]
+mod tests;

@@ -114,34 +114,6 @@ fn distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn existing() -> Vec<String> {
-        ["cart-discounts", "shopify-magazasi", "game-engine", "api"].iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn the_same_name_written_another_way() {
-        assert_eq!(match_name("Cart Discounts", &existing()), Match::Same("cart-discounts".into()));
-        assert_eq!(match_name("cart_discount", &existing()), Match::Same("cart-discounts".into()));
-        assert_eq!(match_name("discounts cart", &existing()), Match::Same("cart-discounts".into()));
-        assert_eq!(match_name("Shopify Mağazası", &existing()), Match::Same("shopify-magazasi".into()));
-    }
-
-    #[test]
-    fn typos_continue_but_shared_words_do_not() {
-        assert_eq!(match_name("shopfy-magazasi", &existing()), Match::Close("shopify-magazasi".into()));
-        assert_eq!(match_name("discounts", &existing()), Match::Similar(vec!["cart-discounts".into()]));
-        assert_eq!(match_name("oyun-motoru", &existing()), Match::None);
-        // short names are too easy to confuse
-        assert_eq!(match_name("apj", &existing()), Match::None);
-    }
-
-    #[test]
-    fn slugs() {
-        assert_eq!(slug("Cart Discounts"), "cart-discounts");
-        assert_eq!(slug("Oyun Motoru!"), "oyun-motoru");
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/project/names.rs"]
+mod tests;

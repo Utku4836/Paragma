@@ -26,34 +26,6 @@ pub fn fold(hits: Vec<Hit>) -> Vec<Hit> {
     kept
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::note::Kind;
-
-    fn hit(id: &str, kind: Kind, vec: Vec<f32>) -> Hit {
-        Hit {
-            path: format!("{id}.md"),
-            id: id.into(),
-            kind,
-            heading: String::new(),
-            text: String::new(),
-            score: 0.0,
-            vec,
-            similar: 0,
-        }
-    }
-
-    #[test]
-    fn twins_fold_into_the_first() {
-        let hits = vec![
-            hit("e1", Kind::Error, vec![1.0, 0.0]),
-            hit("r1", Kind::Rule, vec![1.0, 0.0]), // same meaning, other kind: kept
-            hit("e2", Kind::Error, vec![0.99, 0.1]), // twin of e1
-            hit("e3", Kind::Error, vec![0.0, 1.0]),
-        ];
-        let out = fold(hits);
-        let ids: Vec<_> = out.iter().map(|h| (h.id.as_str(), h.similar)).collect();
-        assert_eq!(ids, vec![("e1", 1), ("r1", 0), ("e3", 0)]);
-    }
-}
+#[cfg(all(test, paragma_local))]
+#[path = "../../unit/src/search/dedup.rs"]
+mod tests;
