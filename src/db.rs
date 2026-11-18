@@ -1,6 +1,6 @@
 //! Opening the project's SQLite files (`.pg/*.db`), the same way for all.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{Connection, ErrorCode};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -10,9 +10,9 @@ const WAIT: Duration = Duration::from_secs(60);
 
 pub fn open(path: &Path) -> Result<Connection> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        std::fs::create_dir_all(dir).with_context(|| format!("make the folder {}", dir.display()))?;
     }
-    let db = Connection::open(path)?;
+    let db = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
     db.busy_timeout(WAIT)?;
     write_ahead_log(&db)?;
     db.execute_batch("PRAGMA synchronous = NORMAL;")?;
@@ -45,6 +45,21 @@ pub fn broken(e: &anyhow::Error) -> bool {
         c.downcast_ref::<rusqlite::Error>().is_some_and(|e| {
             matches!(e.sqlite_error_code(), Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt))
         })
+    })
+}
+
+/// Whether an error says pg was not let in: a file or folder it may not
+/// read or write (a sandbox around the agent, a folder of another user, a
+/// file kept read-only), as opposed to damaged or busy.
+pub fn denied(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+            || c.downcast_ref::<rusqlite::Error>().is_some_and(|e| {
+                matches!(
+                    e.sqlite_error_code(),
+                    Some(ErrorCode::CannotOpen | ErrorCode::PermissionDenied | ErrorCode::ReadOnly)
+                )
+            })
     })
 }
 

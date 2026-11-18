@@ -18,9 +18,14 @@ pub struct WriteLock {
 
 impl WriteLock {
     pub fn take(meta_dir: &Path) -> Result<WriteLock> {
-        std::fs::create_dir_all(meta_dir)?;
+        std::fs::create_dir_all(meta_dir).with_context(|| format!("make the folder {}", meta_dir.display()))?;
         let path = meta_dir.join("lock");
-        let file = OpenOptions::new().create(true).truncate(false).write(true).open(&path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("open {}", path.display()))?;
         let start = Instant::now();
         loop {
             match file.try_lock() {
@@ -44,13 +49,17 @@ impl WriteLock {
 /// Replaces `path` with `data` in one step, creating missing folders.
 pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     let dir = path.parent().context("file has no folder")?;
-    std::fs::create_dir_all(dir)?;
+    std::fs::create_dir_all(dir).with_context(|| format!("make the folder {}", dir.display()))?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("note");
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    {
+    let written = (|| -> std::io::Result<()> {
         let mut f = File::create(&tmp)?;
         f.write_all(data)?;
-        f.sync_all()?;
+        f.sync_all()
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("write {}", path.display()));
     }
     // Windows refuses the rename while another process reads the old file
     // for an instant (antivirus, indexers, a parallel pg): try again briefly

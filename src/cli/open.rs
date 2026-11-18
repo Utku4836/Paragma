@@ -100,7 +100,10 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     let (name, how) = choose(cx, &given, &names, &linked, &folders, a.new)?;
     let project = match cx.home.project(&name) {
         Some(p) => p,
-        None => cx.home.create_project(&name).map_err(|e| fail(USAGE, e.to_string()))?,
+        None => cx.home.create_project(&name).map_err(|e| {
+            // a name it cannot take is the caller's to fix; a folder pg may not write is not
+            if crate::db::denied(&e) { e } else { fail(USAGE, e.to_string()) }
+        })?,
     };
 
     let state = State::open(&project)?;

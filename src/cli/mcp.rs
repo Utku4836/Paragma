@@ -27,22 +27,59 @@ const VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let hooked = a.client.as_deref().is_some_and(|c| crate::agents::mcp::hooks_give_the_brief(c, &cx.cwd));
     let stdin = std::io::stdin();
-    let mut out = std::io::stdout().lock();
+    let out = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
+    let say = |out: &std::sync::Mutex<std::io::Stdout>, r: &Value| -> std::io::Result<()> {
+        let mut o = out.lock().unwrap_or_else(|e| e.into_inner());
+        writeln!(o, "{r}")?;
+        o.flush()
+    };
+    // tool calls run side by side: an app that sends several at once gets
+    // each answer as soon as it is ready (pg's commands are safe together)
+    let mut running = Vec::new();
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Value>(&line) {
-            Ok(msg) => answer(cx, &msg, hooked),
-            Err(e) => Some(error(Value::Null, -32700, &format!("not JSON: {e}"))),
+        let msg = match serde_json::from_str::<Value>(&line) {
+            Ok(msg) => msg,
+            Err(e) => {
+                say(&out, &error(Value::Null, -32700, &format!("not JSON: {e}")))?;
+                continue;
+            }
         };
-        if let Some(r) = reply {
-            writeln!(out, "{r}")?;
-            out.flush()?;
+        if msg["method"] == "tools/call"
+            && let Some(id) = msg.get("id").cloned()
+        {
+            let (out, cwd) = (out.clone(), cx.cwd.clone());
+            running.retain(|t: &std::thread::JoinHandle<()>| !t.is_finished());
+            running.push(std::thread::spawn(move || {
+                let _ = say(&out, &call(&cwd, id, &msg["params"]));
+            }));
+            continue;
+        }
+        if let Some(r) = answer(cx, &msg, hooked) {
+            say(&out, &r)?;
         }
     }
+    // the input closed: the calls still running answer first
+    for t in running {
+        let _ = t.join();
+    }
     Ok(())
+}
+
+/// The answer to one tool call: the pg command it stands for, run in `cwd`.
+fn call(cwd: &std::path::Path, id: Value, params: &Value) -> Value {
+    let name = params["name"].as_str().unwrap_or("");
+    match command(name, &params["arguments"]) {
+        Some(argv) => {
+            let (code, text) = pg(cwd, &argv);
+            // 1: memory has nothing on it, an answer, not a failure
+            ok(id, json!({ "content": [{ "type": "text", "text": text }], "isError": code > 1 }))
+        }
+        None => error(id, -32602, &format!("no tool {name:?}, or its arguments are missing")),
+    }
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {
@@ -74,18 +111,7 @@ fn answer(cx: &Context, msg: &Value, hooked: bool) -> Option<Value> {
         }
         "ping" => ok(id, json!({})),
         "tools/list" => ok(id, json!({ "tools": tools() })),
-        "tools/call" => {
-            let name = msg["params"]["name"].as_str().unwrap_or("");
-            let args = &msg["params"]["arguments"];
-            match command(name, args) {
-                Some(argv) => {
-                    let (code, text) = pg(cx, &argv);
-                    // 1: memory has nothing on it, an answer, not a failure
-                    ok(id, json!({ "content": [{ "type": "text", "text": text }], "isError": code > 1 }))
-                }
-                None => error(id, -32602, &format!("no tool {name:?}, or its arguments are missing")),
-            }
-        }
+        "tools/call" => call(&cx.cwd, id, &msg["params"]),
         _ => error(id, -32601, &format!("no method {method:?}")),
     })
 }
@@ -95,11 +121,11 @@ fn answer(cx: &Context, msg: &Value, hooked: bool) -> Option<Value> {
 fn instructions(cx: &Context, hooked: bool) -> String {
     let core = crate::skills::CORE;
     let tools = "Here the pg commands are tools: pg_open, pg_find, pg_read, pg_write, pg_run, pg_steps, pg_finish, \
-                 pg_tell, and pg for any other command (its arguments as a list).";
+                 pg_tell, and pg for any other command (its arguments as a list). Calls sent together run side by side.";
     let brief = match &cx.project {
         Some(_) if hooked => "\n\nParagma's hooks give this conversation the project's brief at its start.".to_string(),
         Some(_) => {
-            let (code, text) = pg(cx, &["open".to_string()]);
+            let (code, text) = pg(&cx.cwd, &["open".to_string()]);
             if code == 0 { format!("\n\nThe brief of this folder's project (pg open):\n{text}") } else { String::new() }
         }
         None => "\n\nNo project is linked to this folder: pg_open with a name starts or continues one.".to_string(),
@@ -109,9 +135,9 @@ fn instructions(cx: &Context, hooked: bool) -> String {
 
 /// Runs pg itself with these arguments, in the folder the server was
 /// started in: its exit code and what it printed.
-fn pg(cx: &Context, argv: &[String]) -> (i32, String) {
+fn pg(cwd: &std::path::Path, argv: &[String]) -> (i32, String) {
     let Ok(exe) = std::env::current_exe() else { return (7, "pg not found".into()) };
-    match std::process::Command::new(exe).args(argv).current_dir(&cx.cwd).stdin(std::process::Stdio::null()).output() {
+    match std::process::Command::new(exe).args(argv).current_dir(cwd).stdin(std::process::Stdio::null()).output() {
         Ok(o) => (
             o.status.code().unwrap_or(7),
             format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))

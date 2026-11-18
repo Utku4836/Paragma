@@ -155,6 +155,14 @@ pub fn run() -> ExitCode {
                 eprintln!("pg: {}", x.message);
                 ExitCode::from(x.code)
             }
+            None if crate::db::denied(&e) => {
+                eprintln!(
+                    "pg: {e:#}
+{}",
+                    not_let_in(&Home::locate())
+                );
+                ExitCode::from(7)
+            }
             None if crate::db::broken(&e) => {
                 eprintln!(
                     "pg: {e:#}
@@ -168,6 +176,16 @@ a file of pg's own is damaged: pg doctor finds it and makes it again"
             }
         },
     }
+}
+
+/// What to do when pg may not read or write a file it needs.
+fn not_let_in(home: &Home) -> String {
+    format!(
+        "pg was not let in. It keeps memory in {} and writes there on most commands: \
+         an agent's sandbox may keep it out (allow writing there, or run pg outside the sandbox), \
+         or set PARAGMA_HOME to a folder pg may write. A file kept read-only does the same",
+        home.root.display()
+    )
 }
 
 fn dispatch(cli: Cli) -> Result<()> {

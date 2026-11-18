@@ -3,6 +3,8 @@ Memory lives in `pg` (Paragma): this project's rules, decisions, past errors wit
 - Real work (a feature, a fix, a refactor): `pg open <project> --goal "..." --step "..." --decision "..."` first, in the code's folder; in a new conversation on earlier work, `pg open` alone. Work from the brief it prints.
 - Record every step of the user's plan, also those for later ("only (a) now" still records (a), (b), (c)), and every decision, in the user's words: the next conversation knows only what was recorded.
 - A question, an error line or a code name: `pg find "..."` before searching files. How a library is called at this version: `pg find "<library> <names>"`.
+- Other conversations on the project: `pg steps --take N` for the step you work on; `pg tell "..."` what they must know.
+- pg commands are safe together: send independent ones (several `pg find`, `pg read`) at once, as parallel tool calls.
 - Tests, builds, commands that need a key: `pg run -- <command>`. Act on what it adds: `known:` a fix memory has, `library:` the name the library has, `ripple:` callers your change left behind.
 - Before changing a function's signature, name or existence: `pg ripple <name>` (callers, tests); after: `pg ripple` lists what is left.
 - Learned something the next conversation needs (into `pg`, not your own memory): `pg write --rule "..."`, `--decision "..." --why "..."`, `--error "<error line>" --cause "..." --fix "..."`.

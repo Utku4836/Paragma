@@ -15,6 +15,7 @@
 //! pg setup claude --global --no-hooks   takes the hooks out again
 //! pg setup all --global             every agent found
 //! pg setup --list
+//! pg setup --update                  what pg set up, brought up to this version
 //! ```
 
 use super::setup_screen as screen;
@@ -60,6 +61,11 @@ pub struct Args {
     /// The agents, where they read instructions, and whether Paragma is set up there
     #[arg(long)]
     list: bool,
+
+    /// Bring what pg set up (instructions, hooks, MCP servers) up to this version now; a new version does it by
+    /// itself before its first command. Only Paragma's own lines change, never yours
+    #[arg(long, conflicts_with_all = ["list", "hooks", "no_hooks", "mcp", "no_mcp", "global", "dir"])]
+    update: bool,
 }
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
@@ -67,6 +73,10 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     let style = Style::new();
     if a.list {
         list(&style);
+        return Ok(());
+    }
+    if a.update {
+        update(cx, &style);
         return Ok(());
     }
     let Some(id) = &a.agent else {
@@ -78,7 +88,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         return Ok(());
     };
     if a.mcp || a.no_mcp {
-        return mcp_setup(&style, id, a.mcp);
+        return mcp_setup(&cx.home, &style, id, a.mcp);
     }
     let chosen: Vec<Agent> = if id == "all" {
         agents::known().into_iter().filter(|x| x.installed).collect()
@@ -134,7 +144,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 }
 
 /// Puts Paragma's MCP server into an app (or all found), or takes it out.
-fn mcp_setup(style: &Style, id: &str, add: bool) -> Result<()> {
+fn mcp_setup(home: &Home, style: &Style, id: &str, add: bool) -> Result<()> {
     let clients: Vec<mcp::Client> = if id == "all" {
         mcp::clients().into_iter().filter(|c| c.installed).collect()
     } else {
@@ -142,14 +152,17 @@ fn mcp_setup(style: &Style, id: &str, add: bool) -> Result<()> {
         vec![mcp::find(id).ok_or_else(|| fail(USAGE, format!("no MCP app {id:?} (apps: {}, all)", names.join(", "))))?]
     };
     for c in &clients {
-        println!("{}", mcp_connect(style, c, add)?);
+        println!("{}", mcp_connect(home, style, c, add)?);
     }
     Ok(())
 }
 
 /// Adds or takes out Paragma's MCP server in one app; the line saying how.
-pub(super) fn mcp_connect(style: &Style, c: &mcp::Client, add: bool) -> Result<String> {
+pub(super) fn mcp_connect(home: &Home, style: &Style, c: &mcp::Client, add: bool) -> Result<String> {
     let change = if add { mcp::install(c, &std::env::current_exe()?)? } else { mcp::remove(c)? };
+    if add {
+        crate::upgrade::remember_mcp(home, c.id);
+    }
     let what = match (add, change) {
         (true, hooks::Change::Written) => "MCP server added",
         (true, hooks::Change::Unchanged) => "MCP server already up to date",
@@ -172,12 +185,18 @@ pub(super) fn connect(
     path: &Path,
     hooks_file: Option<&Path>,
 ) -> Result<Vec<String>> {
-    let what = if skills::install(path)? { "written" } else { "already up to date" };
+    let what = match skills::install(path)? {
+        skills::Written::Unchanged => "already up to date".to_string(),
+        skills::Written::Written { kept: 0 } => "written".to_string(),
+        skills::Written::Written { kept } => {
+            format!("written; {} you wrote inside it kept below it", crate::output::count(kept as i64, "line"))
+        }
+    };
     crate::upgrade::remember_setup(home, path);
     let line = |p: &Path, what: &str| {
         format!("  {} {:<12} {}  {}", style.ok("✓"), agent.name, style.dim(&agents::short(p)), style.dim(what))
     };
-    let mut lines = vec![line(path, what)];
+    let mut lines = vec![line(path, &what)];
     if let Some(file) = hooks_file {
         let exe = std::env::current_exe()?;
         let what = match hooks::install(agent.id, file, &exe)? {
@@ -188,6 +207,28 @@ pub(super) fn connect(
         lines.push(line(file, what));
     }
     Ok(lines)
+}
+
+/// pg setup --update: what pg set up, brought up to this version, one line
+/// each.
+fn update(cx: &Context, style: &Style) {
+    let done = crate::upgrade::update(&cx.home);
+    if done.is_empty() {
+        println!("nothing of Paragma's set up here yet: pg setup");
+        return;
+    }
+    for d in done {
+        let (mark, what) = match d.outcome {
+            crate::upgrade::Outcome::Unchanged => (style.ok("✓"), "up to date".to_string()),
+            crate::upgrade::Outcome::Written { kept: 0 } => (style.ok("✓"), "updated".to_string()),
+            crate::upgrade::Outcome::Written { kept } => (
+                style.ok("✓"),
+                format!("updated; {} you wrote inside it kept below it", crate::output::count(kept as i64, "line")),
+            ),
+            crate::upgrade::Outcome::Failed(e) => (style.bad("✗"), e),
+        };
+        println!("  {mark} {:<13} {}  {}", d.what, style.dim(&d.place), style.dim(&what));
+    }
 }
 
 fn list(style: &Style) {

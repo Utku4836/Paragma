@@ -14,7 +14,7 @@ pub mod names;
 pub mod plan;
 pub mod scan;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
 /// Where Paragma keeps everything: $PARAGMA_HOME, else ~/.paragma.
@@ -58,7 +58,8 @@ impl Home {
     pub fn create_project(&self, name: &str) -> Result<Project> {
         check_name(name)?;
         let p = self.project_at(name);
-        std::fs::create_dir_all(p.meta_dir())?;
+        let dir = p.meta_dir();
+        std::fs::create_dir_all(&dir).with_context(|| format!("make the folder {}", dir.display()))?;
         env::create(&p)?;
         Ok(p)
     }

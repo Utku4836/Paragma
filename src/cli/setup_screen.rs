@@ -541,7 +541,7 @@ impl Setup<'_> {
     /// Adds (or takes out) Paragma's MCP server in the chosen app.
     fn install_mcp(&mut self, add: bool) {
         let c = &self.clients[self.agent];
-        self.message = Some(match mcp_connect(self.style, c, add) {
+        self.message = Some(match mcp_connect(self.home, self.style, c, add) {
             Ok(line) => {
                 self.done.push(line.clone());
                 line.trim_start().to_string()

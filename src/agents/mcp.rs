@@ -133,6 +133,37 @@ pub fn installed(c: &Client) -> bool {
     read_json(file).is_ok_and(|v| v["mcpServers"][NAME].is_object())
 }
 
+/// Whether the app's entry starts this pg as this version would write it
+/// (an update may have put pg elsewhere, or changed its arguments).
+pub fn runs(c: &Client, exe: &Path) -> bool {
+    let Some(file) = c.files.first() else { return false };
+    let same = |a: &str| {
+        let norm = |s: &str| {
+            let s = s.replace('\\', "/");
+            if cfg!(windows) { s.to_lowercase() } else { s }
+        };
+        norm(a) == norm(&exe.to_string_lossy())
+    };
+    if c.id == "codex" {
+        let Ok(text) = std::fs::read_to_string(file) else { return false };
+        let Some((a, b)) = toml_block(&text) else { return false };
+        let lines: Vec<&str> = text.lines().collect();
+        let value = |key: &str| {
+            lines[a..b].iter().find_map(|l| {
+                let (k, v) = l.split_once('=')?;
+                (k.trim() == key).then(|| v.trim().to_string())
+            })
+        };
+        let args = format!("[{}]", args(c).iter().map(|a| toml_string(a)).collect::<Vec<_>>().join(", "));
+        return value("command").is_some_and(|v| same(v.trim_matches('"'))) && value("args").as_deref() == Some(&args);
+    }
+    let Ok(v) = read_json(file) else { return false };
+    let entry = &v["mcpServers"][NAME];
+    let args: Vec<String> =
+        entry["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect();
+    entry["command"].as_str().is_some_and(same) && args == self::args(c)
+}
+
 /// Puts (or updates) Paragma's server in the app.
 pub fn install(c: &Client, exe: &Path) -> Result<Change> {
     if let Some(cli) = &c.cli {

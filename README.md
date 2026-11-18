@@ -115,7 +115,7 @@ pg setup
   ↑↓ move   enter choose   q quit
 ```
 
-`pg setup` finds the agents on your computer, including their desktop apps, and adds a short "Memory (Paragma)" section where each one reads its instructions. Choose **every conversation**, **one conversation** from the agent's own history (Paragma then goes into that conversation's folder), or **this folder**. Esc goes back a step. The rest of the file is left as it is, and when a new version of Paragma changes its instructions, `pg` updates the sections it wrote by itself.
+`pg setup` finds the agents on your computer, including their desktop apps, and adds a short "Memory (Paragma)" section where each one reads its instructions. Choose **every conversation**, **one conversation** from the agent's own history (Paragma then goes into that conversation's folder), or **this folder**. Esc goes back a step. The rest of the file is left as it is. After every update, `pg` brings what it set up to the new version by itself, before its first command: its sections (only its own lines; what you wrote, also inside the section, stays), its hooks and its MCP server entries. `pg setup --update` does it at once and says what changed.
 
 | Agent | Every conversation | One folder |
 | --- | --- | --- |
@@ -124,9 +124,9 @@ pg setup
 | Antigravity | `~/.gemini/AGENTS.md` | `AGENTS.md` |
 | OpenCode | `~/.config/opencode/AGENTS.md` | `AGENTS.md` |
 
-In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all --global`, `pg setup --list`.
+In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all --global`, `pg setup --list`, `pg setup --update`.
 
-**MCP.** Apps that start MCP servers can run Paragma as one: the app gets the project's brief when a conversation starts and pg's commands as tools, which helps most in apps without a shell or hooks. In `pg setup` choose **MCP** and an app (Claude Code, Claude Desktop, Codex, Antigravity, Cursor; for every conversation), or `pg setup all --mcp`; `--no-mcp` takes it out. Where Paragma's hooks already give the brief, the server does not repeat it.
+**MCP.** Apps that start MCP servers can run Paragma as one: the app gets the project's brief when a conversation starts and pg's commands as tools, which helps most in apps without a shell or hooks. In `pg setup` choose **MCP** and an app (Claude Code, Claude Desktop, Codex, Antigravity, Cursor; for every conversation), or `pg setup all --mcp`; `--no-mcp` takes it out. Where Paragma's hooks already give the brief, the server does not repeat it. Tool calls the app sends together run side by side.
 
 ## Commands
 
