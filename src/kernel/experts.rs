@@ -10,6 +10,58 @@ use std::collections::HashMap;
 /// handoff, has stopped (cut, closed, out of context).
 pub const QUIET: i64 = 20 * 60;
 
+/// Another conversation that changed the project and stopped without a
+/// handoff: what it did since its last one.
+pub struct Stopped {
+    pub conversation: String,
+    /// Its folder's name ("" when not known).
+    pub folder: String,
+    /// Its last event.
+    pub last_seq: i64,
+    pub last_at: i64,
+    /// "wrote r3; added 2 steps; ran cargo test 4x (last: 1 failing)"
+    pub what: String,
+}
+
+/// The other conversations that stopped without a handoff (quiet for
+/// `QUIET` after changing the project). pg writes their handoff for them
+/// (cli/act.rs); `cut_short` says it.
+pub fn stopped(f: &Facts) -> Vec<Stopped> {
+    let mut by: HashMap<&str, Vec<&Entry>> = HashMap::new();
+    for e in &f.journal {
+        by.entry(e.conversation.as_str()).or_default().push(e);
+    }
+    let mut convs: Vec<&&str> = by.keys().filter(|c| ***c != f.me).collect();
+    convs.sort();
+    let mut out = Vec::new();
+    for conv in convs {
+        let all = &by[*conv];
+        let after = match all.iter().rposition(|e| matches!(e.did, Did::Finish { .. })) {
+            Some(i) => &all[i + 1..],
+            None => &all[..],
+        };
+        if !after.iter().any(|e| e.did.changes()) {
+            continue;
+        }
+        let Some(last) = after.last() else { continue };
+        if f.now - last.at < QUIET {
+            continue;
+        }
+        let what = summary(after);
+        if what.is_empty() {
+            continue;
+        }
+        out.push(Stopped {
+            conversation: conv.to_string(),
+            folder: f.folders.get(*conv).cloned().unwrap_or_default(),
+            last_seq: last.seq,
+            last_at: last.at,
+            what,
+        });
+    }
+    out
+}
+
 /// Conversations that changed the project and stopped without `pg finish`,
 /// told from the event log; and this conversation's own work when it was
 /// compacted. Nothing is lost when a conversation ends without a handoff.

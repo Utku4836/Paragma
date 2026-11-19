@@ -266,8 +266,16 @@ fn write_record(cx: &Context, a: &Args) -> Result<()> {
             Some(code) => crate::code::stale::state_of(&code, &files, &symbols)?,
             None => None,
         };
-        let e =
-            ErrorInput { line, cause: a.cause.as_deref(), fix: a.fix.as_deref(), files, symbols, commit, code_state };
+        let e = ErrorInput {
+            line,
+            cause: a.cause.as_deref(),
+            fix: a.fix.as_deref(),
+            files,
+            symbols,
+            commit,
+            code_state,
+            draft: false,
+        };
         ("error", record::error(project, &e).map_err(usage)?)
     };
     let state = State::open(project)?;
@@ -336,6 +344,21 @@ pub fn write_note(project: &Project, rel: &str, text: &str, append: bool) -> Res
 /// until that code changes again.
 fn confirm(cx: &Context, id: &str) -> Result<()> {
     let (project, row) = super::read::locate(cx, id)?;
+    // a draft pg wrote: confirming keeps it as a record
+    let path = project.dir.join(&row.path);
+    if crate::note::Note::parse(&crate::project::files::read_text(&path)?).props.text("status") == Some("draft") {
+        update_note(&project, &row.path, |n, _, _| {
+            n.props.set_text("status", "active");
+            Ok(())
+        })?;
+        State::open(&project)?.record(crate::state::journal::Did::Write {
+            kind: "confirm".into(),
+            id: id.to_string(),
+            what: "confirmed the draft".into(),
+        })?;
+        println!("ok {id} (the draft is a record now; its cause: pg write --error \"<its line>\" --cause \"...\")");
+        return Ok(());
+    }
     let Some(code) = crate::code::notes::open(&cx.home, &project)? else {
         return Err(fail(USAGE, "no code folder is linked to this project: nothing to compare the record with"));
     };

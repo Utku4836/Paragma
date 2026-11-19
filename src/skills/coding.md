@@ -8,7 +8,9 @@ description: Use when changing code with Paragma memory - finding where things a
 - The brief of `pg open` already lists the rules and past errors for the task, the likely code, the test command and what changed since the last conversation. Start from it.
 - The map: `pg tree` (folders and files with their functions; `[1 rule: r3; 1 error: e12]` marks code memory has notes on), `pg tree <folder>/`, `pg tree <file>` (every function with its lines).
 - One function instead of a whole file: `pg read <file>#Function` (`Type.Method` for a method), or `pg read <file>:40-60`. It shows the notes about that function too.
-- Several things to look up: send the `pg find` and `pg read` calls together, as parallel tool calls in one turn (MCP tools too); they run side by side and each answers on its own. Commands that write (`pg write`, `pg steps`) are safe together as well.
+- Several things to look up: send them together, not one per turn. Either parallel tool calls, or one `pg batch` with all of them:
+  `pg batch '[["find", "refund window"], ["read", "e12"], ["ripple", "Refund"]]'` (MCP: one `pg_batch` call with `calls`). Those that only look run side by side; one that writes waits for those before it, so a later command sees it. Each answers under its own line.
+- Group what belongs together: one `pg open` with every step and decision of the plan (`--step` and `--decision` repeated), one `pg write` per record, one `pg finish` at the end; many answers of the user at once: `pg answer --json '[{"question": "2", "answer": "..."}]'`.
 - A code name or a file in `pg find` (`pg find Refund`, `pg find payments/refund.go`) finds the code itself first, with its notes.
 - Shaders and queries kept in strings (`/* wgsl */` or `glsl`, `sql`, `gql` tags) are code too: `pg find groundAt` finds `sea.ts#SEA_SHADER.groundAt`. So are SQL, GraphQL and Protobuf files, Dockerfile stages and CI jobs.
 - Documents have sections: `docs:` in the brief and `[doc]` in `pg find` name the one to read; `pg read README.md#Install` reads only it.
@@ -33,7 +35,8 @@ description: Use when changing code with Paragma memory - finding where things a
 ## Errors
 - `pg run` shows the output made short (errors whole, warnings grouped, repeats and progress counted, a library's frames counted); a failure names the file with all of it and the lines of its errors: read only those.
 - A failure memory knows: `pg run` prints `known: e12 ... fix: ...`. Read it: `pg read e12`.
-- Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated. When a test that failed passes, `pg run` prints this command with the change that fixed it filled in (the functions changed after the failing run): say what was wrong and how, then run it.
+- Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated.
+- When a test that failed passes and memory has no fix for its error, pg writes a draft record by itself: the error and the change that fixed it (the functions changed after the failing run). Say why and it is kept: `pg write --error "<the line>" --cause "..."` (`--fix` to change the fix). A draft is offered as `known:` for 14 days, marked as a draft; not worth keeping: `pg undo <number>` (the number is in the line that told it).
 - `may be outdated since it was written: ...` on a note: the code it names is gone, or its signature changed. Check it before relying on it; still right: `pg write --confirm <id>`, else change or remove it. `pg doctor` lists every such note.
 
 ## Before you finish

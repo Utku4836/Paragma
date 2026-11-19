@@ -297,12 +297,18 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                 one_line(line, 120)
             ));
         } else {
-            b.add(&format!(
-                "fixed: remember it (the change is filled in, say what was wrong and how): pg write --error {:?} --cause \"...\" --fix \"...: {}\" --files {}",
-                one_line(line, 120),
-                shown.join(", "),
-                files.iter().take(5).cloned().collect::<Vec<_>>().join(",")
-            ));
+            // pg keeps it as a draft by itself (cli/act.rs): the agent says why
+            let names: Vec<String> = shown.iter().map(|s| s.to_string()).collect();
+            let files: Vec<String> = files.iter().take(5).cloned().collect();
+            match super::act::draft_fix(project, &state, line, &names, &files)? {
+                Some(said) => b.add(&format!("fixed: {said}")),
+                None => b.add(&format!(
+                    "fixed: remember it (the change is filled in, say what was wrong and how): pg write --error {:?} --cause \"...\" --fix \"...: {}\" --files {}",
+                    one_line(line, 120),
+                    shown.join(", "),
+                    files.join(",")
+                )),
+            };
         }
         state.record(Did::Fixed { line: line.clone(), tests: verdict.fixed.clone() })?;
     }
@@ -345,7 +351,13 @@ fn tail(b: &mut Budget, output: &str, lines: usize, keep: Option<&std::path::Pat
 pub(super) fn known(index: &Index, project: &crate::project::Project, line: &str) -> Result<Option<String>> {
     let Some(path) = record::known_error(index, line)? else { return Ok(None) };
     let note = Note::parse(&files::read_text(&project.dir.join(&path))?);
-    let id = note.id().unwrap_or("?").to_string();
+    // a draft pg wrote (cli/act.rs): offered while young, marked as such
+    let draft = match super::act::draft_state(&note) {
+        Some(false) => return Ok(None),
+        Some(true) => " (a draft pg wrote: the change that fixed it, no cause yet)",
+        None => "",
+    };
+    let id = format!("{}{draft}", note.id().unwrap_or("?"));
     let seen =
         note.props.text("seen").and_then(|s| s.parse::<i64>().ok()).map(|n| format!(" (seen {})", count(n, "time")));
     // the fix is what the agent needs: in full, up to a short paragraph

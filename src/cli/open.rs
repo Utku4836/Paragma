@@ -272,7 +272,12 @@ fn brief(
     }
 
     // what the kernel decides from: the event log, the runs, what was said
-    let facts = super::perceive::facts(project, state, compacted)?;
+    let mut facts = super::perceive::facts(project, state, compacted)?;
+    // a conversation that stopped without a handoff: pg writes it (cli/act.rs)
+    let written_for = super::act::handoffs_for_stopped(project, state, &facts)?;
+    if !written_for.is_empty() {
+        facts = super::perceive::facts(project, state, compacted)?; // what is said now
+    }
     let claims = crate::kernel::experts::claims(&facts);
     let note = files::read_text(&project.note_file(plan::FILE)).map(|t| Note::parse(&t)).unwrap_or_default();
     let goal = plan::goal(&note);
@@ -320,6 +325,9 @@ fn brief(
     }
     for h in handoffs.iter().skip(1).take(EARLIER_HANDOFFS) {
         b.add(&format!("earlier ({}): {}", h.heading, one_line(&h.text, 90)));
+    }
+    for line in &written_for {
+        b.add(line);
     }
     let now = now();
     crate::output::mark("brief: before since_last");

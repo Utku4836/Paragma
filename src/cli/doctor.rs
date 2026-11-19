@@ -10,10 +10,71 @@ pub struct Args {
     /// Rebuild the indexes from the note files and the code
     #[arg(long)]
     rebuild: bool,
+
+    /// What each expert said, how often it was acted on and how it weighs now; what pg did by itself
+    #[arg(long, conflicts_with = "rebuild")]
+    experts: bool,
+}
+
+/// What each expert said, how often the conversations acted on it and how
+/// that weighs it now (kernel/adapt.rs), and what pg did by itself.
+fn experts(project: &crate::project::Project) -> Result<()> {
+    let state = crate::state::State::open(project)?;
+    let facts = super::perceive::facts(project, &state, false)?;
+    let usage = crate::kernel::adapt::usage(&facts, &facts.said_log);
+    let mut said: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for s in &facts.said_log {
+        *said.entry(crate::kernel::adapt::kind(&s.key).to_string()).or_default() += 1;
+    }
+    println!("experts of {} (what they said, the last 8 weeks):", project.name);
+    if said.is_empty() {
+        println!("  nothing said yet");
+    }
+    let about = |k: &str| match k {
+        "cut" => "a conversation that stopped without a handoff",
+        "so-far" => "this conversation's own work, after compaction",
+        "work" => "who else is at work here",
+        "recipes" => "how the project runs (its test and build commands)",
+        "outdated" => "notes that may be outdated",
+        "tidy" => "notes to tidy",
+        "told" => "notes from other conversations (pg tell)",
+        "known" => "a known fix for a failing run",
+        _ => "",
+    };
+    for (kind, n) in &said {
+        let learned = match usage.get(kind) {
+            Some(&(s, acted)) if s >= crate::kernel::adapt::LEARN_AFTER => {
+                let rate = (acted as f64 + 1.0) / (s as f64 + 2.0);
+                format!("acted on {acted} of {s}; weighs ×{:.2} now", 0.5 + rate)
+            }
+            Some(&(s, acted)) => format!("acted on {acted} of {s}; learns after {}", crate::kernel::adapt::LEARN_AFTER),
+            None => "said only (nothing to act on)".to_string(),
+        };
+        println!("  {kind:<9} {:<4} {learned}  {}", n, crate::output::one_line(about(kind), 50));
+    }
+    let auto = super::undo::undoable(&state)?;
+    let all_auto = state.journal_of("auto", crate::output::now() - 30 * 86_400)?;
+    let undone = all_auto.len() - auto.len();
+    let count_of = |what: &str| {
+        all_auto
+            .iter()
+            .filter(|e| matches!(&e.did, crate::state::journal::Did::Auto { what: w, .. } if w == what))
+            .count()
+    };
+    println!(
+        "what pg did by itself (30 days): {} for conversations that stopped, {}; {} undone (pg undo lists them)",
+        count(count_of("handoff") as i64, "handoff"),
+        count(count_of("draft") as i64, "draft record"),
+        undone
+    );
+    Ok(())
 }
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let project = cx.need_project()?;
+    if a.experts {
+        return experts(project);
+    }
     let t = std::time::Instant::now();
     // damage deep inside a file shows only when that part is read: looked
     // for here, and such a file set aside to be made again

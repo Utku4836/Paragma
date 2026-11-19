@@ -13,7 +13,7 @@ use crate::state::journal::Did;
 use std::collections::HashMap;
 
 /// Said this often before what it does with it counts.
-const LEARN_AFTER: usize = 3;
+pub const LEARN_AFTER: usize = 3;
 /// How fast a use fades (ACT-R's usual d).
 pub const DECAY: f64 = 0.5;
 

@@ -163,6 +163,22 @@ fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -
     let state = State::open(project)?;
     // since this conversation started, or was compacted and lost what it saw
     let since = state.my_last("open").unwrap_or(0);
+    // another conversation still at work changed the same file: said once
+    let mut conflicts = Vec::new();
+    let paths: Vec<String> = targets.iter().map(|t| t.file.to_string_lossy().into_owned()).collect();
+    for (key, line) in super::act::others_editing(&state, &paths)? {
+        if !state.shown_to_me(&key, 0)? {
+            state.shown(std::slice::from_ref(&key))?;
+            conflicts.push(line);
+        }
+    }
+    let conflict = (!conflicts.is_empty()).then(|| {
+        format!(
+            "Not a refusal: Paragma: {}. Check with it first (pg tell \"...\" reaches it; pg steps shows the step it took), \
+             so neither undoes the other's change. If the edit still fits, make it again unchanged.",
+            conflicts.join("; ")
+        )
+    });
     let mut found: Vec<(&Linked, bool)> = Vec::new();
     for t in &targets {
         let Some(rel) = relative(&folders, &t.file) else { continue };
@@ -180,7 +196,7 @@ fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -
         }
     }
     if found.is_empty() {
-        return Ok(None);
+        return Ok(conflict);
     }
     let binds = |(l, by_symbol): &(&Linked, bool)| matches!(l.kind, Kind::Rule | Kind::Decision) || *by_symbol;
     let files: Vec<String> = targets.iter().filter_map(|t| relative(&folders, &t.file).map(|r| r.1)).collect();
@@ -190,13 +206,17 @@ fn before_edit(cx: &Context, project: &crate::project::Project, event: &Value) -
     if !found.iter().any(binds) {
         // only the file's past errors and notes: after the edit, no turn lost
         state.record(Did::AfterEdit { files: files.join(" "), ids: ids.clone() })?;
-        return Ok(None);
+        return Ok(conflict);
     }
-    Ok(Some(format!(
+    let mut text = format!(
         "Not a refusal: Paragma holds memory about the code this edit touches ({}), shown once before the first edit there:\n{}\nIf the edit still fits, make it again unchanged; otherwise change it to fit.",
         files.join(", "),
         listing(project, &index, found)?.join("\n")
-    )))
+    );
+    if let Some(c) = conflict {
+        text.push_str(&format!("\nAlso: {}", c.trim_start_matches("Not a refusal: Paragma: ")));
+    }
+    Ok(Some(text))
 }
 
 /// The notes found, most binding first (rules, decisions, what names the
@@ -588,6 +608,15 @@ fn fixed_here(
         }
         let mut seen = std::collections::HashSet::new();
         files.retain(|f| seen.insert(f.clone()));
+        // pg keeps it as a draft by itself (cli/act.rs): the agent says why
+        let shown: Vec<String> = changed.iter().take(5).cloned().collect();
+        if let Some(said) = super::act::draft_fix(project, state, line, &shown, &files)? {
+            return Ok(Some(format!(
+                "Paragma: {} pass again; they failed with \"{}\". {said}",
+                verdict.fixed.join(", "),
+                one_line(line, 160)
+            )));
+        }
         (format!(" Changed since: {}.", changed.join(", ")), format!(" --files {}", files.join(",")))
     };
     Ok(Some(format!(

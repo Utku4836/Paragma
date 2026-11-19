@@ -303,6 +303,17 @@ pub fn handoffs(note: &Note) -> Vec<Handoff> {
     out
 }
 
+/// Takes out the handoff with this heading (pg undo of one pg wrote).
+pub fn remove_handoff(note: &mut Note, heading: &str) {
+    let mut all = handoffs(note);
+    let before = all.len();
+    all.retain(|h| h.heading != heading);
+    if all.len() < before {
+        let section: Vec<String> = all.iter().map(|h| format!("### {}\n{}", h.heading, h.text)).collect();
+        note.set_section("Handoffs", &section.join("\n\n"));
+    }
+}
+
 /// Adds a handoff on top (the newest is read first), in place of the one
 /// headed `replaces` (the same conversation finishing again).
 pub fn add_handoff(note: &mut Note, heading: &str, text: &str, replaces: Option<&str>) {

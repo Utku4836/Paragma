@@ -79,6 +79,8 @@ pub struct ErrorInput<'a> {
     pub commit: Option<String>,
     /// The state of its code now (code/stale.rs).
     pub code_state: Option<String>,
+    /// Written by pg itself (cli/act.rs): never taken as confirming a draft.
+    pub draft: bool,
 }
 
 pub fn rule(project: &Project, text: &str, group: Option<&str>) -> Result<Written> {
@@ -262,7 +264,20 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
         }
     };
     if let Some(path) = same {
-        let (id, (seen, promote)) = update_note(project, &path, |n, _, index| {
+        let (id, (seen, promote, confirmed)) = update_note(project, &path, |n, _, index| {
+            // a draft pg wrote (cli/act.rs), now with its cause: kept as a record
+            let confirmed =
+                n.props.text("status") == Some("draft") && !e.draft && (e.cause.is_some() || e.fix.is_some());
+            if confirmed {
+                n.props.set_text("status", "active");
+                n.props.set_text("last_seen", today.clone());
+                merge_files(n);
+                if e.cause.is_none() {
+                    n.set_section("Cause", "(not said)");
+                }
+                fill(n);
+                return Ok((0, None, true));
+            }
             let seen = n.props.text("seen").and_then(|s| s.parse::<i64>().ok()).unwrap_or(1) + 1;
             n.props.set_text("seen", seen.to_string());
             n.props.set_text("last_seen", today.clone());
@@ -272,8 +287,11 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
             if promote.is_some() {
                 n.props.set_text("proposed_as_rule", today.clone());
             }
-            Ok((seen, promote))
+            Ok((seen, promote, false))
         })?;
+        if confirmed {
+            return Ok(Written { id, what: "confirmed: the draft is a record now".into(), notes: Vec::new() });
+        }
         return Ok(Written {
             id,
             what: format!("updated: the same error, seen {seen} times"),

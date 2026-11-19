@@ -1,7 +1,9 @@
 //! The commands. Each one lives in its own file; this one parses the
 //! command line and works out which project a command is about.
 
+mod act;
 mod ask;
+mod batch;
 mod doctor;
 mod find;
 mod finish;
@@ -27,6 +29,7 @@ mod steps;
 mod target;
 mod tell;
 mod tree;
+mod undo;
 mod write;
 
 use crate::project::{Home, Project};
@@ -82,6 +85,10 @@ enum Command {
     Ripple(ripple::Args),
     /// A short note for the other conversations on this project (each sees it once, for a day)
     Tell(tell::Args),
+    /// Several pg commands in one call, as JSON: those that only look run side by side, each answers on its own
+    Batch(batch::Args),
+    /// What pg did by itself (a handoff, a draft record, steps closed): listed, or one taken back
+    Undo(undo::Args),
     /// Projects, or the folders and notes of a project
     Ls(ls::Args),
     /// The folders a project's code is in: list, link one (default: here), --replace the others, --remove one
@@ -206,7 +213,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Open(_) | Command::Finish(_) | Command::Write(_) | Command::Mv(_) | Command::Rm(_)
     ) || matches!(&cli.command, Command::Steps(a) if a.changes())
         || matches!(&cli.command, Command::Answer(_) | Command::Tell(_))
-        || matches!(&cli.command, Command::Ask(a) if a.asks());
+        || matches!(&cli.command, Command::Ask(a) if a.asks())
+        || matches!(&cli.command, Command::Undo(a) if a.changes());
     // started before too: a command that stops early (its output closed)
     // still syncs; the sync waits for a quiet moment anyway
     if syncs {
@@ -238,6 +246,8 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Rm(a) => rm::run(cx, a),
         Command::Sleep(a) => sleep::run(cx, a),
         Command::Tell(a) => tell::run(cx, a),
+        Command::Batch(a) => batch::run(cx, a),
+        Command::Undo(a) => undo::run(cx, a),
         Command::Mcp(a) => mcp::run(cx, a),
         Command::Doctor(a) => doctor::run(cx, a),
         Command::Setup(a) => setup::run(cx, a),

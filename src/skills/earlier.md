@@ -10,3 +10,4 @@
 - Record one `--step` per step of the user's plan, also the steps for later conversations ("only (a) now" still records (a), (b), (c)), and one `--decision` per decision, in the user's words with the names and signatures they gave: the next conversation knows only what was recorded.
 - Tests, builds, and commands that need a key: `pg run -- <command>`. It says what is new, already failing or flaky, and gives the fix memory knows.
 Memory lives in `pg` (Paragma): this project's rules, decisions, past errors with their fixes, its plan and handoffs between conversations, and a map of its code.
+- pg commands are safe together: send independent ones (several `pg find`, `pg read`) at once, as parallel tool calls.

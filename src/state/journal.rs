@@ -99,6 +99,18 @@ pub enum Did {
     Told {
         text: String,
     },
+    /// Something pg did by itself, inside memory (decision level 1): what
+    /// ("handoff", "draft", "closed"), what it is about, and what undoing it
+    /// needs. `pg undo` lists and takes back these.
+    Auto {
+        what: String,
+        target: String,
+        detail: String,
+    },
+    /// An automatic action taken back (`pg undo`): its event's number.
+    Undone {
+        of: i64,
+    },
     /// An action of another version of pg, kept as it was.
     Other {
         action: String,
@@ -148,6 +160,8 @@ impl Did {
             Did::AskedFinish => (s("ask-finish"), String::new(), String::new()),
             Did::Take { step } => (s("take"), step.to_string(), String::new()),
             Did::Told { text } => (s("tell"), text.clone(), String::new()),
+            Did::Auto { what, target, detail } => (s("auto"), what.clone(), format!("{target}\t{detail}")),
+            Did::Undone { of } => (s("undone"), of.to_string(), String::new()),
             Did::Other { action, target, detail } => (action.clone(), target.clone(), detail.clone()),
         }
     }
@@ -188,6 +202,11 @@ impl Did {
             "ask-finish" => Did::AskedFinish,
             "take" => Did::Take { step: target.parse().unwrap_or(0) },
             "tell" => Did::Told { text: t },
+            "auto" => {
+                let (tg, de) = detail.split_once('\t').unwrap_or((detail, ""));
+                Did::Auto { what: t, target: tg.to_string(), detail: de.to_string() }
+            }
+            "undone" => Did::Undone { of: target.parse().unwrap_or(0) },
             a if a.ends_with("-offered") => Did::Offered { what: a.trim_end_matches("-offered").to_string(), about: t },
             _ => Did::Other { action: action.to_string(), target: t, detail: d },
         }
@@ -218,6 +237,12 @@ impl State {
             params![now(), conversation::key(), action, target, detail],
         )?;
         Ok(())
+    }
+
+    /// Appends what this conversation did, and gives its number.
+    pub fn record_numbered(&self, did: Did) -> Result<i64> {
+        self.record(did)?;
+        Ok(self.db.last_insert_rowid())
     }
 
     /// The log of one kind of event since a time, oldest first.

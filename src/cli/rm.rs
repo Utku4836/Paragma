@@ -96,7 +96,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
 /// Moves a note or folder to the project's archive (or deletes it), under
 /// the write lock, and drops it from the index.
-fn take_out(project: &Project, rel: &str, hard: bool) -> Result<()> {
+pub(super) fn take_out(project: &Project, rel: &str, hard: bool) -> Result<()> {
     let _lock = files::WriteLock::take(&project.meta_dir())?;
     let from = project.dir.join(rel);
     if hard {

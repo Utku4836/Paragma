@@ -40,6 +40,17 @@ pub struct Args {
     left: Vec<String>,
 }
 
+/// The step numbers after `--done`'s own value, before the next flag: given
+/// apart (`--done 3 4 5`), the shell makes them separate words.
+pub fn numbers_after_done(args: &[String]) -> Vec<String> {
+    let Some(at) = args.iter().position(|a| a == "--done") else { return Vec::new() };
+    args.iter()
+        .skip(at + 2)
+        .take_while(|a| !a.starts_with('-') && a.trim_end_matches([',', '.']).parse::<usize>().is_ok())
+        .cloned()
+        .collect()
+}
+
 /// Ids of written notes listed in a handoff.
 const WRITTEN_SHOWN: usize = 10;
 /// Changed symbols named in a handoff.
@@ -49,6 +60,13 @@ const NOTES_SHOWN: usize = 8;
 
 pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     let project = cx.need_project()?;
+    // `--done 3 4 5`: the shell gives 4 and 5 as words of the summary
+    for n in numbers_after_done(&std::env::args().collect::<Vec<_>>()) {
+        if let Some(i) = a.summary.iter().rposition(|w| *w == n) {
+            a.summary.remove(i);
+            a.done.push(n.trim_end_matches([',', '.']).to_string());
+        }
+    }
     let mut summary = a.summary.join(" ").trim().to_string();
     let warning = super::mask_all(std::iter::once(&mut summary).chain(a.left.iter_mut()));
     if summary.is_empty() {
@@ -56,6 +74,9 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     }
     let state = State::open(project)?;
     let last_finish = state.my_last("finish").unwrap_or(0);
+    // the steps this conversation took: those it leaves open are named in
+    // its handoff as worked on, and asked about (cli/act.rs)
+    let taken = super::act::taken_open(project, &state, last_finish)?;
     crate::code::git::changed_ahead(crate::state::links::Links::load(&cx.home).folders_of(&project.name));
     let code = crate::code::notes::open(&cx.home, project)?;
     let changes = match &code {
@@ -80,7 +101,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             written.push(id);
         }
     }
-    let (_, (closed, left, open, missed, named)) = update_note(project, plan::FILE, |n, exists, _| {
+    let (_, (closed, left, open, missed, named, worked)) = update_note(project, plan::FILE, |n, exists, _| {
         if !exists {
             n.props.set_text("type", Kind::Project.as_str());
             n.props.set_text("title", project.name.clone());
@@ -114,6 +135,15 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             .filter(|s| plan::add_step(n, s) || plan::steps(n).iter().any(|x| !x.done && x.text == **s))
             .count();
         let mut text = summary.clone();
+        // the steps it took and leaves open: the next one knows they were begun
+        let worked: Vec<String> = taken
+            .iter()
+            .filter(|(k, _)| plan::steps(n).get(k - 1).is_some_and(|s| s.open()))
+            .map(|(k, t)| format!("{k}. {}", one_line(t, 60)))
+            .collect();
+        if !worked.is_empty() {
+            text.push_str(&format!("\nWorked on, still open: {}", worked.join("; ")));
+        }
         if !written.is_empty() {
             let more = written.len().saturating_sub(WRITTEN_SHOWN);
             let list = written.iter().take(WRITTEN_SHOWN).copied().collect::<Vec<_>>().join(", ");
@@ -147,7 +177,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             .filter(|(i, s)| s.done && !done_before.get(*i).copied().unwrap_or(false))
             .map(|(i, s)| format!("{}. {}", i + 1, one_line(&s.text, 70)))
             .collect();
-        Ok((closed, left, open, missed, named))
+        Ok((closed, left, open, missed, named, worked))
     })?;
     state.set(&mine, &heading)?;
     // fixes shown whose tests still fail did not help (state/outcome.rs)
@@ -162,6 +192,14 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     println!("{out}");
     if !named.is_empty() {
         println!("closed: {} (a wrong one: pg steps --reopen <number>)", named.join("; "));
+    }
+    if !worked.is_empty() {
+        let numbers: Vec<&str> = worked.iter().filter_map(|w| w.split('.').next()).collect();
+        println!(
+            "you took these and they are still open: {} (the handoff says you worked on them); done? pg finish again with --done {}",
+            worked.join("; "),
+            numbers.join(",")
+        );
     }
     for m in &missed {
         println!("not closed: {m} (pg steps lists them with their numbers)");
@@ -263,3 +301,8 @@ fn notes_about(code: &CodeIndex, index: &Index, changes: &[work::Change]) -> any
     }
     Ok(out)
 }
+
+#[cfg(all(test, paragma_local))]
+#[rustfmt::skip]
+#[path = "../../unit/src/cli/finish.rs"]
+mod tests;

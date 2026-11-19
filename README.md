@@ -126,7 +126,7 @@ pg setup
 
 In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all --global`, `pg setup --list`, `pg setup --update`.
 
-**MCP.** Apps that start MCP servers can run Paragma as one: the app gets the project's brief when a conversation starts and pg's commands as tools, which helps most in apps without a shell or hooks. In `pg setup` choose **MCP** and an app (Claude Code, Claude Desktop, Codex, Antigravity, Cursor; for every conversation), or `pg setup all --mcp`; `--no-mcp` takes it out. Where Paragma's hooks already give the brief, the server does not repeat it. Tool calls the app sends together run side by side.
+**MCP.** Apps that start MCP servers can run Paragma as one: the app gets the project's brief when a conversation starts and pg's commands as tools, which helps most in apps without a shell or hooks. In `pg setup` choose **MCP** and an app (Claude Code, Claude Desktop, Codex, Antigravity, Cursor; for every conversation), or `pg setup all --mcp`; `--no-mcp` takes it out. Where Paragma's hooks already give the brief, the server does not repeat it. Every tool takes a `project` and a `budget`; `pg_batch` runs several calls in one, and tool calls the app sends together run side by side.
 
 ## Commands
 
@@ -147,10 +147,15 @@ pg finish --done 1 "what changed, what is next"  # tick off steps, leave the han
 pg steps                             # the steps with their numbers (--take 4, --defer 4, --drop 4, --edit 4 "text")
 pg tell "I am changing refund.go"    # a note the other conversations on the project see once
 pg ask "Which address on invoices?"  # a question that waits on the user; the brief lists it until pg answer 1 "..."
+pg answer --json '[{"question": "1", "answer": "..."}]'   # many answers at once
 pg ripple                            # what a change reaches: callers left as they were, tests to run
 pg tree                              # the code: files and symbols, with the notes about them marked
-pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor
+pg batch '[["find", "refund"], ["read", "e12"]]'   # several commands in one call; lookups run side by side
+pg undo                              # what pg did by itself, and one taken back
+pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor (--experts)
 ```
+
+**What pg does by itself.** Inside memory only, small steps that each undo with `pg undo`: it writes the handoff of a conversation that stopped without one, from what the log says it did; when a failing test passes and memory has no fix for its error, it writes a draft record with the change that fixed it, which the agent keeps by saying why. At `pg finish`, the steps the conversation took and left open are named in its handoff as worked on, and it is asked whether they are done. With hooks, an edit to a file another conversation still at work changed waits once, with who and when. pg never deletes or moves a note, changes your text or touches code by itself. `pg doctor --experts` shows what each part of pg said, how often the agent acted on it, and how that weighs it now.
 
 Several conversations on one project see each other: who is at work, the steps another has taken, the notes they left, and what a conversation that stopped without a handoff did. Many `pg` calls can run at once, from several conversations, on one project or many. A write is whole or not there at all, also when its process is killed halfway. `pg rm` moves notes to `.archive/` instead of deleting them. pg's own index files are made again from the notes when they are damaged (kept aside as `.broken`); `pg doctor` also looks for damage deep inside them.
 

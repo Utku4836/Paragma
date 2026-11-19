@@ -72,6 +72,17 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 /// The answer to one tool call: the pg command it stands for, run in `cwd`.
 fn call(cwd: &std::path::Path, id: Value, params: &Value) -> Value {
     let name = params["name"].as_str().unwrap_or("");
+    if name == "pg_batch" {
+        return match batch_commands(&params["arguments"]) {
+            Ok(commands) => {
+                let done = super::batch::run_all(cwd, &commands);
+                let failed = done.iter().any(|(c, _)| *c > 1);
+                let text = super::batch::report(&commands, &done);
+                ok(id, json!({ "content": [{ "type": "text", "text": text.trim_end() }], "isError": failed }))
+            }
+            Err(e) => error(id, -32602, &e),
+        };
+    }
     match command(name, &params["arguments"]) {
         Some(argv) => {
             let (code, text) = pg(cwd, &argv);
@@ -120,8 +131,10 @@ fn answer(cx: &Context, msg: &Value, hooked: bool) -> Option<Value> {
 /// (unless the app's hooks give it: the agent would read it twice).
 fn instructions(cx: &Context, hooked: bool) -> String {
     let core = crate::skills::CORE;
-    let tools = "Here the pg commands are tools: pg_open, pg_find, pg_read, pg_write, pg_run, pg_steps, pg_finish, \
-                 pg_tell, and pg for any other command (its arguments as a list). Calls sent together run side by side.";
+    let tools = "Here the pg commands are tools (pg_open, pg_find, pg_read, pg_write, pg_run, pg_steps, pg_finish, \
+                 pg_tell, pg_ask, pg_answer, pg_ripple, pg_tree, pg_undo; pg for any other command), each taking \
+                 project and budget. Several lookups at once: one pg_batch call, or calls sent together; they run \
+                 side by side.";
     let brief = match &cx.project {
         Some(_) if hooked => "\n\nParagma's hooks give this conversation the project's brief at its start.".to_string(),
         Some(_) => {
@@ -136,31 +149,35 @@ fn instructions(cx: &Context, hooked: bool) -> String {
 /// Runs pg itself with these arguments, in the folder the server was
 /// started in: its exit code and what it printed.
 fn pg(cwd: &std::path::Path, argv: &[String]) -> (i32, String) {
-    let Ok(exe) = std::env::current_exe() else { return (7, "pg not found".into()) };
-    match std::process::Command::new(exe).args(argv).current_dir(cwd).stdin(std::process::Stdio::null()).output() {
-        Ok(o) => (
-            o.status.code().unwrap_or(7),
-            format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
-                .trim_end()
-                .to_string(),
-        ),
-        Err(e) => (7, format!("pg could not start: {e}")),
-    }
+    super::batch::pg(cwd, argv)
 }
 
 fn s(v: &Value, key: &str) -> Option<String> {
-    v[key].as_str().map(str::to_string).filter(|x| !x.is_empty())
+    match &v[key] {
+        Value::String(x) if !x.is_empty() => Some(x.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 fn list(v: &Value, key: &str) -> Vec<String> {
     match &v[key] {
-        Value::Array(a) => a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|x| match x {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect(),
         Value::String(x) if !x.is_empty() => vec![x.clone()],
         _ => Vec::new(),
     }
 }
 
-/// A tool call as pg's arguments; None when it cannot be one.
+/// A tool call as pg's arguments; None when it cannot be one. Every tool
+/// takes `project` (another project than the folder's) and `budget` (most
+/// tokens of output), as -p and --budget.
 pub fn command(name: &str, a: &Value) -> Option<Vec<String>> {
     let mut v: Vec<String> = Vec::new();
     let flag = |v: &mut Vec<String>, f: &str, x: Option<String>| {
@@ -168,6 +185,10 @@ pub fn command(name: &str, a: &Value) -> Option<Vec<String>> {
             v.push(f.to_string());
             v.push(x);
         }
+    };
+    let numbers = |key: &str| -> Option<String> {
+        let l = list(a, key);
+        (!l.is_empty()).then(|| l.join(","))
     };
     match name {
         "pg_open" => {
@@ -187,6 +208,7 @@ pub fn command(name: &str, a: &Value) -> Option<Vec<String>> {
             if a["all"].as_bool() == Some(true) {
                 v.push("--all".into());
             }
+            flag(&mut v, "--in", s(a, "in"));
         }
         "pg_read" => {
             v.push("read".into());
@@ -203,6 +225,8 @@ pub fn command(name: &str, a: &Value) -> Option<Vec<String>> {
                 flag(&mut v, "--error", Some(e));
                 flag(&mut v, "--cause", s(a, "cause"));
                 flag(&mut v, "--fix", s(a, "fix"));
+            } else if let Some(c) = s(a, "confirm") {
+                flag(&mut v, "--confirm", Some(c));
             } else {
                 v.push(s(a, "path")?);
                 v.push(s(a, "text")?);
@@ -218,8 +242,13 @@ pub fn command(name: &str, a: &Value) -> Option<Vec<String>> {
         }
         "pg_steps" => {
             v.push("steps".into());
-            if let Some(n) = a["take"].as_u64() {
-                flag(&mut v, "--take", Some(n.to_string()));
+            flag(&mut v, "--take", s(a, "take"));
+            for (key, f) in [("drop", "--drop"), ("defer", "--defer"), ("resume", "--resume"), ("reopen", "--reopen")] {
+                flag(&mut v, f, numbers(key));
+            }
+            if let Some(n) = s(a, "edit") {
+                flag(&mut v, "--edit", Some(n));
+                v.push(s(a, "text")?);
             }
             if a["all"].as_bool() == Some(true) {
                 v.push("--all".into());
@@ -228,32 +257,112 @@ pub fn command(name: &str, a: &Value) -> Option<Vec<String>> {
         "pg_finish" => {
             v.push("finish".into());
             v.push(s(a, "summary")?);
-            flag(&mut v, "--done", s(a, "done"));
+            flag(&mut v, "--done", numbers("done"));
+            for l in list(a, "left") {
+                flag(&mut v, "--left", Some(l));
+            }
         }
         "pg_tell" => {
             v.push("tell".into());
             v.push(s(a, "text")?);
         }
+        "pg_ask" => {
+            v.push("ask".into());
+            v.extend(s(a, "question"));
+        }
+        "pg_answer" => {
+            v.push("answer".into());
+            match &a["answers"] {
+                Value::Null => {
+                    v.push(s(a, "question")?);
+                    v.push(s(a, "answer")?);
+                }
+                many => {
+                    v.push("--json".into());
+                    v.push(many.to_string());
+                }
+            }
+        }
+        "pg_ripple" => {
+            v.push("ripple".into());
+            v.extend(s(a, "target"));
+        }
+        "pg_tree" => {
+            v.push("tree".into());
+            v.extend(s(a, "path"));
+        }
+        "pg_undo" => {
+            v.push("undo".into());
+            v.extend(s(a, "which"));
+        }
         "pg" => {
             v = list(a, "args");
             // the server is not started again from inside itself
-            if v.first().is_none_or(|c| c == "mcp") {
+            if v.first().is_none_or(|c| matches!(c.as_str(), "mcp" | "hook")) {
                 return None;
             }
         }
         _ => return None,
     }
-    Some(v)
+    // -p and --budget first: after `run --` they would be the command's
+    let mut out = Vec::new();
+    flag(&mut out, "--project", s(a, "project"));
+    flag(&mut out, "--budget", s(a, "budget"));
+    out.append(&mut v);
+    Some(out)
+}
+
+/// pg_batch's calls as pg commands: each a tool call ({"tool": "pg_find",
+/// "arguments": {...}}) or pg's arguments as a list. The batch's own
+/// project and budget go to a call that names none.
+pub fn batch_commands(a: &Value) -> Result<Vec<Vec<String>>, String> {
+    let Some(calls) = a["calls"].as_array().filter(|c| !c.is_empty()) else {
+        return Err("give calls: [{\"tool\": \"pg_find\", \"arguments\": {\"query\": \"...\"}}, ...]".into());
+    };
+    if calls.len() > super::batch::MOST {
+        return Err(format!("{} calls; at most {} in one batch", calls.len(), super::batch::MOST));
+    }
+    let mut out = Vec::new();
+    for (i, c) in calls.iter().enumerate() {
+        let (tool, mut args) = match c {
+            Value::Array(_) => ("pg".to_string(), json!({ "args": c })),
+            _ => (
+                c["tool"].as_str().or(c["name"].as_str()).unwrap_or("").to_string(),
+                if c["arguments"].is_object() { c["arguments"].clone() } else { json!({}) },
+            ),
+        };
+        if tool == "pg_batch" {
+            return Err(format!("call {}: a batch inside a batch", i + 1));
+        }
+        for key in ["project", "budget"] {
+            if args.get(key).is_none() && !a[key].is_null() {
+                args[key] = a[key].clone();
+            }
+        }
+        match command(&tool, &args) {
+            Some(argv) if !matches!(argv.iter().find(|x| !x.starts_with('-')).map(String::as_str), Some("batch")) => {
+                out.push(argv)
+            }
+            _ => return Err(format!("call {}: no tool {tool:?}, or its arguments are missing", i + 1)),
+        }
+    }
+    Ok(out)
 }
 
 /// The tools, each with what its arguments are.
 fn tools() -> Value {
-    let t = |name: &str, about: &str, props: Value, required: &[&str]| json!({ "name": name, "description": about, "inputSchema": { "type": "object", "properties": props, "required": required } });
     let text = |about: &str| json!({ "type": "string", "description": about });
+    let numbers = |about: &str| json!({ "type": "array", "items": { "type": "integer" }, "description": about });
+    // every tool may name another project and a budget
+    let t = |name: &str, about: &str, mut props: Value, required: &[&str]| {
+        props["project"] = json!({ "type": "string", "description": "Another project than this folder's" });
+        props["budget"] = json!({ "type": "integer", "description": "Most tokens of output (default 1200)" });
+        json!({ "name": name, "description": about, "inputSchema": { "type": "object", "properties": props, "required": required } })
+    };
     json!([
         t(
             "pg_open",
-            "Start or continue a project's work and get its brief (goal, steps, last handoff, rules, likely code). Alone: the project of this folder.",
+            "Start or continue a project's work and get its brief (goal, steps, last handoff, rules, likely code). Alone: the project of this folder. Give every step and decision of the user's plan in this one call.",
             json!({
                 "name": text("The project (omit: the one linked to this folder)"),
                 "goal": text("The goal of the work"),
@@ -265,7 +374,7 @@ fn tools() -> Value {
         t(
             "pg_find",
             "Search memory before searching files: a question, an error line, a code name, or '<library> <names>' for a library's real API.",
-            json!({ "query": text("What to find"), "all": { "type": "boolean", "description": "Every project" } }),
+            json!({ "query": text("What to find"), "all": { "type": "boolean", "description": "Every project" }, "in": text("Search this other project") }),
             &["query"],
         ),
         t(
@@ -276,13 +385,14 @@ fn tools() -> Value {
         ),
         t(
             "pg_write",
-            "Keep what the next conversation needs: a rule, a decision (with why), an error (with cause and fix), or a note (path and text).",
+            "Keep what the next conversation needs: a rule, a decision (with why), an error (with cause and fix), a note (path and text); confirm: a record still right, or a draft pg wrote kept.",
             json!({
                 "rule": text("A rule, in a sentence"),
                 "decision": text("A decision"), "why": text("Why it was decided"),
                 "error": text("The error line as printed"), "cause": text("What caused it"), "fix": text("How it was fixed"),
                 "path": text("A note's path: folder/name"), "text": text("The note's text"),
-                "append": { "type": "boolean", "description": "Add to the note instead of replacing it" }
+                "append": { "type": "boolean", "description": "Add to the note instead of replacing it" },
+                "confirm": text("A record's id: still right as the code is now (or a draft kept)")
             }),
             &[],
         ),
@@ -294,14 +404,27 @@ fn tools() -> Value {
         ),
         t(
             "pg_steps",
-            "The plan's steps with their numbers; take one so other conversations leave it.",
-            json!({ "take": { "type": "integer", "description": "Take this step" }, "all": { "type": "boolean", "description": "Done and deferred ones too" } }),
+            "The plan's steps with their numbers; take one so other conversations leave it; drop, defer, resume, reopen or edit one.",
+            json!({
+                "take": { "type": "integer", "description": "Take this step" },
+                "drop": numbers("Steps gone stale or wrong"),
+                "defer": numbers("Steps left for later on purpose"),
+                "resume": numbers("Deferred steps back in the plan"),
+                "reopen": numbers("Steps closed by mistake"),
+                "edit": { "type": "integer", "description": "Rewrite this step (with text)" },
+                "text": text("The step's new text, with edit"),
+                "all": { "type": "boolean", "description": "Done and deferred ones too" }
+            }),
             &[],
         ),
         t(
             "pg_finish",
             "Before the final answer on real work: what was done and what is next, and the steps it finished.",
-            json!({ "summary": text("What was done; what is next"), "done": text("Numbers of the steps finished: 1,3") }),
+            json!({
+                "summary": text("What was done; what is next"),
+                "done": numbers("Numbers of the steps finished"),
+                "left": { "type": "array", "items": { "type": "string" }, "description": "Steps left for later" }
+            }),
             &["summary"],
         ),
         t(
@@ -311,8 +434,54 @@ fn tools() -> Value {
             &["text"],
         ),
         t(
+            "pg_ask",
+            "Keep a question that waits on the user (the brief lists it until answered); without one: the open questions.",
+            json!({ "question": text("The question for the user") }),
+            &[],
+        ),
+        t(
+            "pg_answer",
+            "The user's answer to a kept question (by its number or words only it has); answers: many at once.",
+            json!({
+                "question": text("Its number, or words only it has"),
+                "answer": text("The user's answer"),
+                "answers": { "type": "array", "items": { "type": "object" }, "description": "Many: [{\"question\": \"2\", \"answer\": \"...\"}]" }
+            }),
+            &[],
+        ),
+        t(
+            "pg_ripple",
+            "Before changing a function's signature, name or existence: its callers and tests; without a target: callers a change left behind.",
+            json!({ "target": text("A function, method or type") }),
+            &[],
+        ),
+        t(
+            "pg_tree",
+            "The map of the project's code: files and their functions, with the notes about them marked.",
+            json!({ "path": text("A folder or file (default: all)") }),
+            &[],
+        ),
+        t(
+            "pg_undo",
+            "What pg did by itself (a handoff, a draft record, steps closed): listed; with a number, taken back.",
+            json!({ "which": text("Its number, or last") }),
+            &[],
+        ),
+        t(
+            "pg_batch",
+            "Several calls at once, each answered in order: those that only look (find, read, ripple, tree) run side by side, one that writes waits for those before it.",
+            json!({
+                "calls": {
+                    "type": "array",
+                    "description": "[{\"tool\": \"pg_find\", \"arguments\": {\"query\": \"refund\"}}, {\"tool\": \"pg_read\", \"arguments\": {\"target\": \"e12\"}}]",
+                    "items": { "type": "object" }
+                }
+            }),
+            &["calls"],
+        ),
+        t(
             "pg",
-            "Any other pg command, its arguments as a list: [\"ripple\", \"Refund\"], [\"doctor\"], [\"skill\", \"coding\"].",
+            "Any other pg command, its arguments as a list: [\"doctor\"], [\"skill\", \"coding\"], [\"ls\"].",
             json!({ "args": { "type": "array", "items": { "type": "string" } } }),
             &["args"],
         ),
