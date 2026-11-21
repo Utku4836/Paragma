@@ -30,6 +30,9 @@ pub struct Args {
     /// Open done steps again (closed by mistake), by number
     #[arg(long, value_delimiter = ',', value_name = "NUMBERS")]
     reopen: Vec<String>,
+    /// Tick off steps without a handoff (pg finish --done does it with one), by number
+    #[arg(long, value_delimiter = ',', value_name = "NUMBERS")]
+    done: Vec<String>,
     /// Take steps out of the plan, by number (4,7); every other step keeps its number
     #[arg(long, value_delimiter = ',', value_name = "NUMBERS", conflicts_with = "edit")]
     drop: Vec<String>,
@@ -61,6 +64,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         let defer = numbers(&a.defer, "--defer")?;
         let resume = numbers(&a.resume, "--resume")?;
         let reopen = numbers(&a.reopen, "--reopen")?;
+        let done = numbers(&a.done, "--done")?;
         let mut drop = numbers(&a.drop, "--drop")?;
         let (_, said) = update_note(project, plan::FILE, |n, exists, _| {
             if !exists {
@@ -86,6 +90,16 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
                     }
                 }
                 said.insert(0, format!("ok {} {what}", count(changed, "step")));
+            }
+            if !done.is_empty() {
+                let mut closed: i64 = 0;
+                for &number in &done {
+                    match plan::close_number(n, number) {
+                        Some(_) => closed += 1,
+                        None => said.push(format!("no open step {number}")),
+                    }
+                }
+                said.insert(0, format!("ok {} done", count(closed, "step")));
             }
             if !reopen.is_empty() {
                 let mut opened: i64 = 0;
@@ -149,7 +163,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if open > 0 {
         println!("(done: pg finish \"...\" --done <numbers>)");
     }
-    for line in super::perceive::news(&state)? {
+    for line in super::perceive::news(project, &state)? {
         println!("{line}");
     }
     Ok(())
@@ -228,5 +242,6 @@ impl Args {
             || !self.defer.is_empty()
             || !self.resume.is_empty()
             || !self.reopen.is_empty()
+            || !self.done.is_empty()
     }
 }

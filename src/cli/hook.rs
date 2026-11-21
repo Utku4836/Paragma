@@ -12,8 +12,9 @@
 //! PostToolUse, a command  a failing test or build: the fix memory has for it
 //! PostToolUse, an edit    the other notes about that code (past errors of the
 //!                         file), and remembers the files changed
-//! UserPromptSubmit        a lasting rule in the user's words: asks to keep it;
-//!                         decisions or a plan: asks to record them first
+//! UserPromptSubmit        what this conversation's work calls for: a plan
+//!                         recorded, a handoff kept (from what it did, never
+//!                         from the words of the message)
 //! Stop                    work done but no handoff: asks once for pg finish
 //! ```
 
@@ -109,7 +110,7 @@ pub fn answer(agent: Agent, input: &str) -> Result<Option<String>> {
     let text = match name {
         "SessionStart" => Some(session_start(&cx, project, event["source"].as_str().unwrap_or(""))?),
         "PreToolUse" => before_edit(&cx, project, &event)?,
-        "UserPromptSubmit" => user_said(project, event["prompt"].as_str().unwrap_or(""))?,
+        "UserPromptSubmit" => user_said(project)?,
         "PostToolUse" | "PostToolUseFailure" => after_tool(&cx, project, &event)?,
         "Stop" if event["stop_hook_active"].as_bool() != Some(true) => stop(project)?,
         _ => None,
@@ -260,7 +261,7 @@ fn listing(project: &crate::project::Project, index: &Index, mut found: Vec<(&Li
         .map(|l| l.replace("  ", " "))
         .collect();
     if more > 0 {
-        out.push(format!("+{more} more about this code: pg tree <file>"));
+        out.push(format!("+{more} more about this code: pg ls <file>"));
     }
     Ok(out)
 }
@@ -474,6 +475,16 @@ fn real_case(dir: &Path, rel: &str) -> String {
     out.join("/")
 }
 
+/// A document worth keeping with the notes: a workbook, a document, a
+/// deck, a PDF, a table of data (by its form, the extension).
+pub fn is_document(path: &str) -> bool {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "xlsx" | "xlsm" | "xls" | "docx" | "doc" | "pptx" | "ppt" | "pdf" | "csv" | "tsv" | "odt" | "ods" | "odp"
+    )
+}
+
 /// After a tool: an edit is remembered, a failing test run is explained.
 fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) -> Result<Option<String>> {
     let tool = event["tool_name"].as_str().unwrap_or("");
@@ -502,6 +513,17 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
             }
         }
         return Ok(text);
+    }
+    // a document read that is not kept with the notes: remembered (one
+    // read again and again is worth keeping, kernel/watch.rs)
+    if tool == "Read" {
+        if let Some(f) = event["tool_input"]["file_path"].as_str()
+            && is_document(f)
+            && !std::path::Path::new(f).starts_with(&project.dir)
+        {
+            State::open(project)?.record(Did::ReadFile { file: f.to_string() })?;
+        }
+        return Ok(None);
     }
     if tool != "Bash" {
         return Ok(None);
@@ -649,51 +671,18 @@ fn fixed_here(
     )))
 }
 
-/// The user's message gives the project a lasting rule: the agent is asked
-/// to keep it, if the user meant it so (record/said_rule.rs). Each sentence
-/// once a conversation.
-/// What the user's message holds that memory should keep: a lasting rule,
-/// decisions or a plan of steps.
-fn user_said(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
-    let parts: Vec<String> = [said_plan(project, prompt)?, said_rule(project, prompt)?].into_iter().flatten().collect();
-    Ok((!parts.is_empty()).then(|| {
-        parts.join(
+/// At the user's message: what this conversation's work calls for (a
+/// plan recorded, a handoff kept) and notes from the others, once each.
+/// The message itself is not read: what is done tells it, in any language.
+fn user_said(project: &crate::project::Project) -> Result<Option<String>> {
+    let state = State::open(project)?;
+    let lines = super::perceive::news(project, &state)?;
+    Ok((!lines.is_empty()).then(|| {
+        lines.iter().map(|l| format!("Paragma: {l}")).collect::<Vec<_>>().join(
             "
 ",
         )
     }))
-}
-
-/// Decisions or a plan for work that goes on after this conversation:
-/// asks once a conversation to record them first, in the user's words.
-fn said_plan(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
-    if !crate::record::plan::gives_plan(prompt) {
-        return Ok(None);
-    }
-    let state = State::open(project)?;
-    if state.my_last("plan-offered").is_some() {
-        return Ok(None);
-    }
-    state.record(Did::Offered { what: "plan".into(), about: project.name.clone() })?;
-    Ok(Some(
-        "Paragma: the user's message gives decisions or a plan. Before the work, record them in the user's words:          pg open --goal \"...\" --step \"...\" --decision \"...\" (one --step per step, also the ones for later; one          --decision per decision). A later conversation knows only what is recorded."
-            .to_string(),
-    ))
-}
-
-fn said_rule(project: &crate::project::Project, prompt: &str) -> Result<Option<String>> {
-    let Some(sentence) = crate::record::said_rule::find(prompt) else { return Ok(None) };
-    let sentence = one_line(&sentence, 300);
-    let state = State::open(project)?;
-    if state.my_targets_since("rule-offered", 0)?.contains(&sentence) {
-        return Ok(None);
-    }
-    state.record(Did::Offered { what: "rule".into(), about: sentence.to_string() })?;
-    Ok(Some(format!(
-        "Paragma: the user's message reads like a lasting rule for this project: \"{sentence}\". If they mean it for \
-         the future, keep it: pg write --rule \"<the rule in a sentence>\" (add (applies: <folder>/) when it is about \
-         one part of the code). If it was only for this task, ignore this."
-    )))
 }
 
 /// Asks once for a handoff when this conversation changed something since

@@ -8,8 +8,10 @@
 //!     .pg/index.db  .pg/state.db  .pg/lock
 //! ```
 
+pub mod attach;
 pub mod env;
 pub mod files;
+pub mod items;
 pub mod names;
 pub mod plan;
 pub mod scan;

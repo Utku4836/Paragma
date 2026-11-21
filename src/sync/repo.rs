@@ -201,9 +201,25 @@ impl<'a> Mirror<'a> {
 
     /// The files of the projects that go, by their path under projects/.
     fn local_files(&self) -> Result<Vec<String>> {
+        let held = self.held();
         let mut out = Vec::new();
-        walk(&self.home.projects_dir(), "", &mut out, &|rel, is_dir| kept(rel, is_dir, self.env.get()))?;
+        walk(&self.home.projects_dir(), "", &mut out, &|rel, is_dir| {
+            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel))
+        })?;
         Ok(out)
+    }
+
+    /// The files kept with notes that stay on this computer: all of them
+    /// when they are not sent, else those over the size limit. Neither sent
+    /// nor taken out of the repository: another computer's copy stays.
+    fn held(&self) -> std::collections::HashSet<String> {
+        let send = self.config.attachments && !self.config.public;
+        let most = self.config.attach_mb * 1024 * 1024;
+        crate::project::attach::all(&self.home.projects_dir())
+            .into_iter()
+            .filter(|(_, size)| !send || *size > most)
+            .map(|(rel, _)| rel)
+            .collect()
     }
 
     /// The files in the clone's memory folder, by the same paths.
@@ -234,8 +250,9 @@ impl<'a> Mirror<'a> {
             }
         }
         if remove {
+            let held = self.held();
             for rel in self.clone_files()? {
-                if !seen.contains_key(&rel) {
+                if !seen.contains_key(&rel) && !held.contains(&rel) {
                     std::fs::remove_file(root.join(&rel))?;
                     remove_empty_dirs(&root, &rel);
                 }

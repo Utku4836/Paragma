@@ -10,6 +10,10 @@ use std::collections::HashMap;
 /// handoff, has stopped (cut, closed, out of context).
 pub const QUIET: i64 = 20 * 60;
 
+/// The user's own changes, made in pg's interface: not a conversation
+/// that hands off.
+pub const INTERFACE: &str = "interface";
+
 /// Another conversation that changed the project and stopped without a
 /// handoff: what it did since its last one.
 pub struct Stopped {
@@ -31,7 +35,7 @@ pub fn stopped(f: &Facts) -> Vec<Stopped> {
     for e in &f.journal {
         by.entry(e.conversation.as_str()).or_default().push(e);
     }
-    let mut convs: Vec<&&str> = by.keys().filter(|c| ***c != f.me).collect();
+    let mut convs: Vec<&&str> = by.keys().filter(|c| ***c != f.me && **c != INTERFACE).collect();
     convs.sort();
     let mut out = Vec::new();
     for conv in convs {
@@ -73,7 +77,7 @@ pub fn cut_short(f: &Facts) -> Vec<Hint> {
     let mut out = Vec::new();
     let mut convs: Vec<&&str> = by.keys().collect();
     convs.sort();
-    for conv in convs {
+    for conv in convs.into_iter().filter(|c| **c != INTERFACE) {
         let all = &by[*conv];
         // what it did since its last handoff
         let after = match all.iter().rposition(|e| matches!(e.did, Did::Finish { .. })) {
@@ -218,12 +222,15 @@ pub fn told(f: &Facts) -> Vec<Hint> {
         .filter(|e| e.conversation != f.me && f.now - e.at < NEWS)
         .filter_map(|e| match &e.did {
             Did::Told { text } => {
-                let who = f
-                    .folders
-                    .get(&e.conversation)
-                    .filter(|x| !x.is_empty())
-                    .map(String::as_str)
-                    .unwrap_or("another conversation");
+                let who = if e.conversation == INTERFACE {
+                    "the user"
+                } else {
+                    f.folders
+                        .get(&e.conversation)
+                        .filter(|x| !x.is_empty())
+                        .map(String::as_str)
+                        .unwrap_or("another conversation")
+                };
                 Some(Hint {
                     key: format!("told:{}", e.seq),
                     weight: 95,

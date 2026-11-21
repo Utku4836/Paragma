@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 #[derive(clap::Args)]
 pub struct Args {
     /// A folder or a file of the code (default: all of it)
-    path: Option<String>,
+    pub path: Option<String>,
 }
 
 /// Top-level symbols named per file in the map.
@@ -47,7 +47,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         .filter(|(f, p, _)| given.is_empty() || code.display(f, p).starts_with(&format!("{given}/")))
         .collect();
     if files.is_empty() {
-        return Err(fail(NOT_FOUND, format!("no code at {given:?} (pg tree shows all of it)")));
+        return Err(fail(NOT_FOUND, format!("no code at {given:?} (pg ls --code shows all of it)")));
     }
 
     let n_symbols: i64 = if given.is_empty() {
@@ -119,7 +119,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             break;
         }
     }
-    b.add("a folder in full: pg tree <folder>/");
+    b.add("a folder in full: pg ls <folder>/");
     print!("{}", b.out);
     Ok(())
 }
@@ -147,7 +147,7 @@ fn one_file(cx: &Context, code: &CodeIndex, notes: &CodeNotes, folder: &str, pat
             if mark.is_empty() { String::new() } else { format!("  {mark}") }
         );
         if !b.add(&line) {
-            b.add(&format!("... more: pg tree {} --budget {}", code.display(folder, path), cx.budget * 2));
+            b.add(&format!("... more: pg ls {} --budget {}", code.display(folder, path), cx.budget * 2));
             break;
         }
     }

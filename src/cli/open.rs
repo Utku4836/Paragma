@@ -313,7 +313,7 @@ fn brief(
     let questions: Vec<(usize, plan::Question)> =
         plan::questions(&note).into_iter().enumerate().filter(|(_, q)| q.answer.is_none()).collect();
     if !questions.is_empty() {
-        b.add(&format!("waiting on the user ({}; answered: pg answer <number> \"...\"):", questions.len()));
+        b.add(&format!("waiting on the user ({}; answered: pg ask <number> \"...\"):", questions.len()));
         for (i, q) in questions.iter().take(QUESTIONS_SHOWN) {
             b.add(&format!("? {}. {}", i + 1, q.text));
         }

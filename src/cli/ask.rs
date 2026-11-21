@@ -1,12 +1,16 @@
-//! pg ask / pg answer: the questions that wait on the user, kept in the
-//! project note so that no conversation asks one twice or forgets it. The
-//! brief lists the open ones.
+//! pg ask: the questions that wait on the user, kept in the project note so
+//! that no conversation asks one twice or forgets it. The brief lists the
+//! open ones. Asking and answering are one command: a number first is the
+//! question answered.
 //!
 //! ```text
 //! pg ask "Which address goes on the invoices?"   a question for the user
 //! pg ask                                         the open questions, numbered
-//! pg answer 2 "The registered office"            answered: by number, or words only that question has
+//! pg ask 2 "The registered office"               question 2 answered
+//! pg ask --json '[{"question": "2", "answer": "..."}]'   many answered at once
 //! ```
+//!
+//! `pg answer` (its words, or a number) stays as a hidden name of the same.
 
 use super::{Context, NOT_FOUND, USAGE, fail};
 use crate::index::update_note;
@@ -15,13 +19,21 @@ use crate::project::{Project, files, plan};
 use anyhow::Result;
 
 #[derive(clap::Args)]
+#[command(after_help = "Examples:
+  pg ask \"Which address goes on the invoices?\"   a question for the user
+  pg ask                                         the open questions, numbered
+  pg ask 2 \"The registered office\"               question 2 answered
+  pg ask --json '[{\"question\": \"2\", \"answer\": \"...\"}]'")]
 pub struct AskArgs {
-    /// The question for the user; without it, the open questions
+    /// A question for the user; a number and the user's answer answers that question; nothing: the open questions
     #[arg(allow_hyphen_values = true)]
     question: Vec<String>,
     /// With the answered ones (and their answers)
     #[arg(long)]
     all: bool,
+    /// Many answers at once, as JSON (or a file of it, - for stdin): [{"question": "2", "answer": "..."}] or {"2": "..."}
+    #[arg(long, value_name = "JSON", conflicts_with = "question")]
+    json: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -61,6 +73,14 @@ pub fn answers_of(text: &str) -> Result<Vec<(String, String)>, String> {
 
 pub fn ask(cx: &Context, a: AskArgs) -> Result<()> {
     let project = cx.need_project()?;
+    if let Some(json) = &a.json {
+        return answer_many(project, json);
+    }
+    // "2 The registered office": question 2 answered
+    if a.question.len() >= 2 && a.question[0].trim_end_matches('.').parse::<usize>().is_ok() {
+        let answer = AnswerArgs { question: Some(a.question[0].clone()), answer: a.question[1..].to_vec(), json: None };
+        return self::answer(cx, answer);
+    }
     let mut question = a.question.join(" ").trim().to_string();
     if !question.is_empty() {
         let warning = super::mask_all(std::iter::once(&mut question));
@@ -71,7 +91,7 @@ pub fn ask(cx: &Context, a: AskArgs) -> Result<()> {
         let number = plan::questions(&read(project)).iter().position(|q| q.answer.is_none() && q.text == question);
         match (added, number) {
             (true, Some(i)) => {
-                println!("ok question {} (it shows in the brief until pg answer {} \"...\")", i + 1, i + 1)
+                println!("ok question {} (it shows in the brief until pg ask {} \"<the answer>\")", i + 1, i + 1)
             }
             _ => println!("ok already asked: question {}", number.map(|i| i + 1).unwrap_or(0)),
         }
@@ -92,7 +112,7 @@ pub fn answer(cx: &Context, a: AnswerArgs) -> Result<()> {
     let question = a.question.clone().unwrap_or_default();
     let mut text = a.answer.join(" ").trim().to_string();
     if text.is_empty() {
-        return Err(fail(USAGE, "say the answer: pg answer <number> \"...\""));
+        return Err(fail(USAGE, "say the answer: pg ask <number> \"...\""));
     }
     let warning = super::mask_all(std::iter::once(&mut text));
     let (_, result) = update_note(project, plan::FILE, |n, exists, _| {
@@ -196,7 +216,7 @@ fn new_note(n: &mut Note, exists: bool, project: &Project) {
 impl AskArgs {
     /// Whether it keeps a question (memory then syncs).
     pub fn asks(&self) -> bool {
-        !self.question.is_empty()
+        !self.question.is_empty() || self.json.is_some()
     }
 }
 

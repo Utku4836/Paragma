@@ -19,6 +19,8 @@ description: Use to look up or record project knowledge with Paragma - rules, de
 - The same rule, decision or error written again updates the one memory has. A record that seems to contradict another is pointed out: replace it with `--supersedes` (decisions) or `pg rm r3` (rules).
 - An error seen often in many files is proposed as a rule: write it with `pg write --rule`.
 - Anything else worth keeping: a note per topic, `pg write <category>/<topic> "..."` (a category folder holds many notes). A note that grew several topics: split it.
+- A file the work will need again (a workbook, a contract, a deck, a PDF, an export): `pg write <category>/<topic> --file <path>` keeps it beside that note, with a card in its Attachments section (where it came from, when). The same file again is a new version, the old one kept. Not code, and not a file that holds a key (it is refused). Its parts: `pg read <category>/<file>.xlsx#Sheet1!A1:D20`, `...docx#<heading>`, `...pptx#3`; `pg find` searches inside it.
+- In a note: a due date, `pg write <note> --due 2026-12-01` (or `+7d`; `none` takes it off; `pg ls --due` lists them); a table, `pg write <note> --table add "Jan | 1200"`, `--table sort <column>` (`-<column>`: highest first), `--table sum <column>` (a total row); to-dos as `- [ ] ...` lines, listed by `pg ls --todo`, done: `pg write --check n4.2`.
 - Notes about code can say so in their properties: `files: [payments/refund.go]`, `symbols: [Refund]`.
 
 ## Secrets

@@ -11,6 +11,7 @@
   <a href="#install">Install</a> &nbsp;·&nbsp;
   <a href="#what-the-agent-sees">What the agent sees</a> &nbsp;·&nbsp;
   <a href="#results">Results</a> &nbsp;·&nbsp;
+  <a href="#for-you-pg">For you</a> &nbsp;·&nbsp;
   <a href="#commands">Commands</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a>
 </p>
@@ -128,6 +129,20 @@ In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all 
 
 **MCP.** Apps that start MCP servers can run Paragma as one: the app gets the project's brief when a conversation starts and pg's commands as tools, which helps most in apps without a shell or hooks. In `pg setup` choose **MCP** and an app (Claude Code, Claude Desktop, Codex, Antigravity, Cursor; for every conversation), or `pg setup all --mcp`; `--no-mcp` takes it out. Where Paragma's hooks already give the brief, the server does not repeat it. Every tool takes a `project` and a `budget`; `pg_batch` runs several calls in one, and tool calls the app sends together run side by side.
 
+## For you: `pg`
+
+`pg` alone, in a terminal, opens the same memory for you, by keyboard and mouse. Every change you make there is a pg command underneath: the agents see it as they see each other's work, and what pg does by itself still undoes with one key.
+
+- **Home**: the goal, the next steps, the notes due soon, the notes you opened last, the agents at work and the last handoff.
+- **Notes**: the folders and notes as a tree, the chosen one shown formatted beside it, with the notes that link to it. Drag a note onto a folder to move it; drop a file on the window to keep it with a note.
+- **A note editor with the usual keys**: copy, cut and paste with the system clipboard, undo, selection with Shift or the mouse, find, line numbers. Today's date (Ctrl+D), tables (Ctrl+T; Tab goes to the next cell and lines the columns up), to-dos (Ctrl+Enter), `[[` offers the notes to link to. Several notes open in tabs. When an agent changed the note meanwhile, saving asks: merge both, take theirs, or keep yours.
+- **Ctrl+K**: every command and note by a part of its name. **/** searches the memory as you type.
+- **Plan**, **Files** kept with notes, **Agents** (who is at work, the steps they took; tell them all something), **Activity** (what the agents and pg did).
+- **Sync**: sign in to GitHub, find your memory or choose a repository, the `.env` and file settings, **Transfer** to another repository. Notes not sent yet are marked; a note changed on two computers is merged in the editor or one side chosen.
+- **Setup**: which agents have Paragma's instructions, hooks and MCP server, each turned on or off, and **Update everything** to this version.
+
+What agents write shows on the screen as it happens.
+
 ## Commands
 
 The section `pg setup` writes is short: when to call `pg`. The details are in three skills the agent reads when it needs them (`pg skill coding`, `pg skill projects`, `pg skill knowledge`, also kept as files in `~/.paragma/skills/`), and `pg <command> --help` explains every option.
@@ -143,16 +158,18 @@ pg write --rule "Money is int64 cents, never float."
 pg write --decision "..." --why "..." --alternatives "..."
 pg write --error "<error line>" --cause "..." --fix "..."
 pg write payments/provider --file notes.md      # a note; long text from a file or stdin (-)
+pg write money/budget --file budget.xlsx --attach   # a file kept with the note; pg read budget.xlsx#Sheet1!A1:D9
+pg write money/budget --due 2026-12-01          # also --table add|sort|sum, --check n4.2 for a to-do
 pg finish --done 1 "what changed, what is next"  # tick off steps, leave the handoff
 pg steps                             # the steps with their numbers (--take 4, --defer 4, --drop 4, --edit 4 "text")
 pg tell "I am changing refund.go"    # a note the other conversations on the project see once
-pg ask "Which address on invoices?"  # a question that waits on the user; the brief lists it until pg answer 1 "..."
-pg answer --json '[{"question": "1", "answer": "..."}]'   # many answers at once
+pg ask "Which address on invoices?"  # a question that waits on the user; the brief lists it until pg ask 1 "..."
+pg ask --json '[{"question": "1", "answer": "..."}]'      # many answers at once
 pg ripple                            # what a change reaches: callers left as they were, tests to run
-pg tree                              # the code: files and symbols, with the notes about them marked
+pg ls --code                         # the code: files and symbols, with the notes about them marked
 pg batch '[["find", "refund"], ["read", "e12"]]'   # several commands in one call; lookups run side by side
 pg undo                              # what pg did by itself, and one taken back
-pg ls                                # projects, or the notes of one; also pg mv, pg rm, pg doctor (--experts)
+pg ls                                # projects, or the notes of one (--todo, --due); also pg mv, pg rm, pg doctor
 ```
 
 **What pg does by itself.** Inside memory only, small steps that each undo with `pg undo`: it writes the handoff of a conversation that stopped without one, from what the log says it did; when a failing test passes and memory has no fix for its error, it writes a draft record with the change that fixed it, which the agent keeps by saying why. A test that fails and passes with the same code gets a draft record as flaky; a known fix that keeps coming back in several conversations becomes a draft rule, not binding until confirmed; a fix that did not help gets a dated line on its record; the commands that pass are kept in the project note for other computers. One that gets undone often only says what it would write. At `pg finish`, the steps the conversation took and left open are named in its handoff as worked on, and it is asked whether they are done. With hooks, an edit to a file another conversation still at work changed waits once, with who and when. pg never deletes or moves a note, changes your text or touches code by itself. `pg doctor --experts` shows what each part of pg said, how often the agent acted on it, and how that weighs it now.

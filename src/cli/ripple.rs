@@ -80,7 +80,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             if found.is_empty() {
                 return Err(fail(
                     NOT_FOUND,
-                    format!("no function, method or type {t:?} in the code (pg tree lists them)"),
+                    format!("no function, method or type {t:?} in the code (pg ls --code lists them)"),
                 ));
             }
             b.add(&format!(

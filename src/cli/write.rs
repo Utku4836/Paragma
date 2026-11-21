@@ -18,7 +18,7 @@
 //! project's env file: never shown again, used by pg run as $NPM_API.
 //! Secrets in any other text are masked and not kept: they need a title.
 
-use super::{Context, USAGE, fail};
+use super::{Context, NOT_FOUND, USAGE, fail};
 use crate::index::update_note;
 use crate::note::Kind;
 use crate::project::{Project, check_name};
@@ -47,9 +47,13 @@ pub struct Args {
     #[arg(long)]
     append: bool,
 
-    /// Read the text from a file
+    /// A file: a text file's text is the note's; any other file (a workbook, a PDF, an image) is kept with the note
     #[arg(long, value_name = "FILE")]
     file: Option<std::path::PathBuf>,
+
+    /// With --file: keep the file itself with the note, also a text file
+    #[arg(long, requires = "file")]
+    attach: bool,
 
     /// Keep a secret (API key, token, password) under this title in the project's env file;
     /// the value follows, or "-" reads it from stdin
@@ -104,11 +108,42 @@ pub struct Args {
     /// code as it is now
     #[arg(long, value_name = "ID", conflicts_with_all = ["rule", "decision", "error", "secret"])]
     confirm: Option<String>,
+
+    /// A due date for the note: 2026-12-01, +7d, +2w; none takes it off (pg ls --due lists them)
+    #[arg(long, value_name = "DATE")]
+    due: Option<String>,
+
+    /// The note's table: add "a | b | c" (a row), sort <column> (desc: -<column>), sum <column> (a total row)
+    #[arg(long, num_args = 1.., value_name = "ACTION", allow_hyphen_values = true)]
+    table: Vec<String>,
+
+    /// With --table: the table under this heading (default: the note's first)
+    #[arg(long, value_name = "HEADING", requires = "table")]
+    under: Option<String>,
+
+    /// Tick off a to-do: <note id>.<number> as pg ls --todo gives it (n4.2); several with commas
+    #[arg(long, value_name = "TODO", value_delimiter = ',', conflicts_with_all = ["rule", "decision", "error", "secret"])]
+    check: Vec<String>,
+
+    /// Open a ticked to-do again: <note id>.<number>
+    #[arg(long, value_name = "TODO", value_delimiter = ',')]
+    uncheck: Vec<String>,
 }
 
 pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     if let Some(id) = a.confirm.clone() {
         return confirm(cx, &id);
+    }
+    if !a.check.is_empty() || !a.uncheck.is_empty() {
+        return check(cx, &a.check, &a.uncheck);
+    }
+    if a.due.is_some() || !a.table.is_empty() {
+        return note_items(cx, &a);
+    }
+    if let Some(f) = &a.file
+        && (a.attach || !is_text(f))
+    {
+        return attach(cx, &a, f);
     }
     if let Some(title) = a.secret.clone() {
         return write_secret(cx, &title, &a);
@@ -179,6 +214,212 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     // a note that has grown to hold unrelated topics: one note each
     if let Some(t) = super::sleep::topics_of(&project, &rel) {
         println!("{t}");
+    }
+    Ok(())
+}
+
+/// Whether a file is text to put in a note (UTF-8, no NUL, not a document).
+fn is_text(path: &std::path::Path) -> bool {
+    if crate::docs::Kind::of(path).is_some() {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else { return true }; // its error comes when it is read
+    // text: UTF-8 with no NUL, and hardly any control character but tabs and line ends
+    std::str::from_utf8(&bytes).is_ok_and(|t| {
+        let control = t.chars().filter(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r')).count();
+        !t.contains('\0') && control * 100 <= t.chars().count().max(1)
+    })
+}
+
+/// A file kept with a note; said what was done and whether it goes with
+/// the memory to other computers.
+fn attach(cx: &Context, a: &Args, file: &std::path::Path) -> Result<()> {
+    use crate::project::attach::{Kept, keep, size};
+    let Some(path) = a.path.as_deref() else {
+        return Err(fail(USAGE, "say which note it goes with: pg write <note> --file <path>"));
+    };
+    if !file.is_file() {
+        return Err(fail(NOT_FOUND, format!("no file {}", file.display())));
+    }
+    let (project, rel) = target(cx, path.trim_end_matches('/'))?;
+    let project = match cx.home.project(&project) {
+        Some(p) => p,
+        None => cx.home.create_project(&project).map_err(|e| fail(USAGE, e.to_string()))?,
+    };
+    let kept = keep(&project, &rel, file).map_err(|e| fail(USAGE, e.to_string()))?;
+    let note = rel.trim_end_matches(".md");
+    let bytes = match &kept {
+        Kept::New { name, size: s } => {
+            println!(
+                "ok {}/{note}: {name} kept with it ({}); the note lists it under Attachments",
+                project.name,
+                size(*s)
+            );
+            *s
+        }
+        Kept::Version { name, size: s, old } => {
+            println!(
+                "ok {}/{note}: {name} changed, kept as the new version ({}); the old one is {old}",
+                project.name,
+                size(*s)
+            );
+            *s
+        }
+        Kept::Same { name } => {
+            println!("ok {}/{note}: {name} is kept already, the same (nothing copied)", project.name);
+            return Ok(());
+        }
+    };
+    State::open(&project)?.touch_session(&cx.cwd.to_string_lossy())?;
+    State::open(&project)?.record(crate::state::journal::Did::Write {
+        kind: "attach".into(),
+        id: String::new(),
+        what: format!("{note} {}", file.display()),
+    })?;
+    // whether it goes with the memory to the other computers
+    match crate::sync::Config::load(&cx.home) {
+        None => {}
+        Some(c) if !c.attachments => {
+            println!("attachments are not synced: it stays on this computer (pg git turns them on)")
+        }
+        Some(c) if bytes > c.attach_mb * 1024 * 1024 => println!(
+            "it stays on this computer: {} is over the sync limit of {} MB (pg git changes the limit)",
+            size(bytes),
+            c.attach_mb
+        ),
+        Some(_) => println!("it goes with the memory to your other computers at the next sync"),
+    }
+    Ok(())
+}
+
+/// A to-do ticked off or opened again, by "<note id>.<number>".
+fn check(cx: &Context, done: &[String], open: &[String]) -> Result<()> {
+    for (which, to) in done.iter().map(|w| (w, true)).chain(open.iter().map(|w| (w, false))) {
+        let (id, n) =
+            which.trim().rsplit_once('.').and_then(|(id, n)| Some((id, n.parse::<usize>().ok()?))).ok_or_else(
+                || {
+                    fail(
+                        USAGE,
+                        format!("give the to-do as pg ls --todo shows it: <note id>.<number> (n4.2), not {which:?}"),
+                    )
+                },
+            )?;
+        let (project, row) = super::read::locate(cx, id)?;
+        let (_, text) =
+            update_note(&project, &row.path, |note, _, _| Ok(crate::project::items::set_todo(&mut note.body, n, to)))?;
+        match text {
+            Some(t) => println!("ok {id}.{n} {}: {t}", if to { "done" } else { "open again" }),
+            None => {
+                return Err(fail(
+                    NOT_FOUND,
+                    format!("{id} has no to-do {n} (pg ls --todo lists them with their numbers)"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A note's due date or its table changed: the note must be there.
+fn note_items(cx: &Context, a: &Args) -> Result<()> {
+    use crate::project::items;
+    let Some(path) = a.path.as_deref() else {
+        return Err(fail(USAGE, "say which note: pg write <note> --due 2026-12-01 (or --table ...)"));
+    };
+    let (project, row) = super::read::locate(cx, path)?;
+    let shown = row.path.trim_end_matches(".md").to_string();
+    if let Some(given) = &a.due {
+        let due = items::due_of(given).ok_or_else(|| {
+            fail(USAGE, format!("give the date as 2026-12-01, +7d or +2w (none takes it off), not {given:?}"))
+        })?;
+        update_note(&project, &row.path, |n, _, _| {
+            if due.is_empty() {
+                n.props.remove("due");
+            } else {
+                n.props.set_text("due", due.clone());
+            }
+            Ok(())
+        })?;
+        match items::days_left(&due) {
+            Some(d) => println!("ok {shown} is due {due} ({})", items::when(d)),
+            None => println!("ok {shown} has no due date now"),
+        }
+    }
+    if a.table.is_empty() {
+        return Ok(());
+    }
+    let action = a.table[0].to_lowercase();
+    let value = a.table[1..].join(" ");
+    let under = a.under.as_deref();
+    let (_, said) = update_note(&project, &row.path, |n, _, _| {
+        let Some(t) = items::table(&n.body, under) else {
+            return Ok(Err(match under {
+                Some(h) => format!("{shown} has no table under {h:?}"),
+                None => format!("{shown} has no table: write one in it first (| a | b |, then |---|---|)"),
+            }));
+        };
+        let mut new = t.clone();
+        let msg = match action.as_str() {
+            "add" => {
+                let row: Vec<String> =
+                    value.trim().trim_matches('|').split('|').map(|c| c.trim().to_string()).collect();
+                if row.iter().all(|c| c.is_empty()) {
+                    return Ok(Err("give the row: --table add \"a | b | c\"".to_string()));
+                }
+                // before pg's total row, if there is one
+                let at = new.rows.iter().position(|r| items::is_total(r)).unwrap_or(new.rows.len());
+                new.rows.insert(at, row);
+                format!("a row added ({} now)", new.rows.len())
+            }
+            "sort" => {
+                let (desc, name) = match value.trim().strip_prefix('-') {
+                    Some(n) => (true, n),
+                    None => (false, value.trim()),
+                };
+                let Some(k) = items::column(&t, name) else {
+                    return Ok(Err(format!("no column {name:?}: {}", t.header.join(", "))));
+                };
+                let total: Vec<Vec<String>> = new.rows.iter().filter(|r| items::is_total(r)).cloned().collect();
+                new.rows.retain(|r| !items::is_total(r));
+                new.rows.sort_by(|x, y| {
+                    let (a, b) =
+                        (x.get(k).map(String::as_str).unwrap_or(""), y.get(k).map(String::as_str).unwrap_or(""));
+                    let o = match (items::number(a), items::number(b)) {
+                        (Some(p), Some(q)) => p.partial_cmp(&q).unwrap_or(std::cmp::Ordering::Equal),
+                        _ => a.to_lowercase().cmp(&b.to_lowercase()),
+                    };
+                    if desc { o.reverse() } else { o }
+                });
+                new.rows.extend(total);
+                format!("sorted by {}{}", t.header[k], if desc { ", highest first" } else { "" })
+            }
+            "sum" => {
+                let Some(k) = items::column(&t, value.trim()) else {
+                    return Ok(Err(format!("no column {:?}: {}", value.trim(), t.header.join(", "))));
+                };
+                new.rows.retain(|r| !items::is_total(r));
+                let sum: f64 = new.rows.iter().filter_map(|r| r.get(k).and_then(|c| items::number(c))).sum();
+                // the decimal mark the column uses
+                let comma = new.rows.iter().filter_map(|r| r.get(k)).any(|c| items::decimal_comma(c));
+                let mut total = vec![String::new(); t.header.len()];
+                total[0] = "**Total**".into();
+                let shown = if comma { items::cell_of(sum).replace('.', ",") } else { items::cell_of(sum) };
+                if k > 0 {
+                    total[k] = shown.clone();
+                } else {
+                    total[0] = format!("**Total** {shown}");
+                }
+                new.rows.push(total);
+                format!("{} total: {shown}", t.header[k])
+            }
+            other => return Ok(Err(format!("--table takes add, sort or sum, not {other:?}"))),
+        };
+        n.body = items::replace(&n.body, &t, &new);
+        Ok(Ok(msg))
+    })?;
+    match said {
+        Ok(m) => println!("ok {shown}: {m}"),
+        Err(e) => return Err(fail(USAGE, e)),
     }
     Ok(())
 }

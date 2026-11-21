@@ -379,7 +379,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             b.add(&line);
         }
     }
-    for line in super::perceive::news(&state)? {
+    for line in super::perceive::news(project, &state)? {
         b.add(&line);
     }
     if a.json {

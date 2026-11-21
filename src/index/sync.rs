@@ -140,7 +140,24 @@ fn prepare(project: &Project, rel: &str) -> Option<Prepared> {
         })
         .collect();
     let enc = embed::encoder();
-    let pieces = note::chunks(&n, rel.trim_end_matches(".md"))
+    let mut found = note::chunks(&n, rel.trim_end_matches(".md"));
+    // the documents kept with it, by their parts: pg find finds what is in them
+    let folder = std::path::Path::new(rel).parent().map(|p| project.dir.join(p)).unwrap_or_else(|| project.dir.clone());
+    for card in crate::project::attach::cards(&n) {
+        let file = folder.join(&card.name);
+        if crate::docs::Kind::of(&file).is_none() {
+            continue;
+        }
+        for part in crate::docs::parts(&file).unwrap_or_default().into_iter().take(50) {
+            found.push(note::Chunk {
+                id: n.id().unwrap_or(rel.trim_end_matches(".md")).to_string(),
+                kind: n.kind(),
+                heading: format!("{} · {}", card.name, part.name),
+                text: part.text.chars().take(4000).collect(),
+            });
+        }
+    }
+    let pieces = found
         .into_iter()
         .map(|c| {
             let v = enc.encode(&format!("{title}. {}. {}", c.heading, c.text));

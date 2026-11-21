@@ -19,6 +19,7 @@ enum Ask {
     Public,
     Branch,
     Env,
+    Files,
     RemoveOld,
     Disconnect,
 }
@@ -43,7 +44,18 @@ enum Row {
 }
 
 /// The rows of the connected screen.
-const ACTIONS: [&str; 5] = ["Sync now", ".env files", "Move to another repository", "Disconnect", "Quit"];
+const ACTIONS: [&str; 7] = [
+    "Sync now",
+    ".env files",
+    "Files kept with notes",
+    "File size limit",
+    "Transfer to another repository",
+    "Disconnect",
+    "Quit",
+];
+
+/// The size limits offered, in MB.
+const LIMITS: [u64; 5] = [5, 10, 20, 50, 95];
 
 struct Page<'a> {
     cx: &'a Context,
@@ -66,6 +78,10 @@ struct Page<'a> {
     branch: String,
     /// What was answered about the .env files; None: not asked.
     env: Option<bool>,
+    /// What was answered about the files kept with notes; None: not asked.
+    files: Option<bool>,
+    /// The files question comes from the settings row, not from connecting.
+    files_row: bool,
     /// Choosing a repository to move to, not to connect.
     moving: bool,
     message: Vec<String>,
@@ -90,6 +106,8 @@ pub fn run(cx: &Context) -> Result<()> {
         prefix: String::new(),
         branch: String::new(),
         env: None,
+        files: None,
+        files_row: false,
         moving: false,
         message: Vec::new(),
         quit: false,
@@ -144,11 +162,11 @@ impl Page<'_> {
                     }
                     out.push('\n');
                     for (i, a) in ACTIONS.iter().enumerate() {
-                        let text = if i == 1 {
-                            let now = if c.env { "sent" } else { "not sent" };
-                            format!("{} {}", fit(a, 28), st.dim(now))
-                        } else {
-                            a.to_string()
+                        let text = match i {
+                            1 => format!("{} {}", fit(a, 32), st.dim(if c.env { "sent" } else { "not sent" })),
+                            2 => format!("{} {}", fit(a, 32), st.dim(if c.attachments { "sent" } else { "not sent" })),
+                            3 => format!("{} {}", fit(a, 32), st.dim(&format!("{} MB a file", c.attach_mb))),
+                            _ => a.to_string(),
                         };
                         row(&mut out, st, i == self.cur, &text);
                     }
@@ -252,6 +270,17 @@ impl Page<'_> {
                     "Yes: they go as they are, so a new computer gets them back. You can change it later.".into(),
                 ],
             ),
+            Ask::Files => (
+                "Send the files kept with notes too?".into(),
+                vec![
+                    format!(
+                        "Workbooks, documents, images kept with pg write --file, up to {} MB each.",
+                        crate::sync::ATTACH_MB
+                    ),
+                    "A file sent to git stays in its history, also after it is taken out.".into(),
+                    "No: they stay on this computer; you can change it later.".into(),
+                ],
+            ),
             Ask::RemoveOld => (
                 "Take the memory out of the old repository?".into(),
                 vec!["It stays in that repository's history either way.".into()],
@@ -316,7 +345,7 @@ impl Page<'_> {
     fn go(&mut self, s: Screen) {
         self.cur = match s {
             // the safe answer first where it is the default
-            Screen::Ask(Ask::Public | Ask::RemoveOld | Ask::Disconnect | Ask::Env) => 1,
+            Screen::Ask(Ask::Public | Ask::RemoveOld | Ask::Disconnect | Ask::Env | Ask::Files) => 1,
             _ => 0,
         };
         self.top = 0;
@@ -477,6 +506,31 @@ impl Page<'_> {
                 }
             }
             2 => {
+                if let Some(mut c) = Config::load(&self.cx.home) {
+                    if c.public {
+                        self.done(vec![
+                            self.style.bad("The repository is public: the files kept with notes never go there."),
+                        ]);
+                    } else if !c.attachments {
+                        self.files_row = true;
+                        self.go(Screen::Ask(Ask::Files));
+                    } else {
+                        c.attachments = false;
+                        c.save(&self.cx.home)?;
+                    }
+                }
+            }
+            3 => {
+                if let Some(mut c) = Config::load(&self.cx.home) {
+                    let at = LIMITS.iter().position(|l| *l == c.attach_mb).map(|i| (i + 1) % LIMITS.len()).unwrap_or(2);
+                    c.attach_mb = LIMITS[at];
+                    c.save(&self.cx.home)?;
+                    if c.attachments {
+                        sync::trigger(&self.cx.home);
+                    }
+                }
+            }
+            4 => {
                 self.moving = true;
                 self.working("signing in to GitHub…")?;
                 self.account = Account::saved()?;
@@ -486,7 +540,7 @@ impl Page<'_> {
                     self.after_sign_in()?;
                 }
             }
-            3 => self.go(Screen::Ask(Ask::Disconnect)),
+            5 => self.go(Screen::Ask(Ask::Disconnect)),
             _ => self.quit = true,
         }
         Ok(())
@@ -582,8 +636,23 @@ impl Page<'_> {
                 if self.moving {
                     self.go(Screen::Ask(Ask::RemoveOld));
                 } else {
-                    self.connect()?;
+                    self.go(Screen::Ask(Ask::Files));
                 }
+            }
+            Ask::Files if self.files_row => {
+                self.files_row = false;
+                if let Some(mut c) = Config::load(&self.cx.home) {
+                    c.attachments = yes && !c.public;
+                    c.save(&self.cx.home)?;
+                    if c.attachments {
+                        sync::trigger(&self.cx.home);
+                    }
+                }
+                self.go(Screen::Home);
+            }
+            Ask::Files => {
+                self.files = Some(yes);
+                self.connect()?;
             }
             Ask::RemoveOld => self.move_now(yes)?,
             Ask::Disconnect => {
@@ -612,7 +681,7 @@ impl Page<'_> {
             Some(r) => r.clone(),
             None => a.create(&new)?,
         };
-        Ok(super::git::config_of(a, &repo, self.prefix.clone(), self.branch.clone(), self.env))
+        Ok(super::git::config_of(a, &repo, self.prefix.clone(), self.branch.clone(), self.env, self.files))
     }
 
     /// Connects to what was chosen; a memory already there (restored, or

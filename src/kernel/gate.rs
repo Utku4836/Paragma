@@ -46,6 +46,10 @@ pub const EXPERTS: &[(&str, Level)] = &[
     ("drafts", Level::Say),
     ("revive", Level::Say),
     ("thin-handoff", Level::Say),
+    ("unplanned", Level::Say),
+    ("long", Level::Say),
+    ("due", Level::Say),
+    ("keep", Level::Say),
 ];
 
 /// Writes before the undo share counts.

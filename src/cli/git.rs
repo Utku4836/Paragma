@@ -37,6 +37,14 @@ enum What {
     },
     /// Whether the .env files (API keys) go too: on or off
     Env { setting: String },
+    /// Whether the files kept with notes (pg write --file) go too: on or off, and up to what size
+    Files {
+        /// on or off (alone: how it is now)
+        setting: Option<String>,
+        /// The size limit of one file, in MB (1 to 95; GitHub refuses 100 MB)
+        #[arg(long, value_name = "MB")]
+        limit: Option<u64>,
+    },
     /// Move the memory to another repository, or a new private one
     Move {
         #[command(flatten)]
@@ -98,6 +106,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             Ok(())
         }
         Some(What::Env { setting }) => env(cx, &setting),
+        Some(What::Files { setting, limit }) => files(cx, setting.as_deref(), limit),
         Some(What::Move { target, remove_old }) => move_to(cx, &target, remove_old),
         Some(What::Disconnect) => {
             let c = need(cx)?;
@@ -106,6 +115,45 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// pg git files on|off [--limit MB]: whether the files kept with notes go
+/// too, and up to what size.
+fn files(cx: &Context, setting: Option<&str>, limit: Option<u64>) -> Result<()> {
+    let mut c = need(cx)?;
+    if let Some(s) = setting {
+        let on = match s.to_ascii_lowercase().as_str() {
+            "on" | "yes" | "true" => true,
+            "off" | "no" | "false" => false,
+            _ => return Err(fail(USAGE, "pg git files on, or off")),
+        };
+        if on && c.public {
+            return Err(fail(USAGE, "the repository is public: the files kept with notes never go there"));
+        }
+        c.attachments = on;
+    }
+    if let Some(mb) = limit {
+        if !(1..=crate::sync::MOST_MB).contains(&mb) {
+            return Err(fail(
+                USAGE,
+                format!("give the limit in MB, 1 to {} (GitHub refuses 100 MB)", crate::sync::MOST_MB),
+            ));
+        }
+        c.attach_mb = mb;
+    }
+    if setting.is_some() || limit.is_some() {
+        c.save(&cx.home)?;
+        if c.attachments {
+            sync::trigger(&cx.home);
+        }
+    }
+    let on = if c.attachments {
+        "sent with the memory (a file sent to git stays in its history, also after it is taken out)"
+    } else {
+        "not sent: they stay on this computer"
+    };
+    println!("ok files kept with notes: {on}; up to {} MB a file", c.attach_mb);
+    Ok(())
 }
 
 fn need(cx: &Context) -> Result<Config> {
@@ -190,6 +238,8 @@ fn config_for(t: &Target) -> Result<(Config, Option<Account>)> {
             env: t.env,
             env_at: if t.env { crate::output::now() } else { 0 },
             public: false,
+            attachments: false,
+            attach_mb: crate::sync::ATTACH_MB,
             account: String::new(),
             gh: String::new(),
             connected: crate::output::now(),
@@ -224,7 +274,7 @@ fn config_for(t: &Target) -> Result<(Config, Option<Account>)> {
             let repos = account.repos()?;
             match account.find_memory(&repos)? {
                 Some((r, prefix, branch)) => {
-                    let c = config_of(&account, &r, prefix, branch, t.env.then_some(true));
+                    let c = config_of(&account, &r, prefix, branch, t.env.then_some(true), None);
                     return Ok((c, Some(account)));
                 }
                 None => {
@@ -246,13 +296,22 @@ fn config_for(t: &Target) -> Result<(Config, Option<Account>)> {
     } else {
         (FOLDER.to_string(), BRANCH.to_string())
     };
-    let c = config_of(&account, &repo, prefix, branch, t.env.then_some(true));
+    let c = config_of(&account, &repo, prefix, branch, t.env.then_some(true), None);
     Ok((c, Some(account)))
 }
 
 /// `env`: what the user chose now; None takes the memory's setting (off
 /// for a new one).
-pub fn config_of(account: &Account, r: &Repo, prefix: String, branch: String, env: Option<bool>) -> Config {
+pub fn config_of(
+    account: &Account,
+    r: &Repo,
+    prefix: String,
+    branch: String,
+    env: Option<bool>,
+    files: Option<bool>,
+) -> Config {
+    // the size limit set before stays when the memory moves
+    let before = Config::load_any();
     let (env, env_at) = match env {
         Some(on) => (on, crate::output::now()),
         None => (false, 0),
@@ -265,6 +324,8 @@ pub fn config_of(account: &Account, r: &Repo, prefix: String, branch: String, en
         env: env && r.private,
         env_at,
         public: !r.private,
+        attachments: files.or(before.as_ref().map(|c| c.attachments)).unwrap_or(false) && r.private,
+        attach_mb: before.as_ref().map(|c| c.attach_mb).unwrap_or(crate::sync::ATTACH_MB),
         account: account.login.clone(),
         gh: account.gh.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
         connected: crate::output::now(),

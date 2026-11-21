@@ -39,12 +39,56 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// pg --help: the commands by what they do. Looking changes nothing;
+/// changing memory is write, mv, rm and undo.
+const HELP: &str = "{about}
+
+{usage-heading} {usage}
+
+Work:
+  open    Start or continue a project's work here and get its brief: goal, steps, last handoff, matching rules
+  finish  End this conversation's work: tick off its steps, save its handoff for the next one
+  steps   The project's steps with their numbers; --take, --defer, --drop, --edit one
+  ask     A question that waits on the user; pg ask 2 \"...\" answers it; alone: the open questions
+
+Look (they change nothing):
+  find    Search memory: a topic, a question, an error line, a file or a code name
+  read    Print a note, a rule, a record, code (file#Function, file:10-20) or part of a document (book.xlsx#Sheet1!A1:D9)
+  ls      Projects, a project's notes, its code (a code folder or file), to-dos (--todo), due dates (--due)
+
+Change memory:
+  write   A note, a rule, decision or error, a secret, a file kept with a note (--file), a due date, a table row
+  mv      Rename or move a note, a folder or a project
+  rm      Take a note, a rule, a folder or a project out of memory (kept in .archive/ unless --hard)
+  undo    What pg did by itself, listed, or one taken back
+
+Code:
+  run     Run the tests or a build: what fails, what is new, flaky or fixed, and the known fix
+  ripple  What a change reaches: callers it left as they were, the tests to run
+
+Together:
+  tell    A short note for the other conversations on this project
+  batch   Several pg commands in one call, as JSON
+
+For people:
+  setup   Connect Paragma to your coding agents
+  git     Keep the memory on GitHub, the same on every computer
+  link    The folders a project's code is in
+  doctor  Check the project's notes, code and indexes (--experts: what pg said and did)
+  skill   Paragma's instructions for agents
+  mcp     Paragma as an MCP server over stdio
+
+{options-heading}
+{options}
+";
+
 #[derive(Parser)]
 #[command(
     name = "pg",
     bin_name = "pg",
     version,
-    about = "Paragma: project memory for coding agents (rules, decisions, errors and their fixes, notes)"
+    about = "Paragma: project memory for coding agents (rules, decisions, errors and their fixes, notes)",
+    help_template = HELP
 )]
 struct Cli {
     /// The project to work in (default: the project linked to this folder)
@@ -56,7 +100,7 @@ struct Cli {
     budget: usize,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -69,7 +113,8 @@ enum Command {
     Steps(steps::Args),
     /// Keep a question that waits on the user (the brief lists the open ones); alone: the open questions
     Ask(ask::AskArgs),
-    /// The user's answer to a question kept with pg ask: by its number or words only it has
+    /// The user's answer to a question kept with pg ask (now: pg ask <number> "..."): by its number or words only it has
+    #[command(hide = true)]
     Answer(ask::AnswerArgs),
     /// Search memory: a topic, a question, an error line, a file or a code name
     Find(find::Args),
@@ -79,7 +124,8 @@ enum Command {
     Write(Box<write::Args>),
     /// Run the tests or a build: what fails, what is new, flaky or fixed, and the known fix
     Run(run::Args),
-    /// The map of the project's code: files and their symbols, with the notes about them marked
+    /// The map of the project's code (now: pg ls --code, pg ls <code folder or file>)
+    #[command(hide = true)]
     Tree(tree::Args),
     /// What a change reaches: callers it left as they were, the tests to run (or what reaches one function)
     Ripple(ripple::Args),
@@ -89,7 +135,7 @@ enum Command {
     Batch(batch::Args),
     /// What pg did by itself (a handoff, a draft record, steps closed): listed, or one taken back
     Undo(undo::Args),
-    /// Projects, or the folders and notes of a project
+    /// Projects, a project's folders and notes, its code (a code folder or file, --code), to-dos (--todo), due dates (--due)
     Ls(ls::Args),
     /// The folders a project's code is in: list, link one (default: here), --replace the others, --remove one
     Link(link::Args),
@@ -114,6 +160,18 @@ enum Command {
     /// The work done after pg finish, in the background (what may be outdated, what could be tidier)
     #[command(hide = true)]
     Sleep(sleep::Args),
+}
+
+/// The command line with its command.
+struct Parsed {
+    project: Option<String>,
+    budget: usize,
+    command: Command,
+}
+
+/// What pg did by itself, said for people (the interface's activity).
+pub fn undo_describe(e: &crate::state::journal::Entry) -> String {
+    undo::describe(e)
 }
 
 /// What every command needs.
@@ -197,6 +255,20 @@ fn not_let_in(home: &Home) -> String {
 
 fn dispatch(cli: Cli) -> Result<()> {
     crate::output::mark("parsed");
+    // pg alone: the interface for people, in a terminal; else the commands
+    let Some(command) = cli.command else {
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
+            let home = Home::locate();
+            crate::upgrade::run(&home);
+            let cx = context(cli.project.as_deref(), cli.budget)?;
+            return crate::ui::run(home, cx.project);
+        }
+        use clap::CommandFactory;
+        Cli::command().print_help()?;
+        return Ok(());
+    };
+    let cli = Parsed { project: cli.project, budget: cli.budget, command };
     let home = Home::locate();
     crate::upgrade::run(&home);
     crate::code::files::keep_listings_in(home.projects_dir().join(".pg").join("listings"));

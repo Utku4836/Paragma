@@ -16,8 +16,9 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - More steps: `pg open --step "..."`. A changed goal: `pg open --goal "..."`. All steps with their numbers: `pg steps` (`--all` with the done ones); one gone stale or wrong: `pg steps --drop 7` or `pg steps --edit 7 "new text"`; left for later on purpose: `pg steps --defer 7` (`--resume 7` brings it back). A step's number never changes. `pg finish` names the steps it closed: one closed by mistake, `pg steps --reopen 7`.
 - Other conversations on the project: take the step you work on, `pg steps --take 7`, and the others see it taken (until you finish or go quiet for an hour); one taken by another is marked `(taken by ...)`, leave it. A short note for them: `pg tell "I am changing refund.go"`; theirs come to you once, with your next pg command. With hooks, an edit to a file another conversation still at work changed waits once, with who and when: check with it first.
 - What pg does by itself, inside memory only, each undone with one command: a handoff for a conversation that stopped without one (written from what the log says it did; its own `pg finish` replaces it), a draft record of an error a test run fixed or of a flaky test, a draft rule from a fix that keeps coming back, a dated line on a record whose fix did not help, the commands that pass here in the project note (`How it runs`; a section you changed is yours and stays). `pg undo` lists them with numbers; `pg undo <number>` takes one back. One that gets undone often only says what it would write (`pg doctor --experts`). pg never deletes or moves a note, changes your text or touches code by itself.
-- A question only the user can answer, and the work waits on it (an address, a document, a choice): `pg ask "..."` keeps it; the brief lists the open ones under "waiting on the user", so it is neither asked twice nor forgotten. When the user answers: `pg answer <number> "..."`; several at once: `pg answer --json '[{"question": "2", "answer": "..."}, {"question": "3", "answer": "..."}]'`.
+- A question only the user can answer, and the work waits on it (an address, a document, a choice): `pg ask "..."` keeps it; the brief lists the open ones under "waiting on the user", so it is neither asked twice nor forgotten. When the user answers: `pg ask <number> "..."`; several at once: `pg ask --json '[{"question": "2", "answer": "..."}, {"question": "3", "answer": "..."}]'`.
 - Inside a project's own folder in memory (`~/.paragma/projects/<name>`), commands work on that project without `-p`.
+- The user works in the same memory with `pg` alone (an interface in their terminal): their changes show as `you` in the activity and as `changed by the user`; a note they changed is the newest word on it. A note from them (`pg tell` there) comes as `from the user`.
 - Decisions, rules, errors as you learn them: `pg skill knowledge`.
 
 ## Finish
@@ -26,14 +27,15 @@ description: Use for work that spans steps or conversations with Paragma - openi
 ## Notes and folders
 - A note: `pg write <folder>/<name> "text"` (`--append` adds below; `-` reads stdin, `--file PATH` a file). A folder: `pg write <folder>/`. In another project: `pg write <project>/<path> "..."`.
 - One topic per note, named for it: `kargo/yurtici-anlasmasi`, `kargo/ucretler`, `kargo/iade-kodu`, not one `kargo/durum` holding everything. A folder is a category with many notes; a new topic is a new note, not another section appended to one. Split a note that has come to hold several topics.
-- Code, scripts and big files do not go in the memory folder (it goes to GitHub with the notes, and .md files there count as notes): keep them in a folder of their own and link it.
-- The folders a project's code is in: `pg link` lists them; `pg link <folder>` links one (`pg open` does it for the folder it runs in), `--replace` when the code moved (the others are taken out), `pg link --remove <folder>` takes one out, `--remove --gone` the ones that no longer exist.
-- What is where: `pg ls`, `pg ls <folder>`; projects: `pg ls` outside a project.
+- Code and scripts do not go in the memory folder (it goes to GitHub with the notes, and .md files there count as notes): keep them in a folder of their own. A document the work needs again (a workbook, a contract, a deck, a PDF) is kept with its note: `pg write <topic>/<note> --file <path>` (`pg skill knowledge`).
+- `pg open` links the folder it runs in to the project. `pg link` is for the rest (the folders of a project, one that moved: `--replace`, one taken out: `--remove`).
+- What is where: `pg ls`, `pg ls <folder>`; projects: `pg ls` outside a project. The to-dos of every note: `pg ls --todo`; due dates: `pg ls --due`.
 - Rename or move a note, folder or project: `pg mv <from> <to>` (`<folder>/` moves into it). Ids stay, `[[links]]` to it follow (also `[[folder/name]]`).
 - `pg rm <id | path | folder/ | project>` moves it to `.archive/` (`pg mv .archive/<path> <path>` brings it back); `--hard` deletes it.
 - A path's first part names this project's folder when it has one, else a project of that name: `pg write` says so when the note went to another project.
 - pg says a file of its own is damaged: `pg doctor` finds it and makes it again (notes are never touched).
 
 ## Memory on GitHub
-- The user may back up and sync memory with `pg git` (their screen). What you write then goes there by itself; never wait for it or sync by hand.
+- The user may back up and sync memory with `pg git` or the Sync section of `pg` (their screens). What you write then goes there by itself; never wait for it or sync by hand.
+- A note changed on two computers keeps the other one beside it as `<name>.conflict.md`: the user chooses in `pg` (Sync); asked to do it yourself, join what both say in the note, then `pg rm` the copy.
 - `pg git status` says where it goes and how the last sync went. Connect, move or disconnect only when the user asks: `pg git connect --new`, `--repo owner/name`.
