@@ -35,6 +35,12 @@ pub struct Args {
     #[arg(long, value_name = "SECONDS", default_value_t = 600)]
     timeout: u64,
 
+    /// The result as JSON: the tool's own counts, the failing tests (new,
+    /// already, flaky), fixed ones, error lines, this run's log file, and
+    /// what pg says as lines
+    #[arg(long)]
+    json: bool,
+
     /// The command, after --: pg run -- go test ./...
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true, value_name = "COMMAND")]
     command: Vec<String>,
@@ -53,6 +59,56 @@ const HISTORY: usize = 10;
 const EXPLAINED: usize = 3;
 /// An output longer than this many lines is named, with where its errors are.
 const WHOLE_OUTPUT: usize = 20;
+/// Runs whose whole output is kept, each in its own file (`.pg/runs/`).
+const RUN_LOGS: usize = 20;
+
+/// This run's whole output, in a file of its own: a path said for an
+/// earlier run still shows that run.
+struct Log {
+    path: Option<std::path::PathBuf>,
+    written: bool,
+}
+
+impl Log {
+    fn new(project: Option<&crate::project::Project>) -> Self {
+        let path = project.map(|p| {
+            let stamp = stamp();
+            p.meta_dir().join("runs").join(format!("run-{stamp}-{}.log", std::process::id()))
+        });
+        Log { path, written: false }
+    }
+
+    /// Writes it (once), leaving the newest RUN_LOGS: its path.
+    fn keep(&mut self, output: &str) -> Option<&std::path::Path> {
+        let path = self.path.as_ref()?;
+        if !self.written {
+            let dir = path.parent()?;
+            std::fs::create_dir_all(dir).ok()?;
+            let mut old: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+                .ok()?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("run-") && n.ends_with(".log"))
+                })
+                .collect();
+            old.sort();
+            while old.len() >= RUN_LOGS {
+                let _ = std::fs::remove_file(old.remove(0));
+            }
+            std::fs::write(path, output).ok()?;
+            self.written = true;
+        }
+        Some(path)
+    }
+}
+
+/// "20261121-143005" (UTC), sortable as text.
+fn stamp() -> String {
+    let t = now();
+    let s = t.rem_euclid(86_400);
+    format!("{}-{:02}{:02}{:02}", crate::output::date(t).replace('-', ""), s / 3600, s % 3600 / 60, s % 60)
+}
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
     let command = join(&a.command);
@@ -65,6 +121,8 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     // as shown and kept in the history of runs: without any value typed in it
     let command = crate::project::env::hide(&command, &secrets);
     let parsed = parse::parse(&output);
+    // the numbers the test tool said itself; else the lines pg read
+    let counts = parse::counts(&output);
     crate::output::mark("run: command done");
     // the command may have made or removed files
     crate::code::files::forget();
@@ -81,21 +139,17 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         exit,
         seconds: started.elapsed().as_secs_f64(),
         failing: parsed.failed.clone(),
-        passed: parsed.passed,
+        passed: counts.as_ref().map(|c| c.passed).unwrap_or(parsed.passed),
         errors: parsed.errors.clone(),
         changed: code.as_ref().map(changed_files).unwrap_or_default(),
         symbols: code.as_ref().map(changed_symbols).unwrap_or_default(),
+        code: code.as_ref().map(code_state).unwrap_or_default(),
     };
     crate::output::mark("run: code index and changes");
 
-    let mut b = Budget::new(cx.budget);
-    let tests = if run.failing.is_empty() && run.passed == 0 {
-        String::new()
-    } else if run.failing.is_empty() {
-        format!(": {} passed", run.passed)
-    } else {
-        format!(": {} failing, {} passed", run.failing.len(), run.passed)
-    };
+    let mut b = Budget::new(if a.json { usize::MAX / 4 } else { cx.budget });
+    let mut log = Log::new(cx.project.as_ref());
+    let tests = tests_said(counts.as_ref(), &run);
     if timed_out {
         b.add(&format!("fail {command}: stopped after {} s (--timeout), with what it started{tests}", a.timeout));
     } else if exit == 0 {
@@ -105,8 +159,12 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
 
     let Some(project) = &cx.project else {
-        tail(&mut b, &output, if exit == 0 { 3 } else { 40 }, None);
+        tail(&mut b, &output, if exit == 0 { 3 } else { 40 }, &mut log);
         b.add("(no project here: pg open keeps the history of runs and finds known fixes)");
+        if a.json {
+            print_json(&run, counts.as_ref(), &Default::default(), timed_out, None, &b);
+            exit_with(exit);
+        }
         finish(&b, exit);
     };
     let state = State::open(project)?;
@@ -231,8 +289,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         && !same_as_before
         && output.lines().filter(|l| !l.trim().is_empty()).count() > WHOLE_OUTPUT
     {
-        let path = project.meta_dir().join("last-run.log");
-        if std::fs::write(&path, &output).is_ok() {
+        if let Some(path) = log.keep(&output) {
             let lines = places.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
             let at = match places.len() {
                 0 => String::new(),
@@ -244,9 +301,9 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     let tests_seen = run.passed > 0 || !run.failing.is_empty();
     if exit != 0 && run.errors.is_empty() {
-        tail(&mut b, &output, 30, Some(&project.meta_dir().join("last-run.log"))); // nothing understood: the output says it best
+        tail(&mut b, &output, 30, &mut log); // nothing understood: the output says it best
     } else if exit == 0 && !tests_seen {
-        tail(&mut b, &output, 60, Some(&project.meta_dir().join("last-run.log"))); // not a test run (an API call, a script): its output is the answer
+        tail(&mut b, &output, 60, &mut log); // not a test run (an API call, a script): its output is the answer
     }
     if let Some((line, files)) = unexplained {
         let files = if files.is_empty() { String::new() } else { format!(" --files {}", files.join(",")) };
@@ -315,34 +372,103 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
     state.record_run(&run)?;
     state.record(Did::Run { command: command.clone(), passed: exit == 0, failing: run.failing.len() })?;
+    // a test that failed and passed with the same code: a draft record
+    let recent: Vec<Run> = std::iter::once(run.clone()).chain(history.iter().cloned()).collect();
+    if !crate::kernel::learn::flaky(&recent).is_empty() {
+        let facts = super::perceive::facts(project, &state, false)?;
+        for line in super::act::flaky_records(project, &state, &facts, &command)? {
+            b.add(&line);
+        }
+    }
     for line in super::perceive::news(&state)? {
         b.add(&line);
     }
+    if a.json {
+        let path = log.keep(&output).map(|p| p.display().to_string());
+        print_json(&run, counts.as_ref(), &verdict, timed_out, path, &b);
+        exit_with(exit);
+    }
     finish(&b, exit);
+}
+
+/// ": 2 failing, 40 passed, 1 skipped (node's count)": the test tool's own
+/// numbers when it said them, else the lines pg read.
+fn tests_said(counts: Option<&parse::Counts>, run: &Run) -> String {
+    match counts {
+        Some(c) if c.passed + c.failed + c.skipped > 0 => {
+            let mut parts = Vec::new();
+            if c.failed > 0 {
+                parts.push(format!("{} failing", c.failed));
+            }
+            parts.push(format!("{} passed", c.passed));
+            if c.skipped > 0 {
+                parts.push(format!("{} skipped", c.skipped));
+            }
+            format!(": {} ({}'s count)", parts.join(", "), c.tool)
+        }
+        _ if run.failing.is_empty() && run.passed == 0 => String::new(),
+        _ if run.failing.is_empty() => format!(": {} passed", run.passed),
+        _ => format!(": {} failing, {} passed", run.failing.len(), run.passed),
+    }
+}
+
+/// pg run --json: what a program reading it needs, the counts as the test
+/// tool said them.
+fn print_json(
+    run: &Run,
+    counts: Option<&parse::Counts>,
+    v: &testrun::Verdict,
+    timed_out: bool,
+    log: Option<String>,
+    b: &Budget,
+) {
+    let counts = match counts {
+        Some(c) => serde_json::json!({"passed": c.passed, "failed": c.failed, "skipped": c.skipped, "from": c.tool}),
+        None => {
+            serde_json::json!({"passed": run.passed, "failed": run.failing.len(), "skipped": null, "from": "lines"})
+        }
+    };
+    let out = serde_json::json!({
+        "command": run.command,
+        "exit": run.exit,
+        "seconds": (run.seconds * 10.0).round() / 10.0,
+        "timed_out": timed_out,
+        "tests": counts,
+        "failing": run.failing,
+        "new": v.new,
+        "failing_already": v.already.iter().map(|(t, n)| serde_json::json!({"test": t, "runs": n})).collect::<Vec<_>>(),
+        "flaky": v.flaky,
+        "fixed": v.fixed,
+        "errors": run.errors,
+        "log": log,
+        "said": b.out.lines().collect::<Vec<_>>(),
+    });
+    println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
 }
 
 /// Prints and ends with the command's exit code.
 fn finish(b: &Budget, exit: i32) -> ! {
     print!("{}", b.out);
+    exit_with(exit)
+}
+
+fn exit_with(exit: i32) -> ! {
     let _ = std::io::stdout().flush();
     std::process::exit(if exit == 0 { 0 } else { exit.clamp(1, 255) });
 }
 
 /// The output made short (testrun/compact.rs): its errors wherever they
 /// are, warnings grouped, repeats and progress lines counted, its end; as
-/// much as fits. When some was left out, the whole output is kept in a
-/// file the agent can read.
-fn tail(b: &mut Budget, output: &str, lines: usize, keep: Option<&std::path::Path>) {
+/// much as fits. When some was left out, the whole output is kept in this
+/// run's own file the agent can read.
+fn tail(b: &mut Budget, output: &str, lines: usize, log: &mut Log) {
     let mut shown = testrun::compact::compact(output, lines);
     let total = output.lines().filter(|l| !l.trim().is_empty()).count();
     let short = shown.len() < total;
     while !shown.is_empty() && !b.add(&format!("output:\n{}", shown.join("\n"))) {
         shown.remove(0);
     }
-    if short
-        && let Some(path) = keep
-        && std::fs::write(path, output).is_ok()
-    {
+    if short && let Some(path) = log.keep(output) {
         b.add(&format!("(all {total} lines: {})", path.display()));
     }
 }
@@ -396,6 +522,33 @@ pub(super) fn known_elsewhere(cx: &Context, here: &crate::project::Project, line
 /// Files changed (by git) in the project's code folders, as output shows them.
 pub(super) fn changed_files(code: &CodeIndex) -> Vec<String> {
     code.folders.iter().flat_map(|f| git::changed(&f.dir).into_iter().map(|(p, _)| code.display(&f.key, &p))).collect()
+}
+
+/// The code as it is now, as one hash: each folder's commit and the text
+/// of each file changed on it. "" when a folder is not in git (nothing
+/// tells two runs' code apart).
+pub(super) fn code_state(code: &CodeIndex) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for f in &code.folders {
+        let Some(head) = git::head(&f.dir) else { return String::new() };
+        parts.push(format!("{}@{head}", f.key));
+        let mut changed: Vec<String> = git::changed(&f.dir).into_iter().map(|(p, _)| p).collect();
+        changed.sort();
+        for p in changed {
+            let text = std::fs::read(f.dir.join(&p)).unwrap_or_default();
+            parts.push(format!("{p}={:x}", crate::code::parse::hash(&String::from_utf8_lossy(&text))));
+        }
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{:x}",
+        crate::code::parse::hash(&parts.join(
+            "
+"
+        ))
+    )
 }
 
 /// The functions changed (by git) now, each with the hash of its body:

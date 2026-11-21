@@ -31,10 +31,36 @@ pub fn news(state: &State) -> Result<Vec<String>> {
     Ok(hints.into_iter().map(|h| h.text).collect())
 }
 
-pub fn facts(_project: &Project, state: &State, compacted: bool) -> Result<Facts> {
+pub fn facts(project: &Project, state: &State, compacted: bool) -> Result<Facts> {
     let now = now();
     crate::output::mark("perceive: start");
     let found = super::sleep::found(state);
+    let note = crate::project::files::read_text(&project.note_file(crate::project::plan::FILE))
+        .map(|t| crate::note::Note::parse(&t))
+        .unwrap_or_default();
+    let steps: Vec<(usize, String)> = crate::project::plan::steps(&note)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, s)| s.open())
+        .map(|(i, s)| (i + 1, s.text))
+        .collect();
+    // what the index knows of the notes: drafts, archived ones
+    let (drafts, archived) = match crate::index::Index::open(project) {
+        Ok(index) => {
+            let drafts = index
+                .notes_of(crate::note::Kind::Error)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|n| n.props.get("status").and_then(|s| s.as_str()) == Some("draft"))
+                .map(|n| {
+                    let seen = n.props.get("last_seen").and_then(|s| s.as_str()).and_then(crate::output::parse_date);
+                    (n.id, seen.unwrap_or(n.changed))
+                })
+                .collect();
+            (drafts, index.archived().unwrap_or_default())
+        }
+        Err(_) => (Vec::new(), Vec::new()),
+    };
     let facts = Facts {
         now,
         me: conversation::key().to_string(),
@@ -46,6 +72,10 @@ pub fn facts(_project: &Project, state: &State, compacted: bool) -> Result<Facts
         outdated: found.outdated,
         tidy: found.tidy,
         said_log: state.said_log(now - LOOK_BACK * 4)?,
+        steps,
+        drafts,
+        archived,
+        reads: state.reads(now - LOOK_BACK)?,
     };
     crate::output::mark("perceive: done");
     Ok(facts)

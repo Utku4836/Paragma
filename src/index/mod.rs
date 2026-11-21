@@ -184,6 +184,15 @@ impl Index {
             .optional()?)
     }
 
+    /// Archived notes (in `.archive/`, or marked archived): id, path.
+    pub fn archived(&self) -> Result<Vec<(String, String)>> {
+        let mut st = self.db.prepare(
+            "SELECT id, path FROM notes WHERE id IS NOT NULL AND (path LIKE '.archive/%' OR status = 'archived') ORDER BY path",
+        )?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Every note of a kind that has an id, with its properties.
     pub fn notes_of(&self, kind: Kind) -> Result<Vec<NoteProps>> {
         let mut st = self.db.prepare("SELECT id, path, props, mtime FROM notes WHERE kind = ?1 AND id IS NOT NULL")?;

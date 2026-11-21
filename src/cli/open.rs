@@ -274,7 +274,9 @@ fn brief(
     // what the kernel decides from: the event log, the runs, what was said
     let mut facts = super::perceive::facts(project, state, compacted)?;
     // a conversation that stopped without a handoff: pg writes it (cli/act.rs)
-    let written_for = super::act::handoffs_for_stopped(project, state, &facts)?;
+    let mut written_for = super::act::handoffs_for_stopped(project, state, &facts)?;
+    // a known error that keeps coming back: a draft rule
+    written_for.extend(super::act::rule_drafts(project, state, &facts)?);
     if !written_for.is_empty() {
         facts = super::perceive::facts(project, state, compacted)?; // what is said now
     }
@@ -339,6 +341,16 @@ fn brief(
     let hints = crate::kernel::brief_hints(&facts, HINT_TOKENS);
     for h in &hints {
         b.add(&h.text);
+    }
+    // no runs here yet (another computer): the commands kept in the project note
+    if facts.runs.is_empty()
+        && let Some(kept) = note.section(crate::kernel::learn::RECIPE_SECTION)
+    {
+        let lines: Vec<String> =
+            kept.lines().filter_map(|l| l.trim().strip_prefix("- ")).map(|l| l.replace('`', "")).collect();
+        if !lines.is_empty() {
+            b.add(&format!("how it runs here (project note): {}", lines.join("; ")));
+        }
     }
     state.say(&hints.iter().map(|h| h.key.clone()).collect::<Vec<_>>())?;
 

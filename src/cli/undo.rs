@@ -81,6 +81,10 @@ pub fn describe(e: &Entry) -> String {
     match what.as_str() {
         "handoff" => format!("wrote a handoff for a conversation that stopped without one ({detail})"),
         "draft" => format!("wrote {target}, a draft record of an error a test run fixed"),
+        "flaky" => format!("wrote {target}, a draft record of a flaky test"),
+        "rule-draft" => format!("wrote {target}, a draft rule from {detail}, a fix that kept coming back"),
+        "outcome" => format!("noted on {target} that its fix did not help"),
+        "recipe" => "kept the commands that pass here in the project note".to_string(),
         other => format!("{other} {target}"),
     }
 }
@@ -101,7 +105,7 @@ fn take_back(project: &Project, state: &State, e: &Entry) -> Result<String> {
             }
             Ok(if found { format!("the handoff {detail} is out") } else { "that handoff was already gone".into() })
         }
-        "draft" => {
+        "draft" | "flaky" => {
             let path = project.dir.join(detail);
             let still_draft = crate::project::files::read_text(&path)
                 .map(|t| crate::note::Note::parse(&t).props.text("status") == Some("draft"))
@@ -114,6 +118,70 @@ fn take_back(project: &Project, state: &State, e: &Entry) -> Result<String> {
             }
             super::rm::take_out(project, detail, false)?;
             Ok(format!("{target} moved to .archive (pg mv brings it back)"))
+        }
+        "rule-draft" => {
+            let (_, out) = update_note(project, crate::record::RULES_FILE, |n, _, _| {
+                let mut found = None;
+                let lines: Vec<String> = n
+                    .body
+                    .lines()
+                    .filter(|l| match crate::note::rule_line(l) {
+                        Some((id, text)) if id == target => {
+                            found = Some(text.starts_with("(draft)"));
+                            !text.starts_with("(draft)")
+                        }
+                        _ => true,
+                    })
+                    .map(str::to_string)
+                    .collect();
+                if found == Some(true) {
+                    n.body = lines.join("\n");
+                }
+                Ok(found)
+            })?;
+            match out {
+                Some(true) => Ok(format!("the draft rule {target} is out")),
+                Some(false) => Err(fail(USAGE, format!("{target} was confirmed: pg rm {target} takes it out"))),
+                None => Ok(format!("{target} was already gone")),
+            }
+        }
+        "outcome" => {
+            let (path, line) = detail.split_once('\t').unwrap_or((detail.as_str(), ""));
+            let (_, found) = update_note(project, path, |n, _, _| {
+                let Some(section) = n.section("Outcomes") else { return Ok(false) };
+                let kept: Vec<&str> = section.lines().filter(|l| l.trim() != line.trim()).collect();
+                if kept.len() == section.lines().count() {
+                    return Ok(false);
+                }
+                n.set_section("Outcomes", &kept.join("\n"));
+                Ok(true)
+            })?;
+            Ok(if found { format!("the line on {target} is out") } else { "that line was already gone".into() })
+        }
+        "recipe" => {
+            use crate::kernel::learn::RECIPE_SECTION;
+            let before = detail.replace('\u{1f}', "\n");
+            let mine = state.get("recipe:written").unwrap_or_default();
+            let (_, done) = update_note(project, plan::FILE, |n, _, _| {
+                // changed since by someone: theirs stays
+                if n.section(RECIPE_SECTION).is_some_and(|s| s.trim() != mine.trim()) {
+                    return Ok(false);
+                }
+                if before.trim().is_empty() {
+                    n.remove_section(RECIPE_SECTION);
+                } else {
+                    n.set_section(RECIPE_SECTION, &before);
+                }
+                Ok(true)
+            })?;
+            if !done {
+                return Err(fail(
+                    USAGE,
+                    "the commands in the project note were changed since: edit them there (pg write)",
+                ));
+            }
+            state.set("recipe:written", &before)?;
+            Ok("the project note's commands are as they were".into())
         }
         other => Err(fail(USAGE, format!("this pg does not know how to take back {other:?}"))),
     }

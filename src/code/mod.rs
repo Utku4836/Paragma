@@ -24,8 +24,9 @@ use std::path::PathBuf;
 
 /// Bumped whenever the tables, the parsing or the files read change
 /// (4: files marked linguist-vendored or -generated are left out; 5: Rust
-/// constants, statics and macros).
-const SCHEMA_VERSION: &str = "5";
+/// constants, statics and macros; 6: `new X()`, struct literals and
+/// generic calls `f::<T>()` are calls, more calls kept a function).
+const SCHEMA_VERSION: &str = "6";
 
 const SCHEMA: &str = "
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);

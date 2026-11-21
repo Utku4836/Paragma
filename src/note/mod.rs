@@ -123,6 +123,25 @@ impl Note {
     }
 
     /// The title: the `title` property, else the first heading, else "".
+    /// Takes a section out, its heading too (pg undo of one pg added).
+    pub fn remove_section(&mut self, name: &str) {
+        let mut out: Vec<&str> = Vec::new();
+        let mut lines = self.body.lines().peekable();
+        while let Some(l) = lines.next() {
+            if is_heading(l, name) {
+                while lines.peek().is_some_and(|l| !l.starts_with("## ")) {
+                    lines.next();
+                }
+                continue;
+            }
+            out.push(l);
+        }
+        while out.last().is_some_and(|l| l.trim().is_empty()) {
+            out.pop();
+        }
+        self.body = if out.is_empty() { String::new() } else { format!("{}\n", out.join("\n")) };
+    }
+
     pub fn title(&self) -> String {
         if let Some(t) = self.props.text("title") {
             return t.to_string();

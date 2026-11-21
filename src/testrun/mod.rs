@@ -22,6 +22,10 @@ pub struct Run {
     /// The functions changed then, each with the hash of its body:
     /// "payments/refund.go#Refund=9f3a1c2b".
     pub symbols: Vec<String>,
+    /// The code it ran on: its commits and the changes on them, as one
+    /// hash ("" when not known). Two runs with the same code differ only by
+    /// chance: a test that fails in one and passes in the other is flaky.
+    pub code: String,
 }
 
 #[derive(Debug, Default, PartialEq)]

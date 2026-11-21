@@ -480,6 +480,24 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
                     None => said,
                 });
             }
+            // what the edit added that a rule of that code forbids, once
+            let paths: Vec<String> = files.iter().map(|(_, p)| p.clone()).collect();
+            let state = State::open(project)?;
+            let said = state.said()?;
+            let guard: Vec<crate::kernel::Hint> = super::act::guarded(project, &code, Some(&paths))?
+                .into_iter()
+                .filter(|h| !said.contains(&h.key))
+                .take(2)
+                .collect();
+            if !guard.is_empty() {
+                state.say(&guard.iter().map(|h| h.key.clone()).collect::<Vec<_>>())?;
+                let lines: Vec<&str> = guard.iter().map(|h| h.text.as_str()).collect();
+                let said = format!("Paragma: {}", lines.join("\nParagma: "));
+                text = Some(match text {
+                    Some(t) => format!("{t}\n{said}"),
+                    None => said,
+                });
+            }
         }
         return Ok(text);
     }
@@ -514,10 +532,11 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
         exit,
         seconds: event["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0,
         failing: parsed.failed.clone(),
-        passed: parsed.passed,
+        passed: parse::counts(&output).map(|c| c.passed).unwrap_or(parsed.passed),
         errors: parsed.errors.clone(),
         changed: code.as_ref().map(super::run::changed_files).unwrap_or_default(),
         symbols: code.as_ref().map(super::run::changed_symbols).unwrap_or_default(),
+        code: code.as_ref().map(super::run::code_state).unwrap_or_default(),
     };
     let state = State::open(project)?;
     let history = state.runs(Some(&run.command), 10)?;

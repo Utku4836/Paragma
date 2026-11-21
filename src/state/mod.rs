@@ -178,6 +178,17 @@ impl State {
         Ok(())
     }
 
+    /// Notes and records read in full by any conversation since `since`:
+    /// id, conversation, when.
+    pub fn reads(&self, since: i64) -> Result<Vec<(String, String, i64)>> {
+        let mut st = self.db.prepare_cached(
+            "SELECT ref, conversation, full_at FROM shown WHERE full_at >= ?1 AND ref NOT LIKE 'hint:%' ORDER BY full_at",
+        )?;
+        let rows =
+            st.query_map([since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Remembers that notes or rules were shown to this conversation in
     /// full, each with its version (`Index::versions`).
     pub fn shown_in_full(&self, refs: &[(String, i64)]) -> Result<()> {
@@ -223,8 +234,8 @@ impl State {
 
     pub fn record_run(&self, r: &Run) -> Result<()> {
         self.db.execute(
-            "INSERT INTO runs(at, conversation, command, exit, seconds, failing, passed, errors, changed, symbols)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO runs(at, conversation, command, exit, seconds, failing, passed, errors, changed, symbols, code)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 r.at,
                 conversation::key(),
@@ -235,7 +246,8 @@ impl State {
                 r.passed as i64,
                 r.errors.join("\n"),
                 r.changed.join("\n"),
-                r.symbols.join("\n")
+                r.symbols.join("\n"),
+                r.code
             ],
         )?;
         Ok(())
@@ -243,7 +255,7 @@ impl State {
 
     /// Earlier runs, newest first: of one command, or of any.
     pub fn runs(&self, command: Option<&str>, limit: usize) -> Result<Vec<Run>> {
-        let sql = "SELECT at, command, exit, seconds, failing, passed, errors, changed, symbols FROM runs
+        let sql = "SELECT at, command, exit, seconds, failing, passed, errors, changed, symbols, code FROM runs
                    WHERE ?1 IS NULL OR command = ?1 ORDER BY rowid DESC LIMIT ?2";
         let mut st = self.db.prepare_cached(sql)?;
         let lines = |s: String| -> Vec<String> { s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect() };
@@ -259,6 +271,7 @@ impl State {
                     errors: lines(r.get(6)?),
                     changed: lines(r.get(7)?),
                     symbols: lines(r.get(8)?),
+                    code: r.get(9)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

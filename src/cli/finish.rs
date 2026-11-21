@@ -180,8 +180,13 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
         Ok((closed, left, open, missed, named, worked))
     })?;
     state.set(&mine, &heading)?;
-    // fixes shown whose tests still fail did not help (state/outcome.rs)
-    state.outcomes_at_handoff()?;
+    // fixes shown whose tests still fail did not help (state/outcome.rs):
+    // a line on each record (cli/act.rs)
+    let not_helped = state.outcomes_at_handoff()?;
+    let before = super::perceive::facts(project, &state, false)?;
+    super::act::outcome_lines(project, &state, &before, &not_helped)?;
+    // the commands that passed, kept in the project note
+    super::act::keep_recipes(project, &state, &before)?;
     state.record(crate::state::journal::Did::Finish { summary: summary.lines().next().unwrap_or("").to_string() })?;
 
     let mut out = format!("ok {}: {} closed", project.name, count(closed as i64, "step"));
@@ -215,6 +220,12 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     if let Some(w) = warning {
         println!("{w}");
     }
+    // a handoff without what is next (kernel/watch.rs)
+    if crate::kernel::gate::may_say("thin-handoff")
+        && let Some(h) = crate::kernel::watch::thin_handoff(&summary, open.len())
+    {
+        println!("{}", h.text);
+    }
     if let Some(c) = &code
         && !changes.is_empty()
     {
@@ -225,6 +236,12 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             for (l, via) in about.iter().take(NOTES_SHOWN) {
                 println!("{} {}: {}{via}", l.id, l.kind.as_str(), one_line(&l.text, 90));
             }
+        }
+    }
+    // what the change added that a rule of that code forbids
+    if let Some(c) = &code {
+        for h in super::act::guarded(project, c, None)?.iter().take(3) {
+            println!("{}", h.text);
         }
     }
     if !ripples.is_empty() {

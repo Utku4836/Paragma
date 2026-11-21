@@ -6,7 +6,11 @@
 //!
 //! Calls are known by name, so a caller is "sure" when its file uses the
 //! name through the module it is defined in (an import naming it, the same
-//! file or package), else "possible".
+//! file or package), else a guess ("by name only"), said apart. A method
+//! with a common name (push, get, add) is a guess only where its file
+//! reaches it: elsewhere `x.push()` is most likely another type's, counted
+//! and not listed. Code that names it outside any function (a call at the
+//! top of a file, a callback passed by name) is found by reading the files.
 
 use super::lang::Lang;
 use super::{CodeIndex, Sym, git, parse};
@@ -64,6 +68,13 @@ pub struct Ripple {
     /// A Rust item that is not `pub`: only its own module (this file and
     /// the modules under it) can call it.
     pub private: bool,
+    /// Calls by a common method name from files that do not reach it:
+    /// another type's most likely, not listed.
+    pub common: usize,
+    /// Lines that name it outside the functions found calling it (a call
+    /// at a file's top level, a callback passed by name, an import of a
+    /// name now gone): file and line, and whether the file reaches it.
+    pub named: Vec<(String, String, usize, bool)>,
 }
 
 impl Ripple {
@@ -77,9 +88,120 @@ impl Ripple {
         match self.how {
             How::Body => false,
             How::Fields { .. } => !self.users.is_empty(),
-            _ => self.callers.iter().any(|c| !c.updated),
+            _ => self.callers.iter().any(|c| !c.updated) || !self.named.is_empty(),
         }
     }
+}
+
+/// Method names many types have: a call of one says nothing of which.
+const COMMON: &[&str] = &[
+    "push",
+    "pop",
+    "get",
+    "set",
+    "add",
+    "remove",
+    "delete",
+    "insert",
+    "len",
+    "size",
+    "length",
+    "map",
+    "filter",
+    "find",
+    "contains",
+    "has",
+    "clear",
+    "run",
+    "start",
+    "stop",
+    "close",
+    "open",
+    "read",
+    "write",
+    "send",
+    "update",
+    "new",
+    "init",
+    "from",
+    "into",
+    "clone",
+    "to_string",
+    "toString",
+    "equals",
+    "eq",
+    "next",
+    "apply",
+    "call",
+    "then",
+    "join",
+    "split",
+    "parse",
+    "format",
+    "load",
+    "save",
+    "reset",
+    "emit",
+    "on",
+    "off",
+    "handle",
+    "execute",
+    "process",
+    "render",
+    "build",
+    "create",
+    "append",
+    "extend",
+    "keys",
+    "values",
+    "entries",
+    "forEach",
+    "reduce",
+    "some",
+    "every",
+    "slice",
+    "splice",
+    "concat",
+    "includes",
+    "indexOf",
+    "replace",
+    "trim",
+    "is_empty",
+    "unwrap",
+    "iter",
+    "default",
+    "fmt",
+    "drop",
+    "hash",
+    "cmp",
+    "lock",
+    "wait",
+    "flush",
+    "Write",
+    "Read",
+    "log",
+    "info",
+    "warn",
+    "error",
+    "debug",
+    "test",
+    "value",
+    "count",
+    "first",
+    "last",
+    "sort",
+    "reverse",
+    "copy",
+    "connect",
+    "listen",
+    "dispatch",
+];
+
+/// Whether `name` stands as a word in `text` (not "pushNotification" for push).
+fn word_in(text: &str, name: &str) -> bool {
+    let ok = |c: Option<char>| c.is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+    text.match_indices(name)
+        .any(|(i, _)| ok(text[..i].chars().next_back()) && ok(text[i + name.len()..].chars().next()))
 }
 
 /// Kinds whose shape callers depend on.
@@ -164,11 +286,16 @@ pub fn of_changes(code: &CodeIndex, only: Option<&[(String, String)]>) -> Result
                 callers: Vec::new(),
                 tests: Vec::new(),
                 users: Vec::new(),
+                common: 0,
+                named: Vec::new(),
                 private: rust_private(lang, &before, &b.qualified, &b.signature),
             };
             fill(code, &mut r, &changed_lines)?;
             if let How::Fields { removed, .. } = &r.how {
                 r.users = users(code, &r, removed, &changed_lines);
+            }
+            if matches!(r.how, How::Signature { .. } | How::Renamed { .. } | How::Removed) {
+                r.named = named_at(code, &r, &changed_lines);
             }
             out.push(r);
         }
@@ -202,6 +329,8 @@ pub fn of_symbol(code: &CodeIndex, s: &Sym) -> Result<Ripple> {
         callers: Vec::new(),
         tests: Vec::new(),
         users: Vec::new(),
+        common: 0,
+        named: Vec::new(),
         private,
     };
     let mut lines = HashMap::new();
@@ -211,6 +340,7 @@ pub fn of_symbol(code: &CodeIndex, s: &Sym) -> Result<Ripple> {
         }
     }
     fill(code, &mut r, &lines)?;
+    r.named = named_at(code, &r, &lines);
     Ok(r)
 }
 
@@ -341,6 +471,146 @@ fn users(
     out
 }
 
+/// Whether a file reaches the symbol through its module: the same file; in
+/// Go and Java the same folder (one package, no import); a call through its
+/// package or module (pricing.WithTax, tax::with_tax); an import naming it
+/// or its module, as a word.
+fn file_reaches(r: &Ripple, folder: &str, path: &str, text: &str) -> bool {
+    let definer_stem = r.path.rsplit('/').next().unwrap_or(&r.path).split('.').next().unwrap_or("");
+    let definer_dir = r.path.rsplit_once('/').map(|p| p.0).unwrap_or("");
+    let package_dir = [".go", ".java", ".kt"].iter().any(|e| r.path.ends_with(e));
+    let same_place = folder == r.folder
+        && (path == r.path || (package_dir && path.rsplit_once('/').map(|p| p.0).unwrap_or("") == definer_dir));
+    if same_place {
+        return true;
+    }
+    let package = definer_dir.rsplit('/').next().unwrap_or("");
+    let qualified_call = [package, definer_stem]
+        .iter()
+        .filter(|q| !q.is_empty())
+        .any(|q| text.contains(&format!("{q}.{}", r.name)) || text.contains(&format!("{q}::{}", r.name)));
+    qualified_call
+        || text.lines().any(|l| {
+            let l = l.trim_start();
+            (l.starts_with("use ") || l.starts_with("import ") || l.starts_with("from ") || l.contains("require("))
+                && (word_in(l, &r.name) || (!definer_stem.is_empty() && word_in(l, definer_stem)))
+        })
+}
+
+/// Lines that name the symbol outside the functions found calling it: a
+/// call at a file's top level, a callback passed by name (`items.map(format)`,
+/// `on("click", refund)`), `new Refund` where the parser saw none; a name now
+/// gone also in an import. Comments and its own definition are not; a
+/// common method name only in files that reach it.
+fn named_at(
+    code: &CodeIndex,
+    r: &Ripple,
+    changed: &HashMap<(String, String), Vec<(usize, usize)>>,
+) -> Vec<(String, String, usize, bool)> {
+    let gone = matches!(r.how, How::Renamed { .. } | How::Removed);
+    let mut out = Vec::new();
+    let Ok(files) = code.files() else { return out };
+    let lang_of_def = Lang::of(&r.path);
+    for (folder, path, _) in files {
+        let Some(f) = code.folders.iter().find(|f| f.key == folder) else { continue };
+        // only code that can call it: the same language family
+        if Lang::of(&path).map(family) != lang_of_def.map(family) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(f.dir.join(&path)) else { continue };
+        if !word_in(&text, &r.name) {
+            continue;
+        }
+        let reaches = file_reaches(r, &folder, &path, &text);
+        if r.private && !(folder == r.folder && reaches) {
+            continue;
+        }
+        if !reaches && COMMON.contains(&r.name.as_str()) {
+            continue;
+        }
+        // the functions already said (callers), and the definition itself
+        let inside: Vec<(usize, usize)> = r
+            .callers
+            .iter()
+            .filter(|c| c.sym.folder == folder && c.sym.path == path)
+            .map(|c| (c.sym.start, c.sym.end))
+            .collect();
+        let syms = Lang::of(&path).map(|l| parse::symbols(l, &text)).unwrap_or_default();
+        let own = syms.iter().find(|s| folder == r.folder && path == r.path && s.qualified == r.qualified);
+        let touched = |n: usize| {
+            changed.get(&(folder.clone(), path.clone())).is_some_and(|rs| rs.iter().any(|(a, b)| *a <= n && n <= *b))
+        };
+        for (i, l) in text.lines().enumerate() {
+            let n = i + 1;
+            let t = l.trim_start();
+            if t.starts_with("//")
+                || t.starts_with('#')
+                || t.starts_with("/*")
+                || t.starts_with('*')
+                || t.starts_with("--")
+            {
+                continue;
+            }
+            if inside.iter().any(|(a, b)| *a <= n && n <= *b) || own.is_some_and(|s| s.start <= n && n <= s.end) {
+                continue;
+            }
+            // as a call or a value: name( name) name, name; new Name; not
+            // inside a word, not after a field access of another name only
+            if !named_as_code(l, &r.name, gone) {
+                continue;
+            }
+            // a line the same change touched was looked at already
+            if touched(n) {
+                continue;
+            }
+            out.push((folder.clone(), path.clone(), n, reaches));
+            if out.len() >= 8 {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// Languages that call each other's names: JS and TS, C and C++, the JVM ones.
+fn family(l: Lang) -> u8 {
+    match l {
+        Lang::JavaScript | Lang::TypeScript => 1,
+        _ => l as u8 + 16,
+    }
+}
+
+/// Whether a line uses `name` as code: called (`name(`, `name::<`), made
+/// (`new name`), passed as a value (`(name)`, `, name)`, `= name;`), or for
+/// a name now gone, any use as a word outside a string.
+fn named_as_code(line: &str, name: &str, gone: bool) -> bool {
+    let b = line.as_bytes();
+    let ok_before = |i: usize| i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+    for (i, _) in line.match_indices(name) {
+        let end = i + name.len();
+        if !ok_before(i) || line[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        // inside a string: quotes before it on the line are odd
+        let quotes = line[..i].chars().filter(|c| matches!(c, '"' | '\'' | '`')).count();
+        if quotes % 2 == 1 {
+            continue;
+        }
+        if gone {
+            return true;
+        }
+        let after = line[end..].trim_start();
+        let before = line[..i].trim_end();
+        let called = after.starts_with('(') || after.starts_with("::<") || before.ends_with("new");
+        let value = (before.ends_with('(') || before.ends_with(',') || before.ends_with('='))
+            && (after.starts_with(')') || after.starts_with(',') || after.starts_with(';') || after.is_empty());
+        if called || value {
+            return true;
+        }
+    }
+    false
+}
+
 /// The callers and tests of a changed symbol.
 fn fill(code: &CodeIndex, r: &mut Ripple, changed: &HashMap<(String, String), Vec<(usize, usize)>>) -> Result<()> {
     let itself = |s: &Sym| s.folder == r.folder && s.path == r.path && s.qualified == r.qualified;
@@ -372,24 +642,13 @@ fn fill(code: &CodeIndex, r: &mut Ripple, changed: &HashMap<(String, String), Ve
                 .and_then(|f| std::fs::read_to_string(f.dir.join(&s.path)).ok())
                 .unwrap_or_default()
         });
-        // the same file; in Go and Java also the same folder (one package,
-        // no import)
-        let package_dir = [".go", ".java", ".kt"].iter().any(|e| r.path.ends_with(e));
-        let same_place = s.folder == r.folder
-            && (s.path == r.path || (package_dir && s.path.rsplit_once('/').map(|p| p.0).unwrap_or("") == definer_dir));
-        // called through its package or module: pricing.WithTax, tax::with_tax
-        let package = definer_dir.rsplit('/').next().unwrap_or("");
-        let qualified_call = [package, definer_stem.as_str()]
-            .iter()
-            .filter(|q| !q.is_empty())
-            .any(|q| text.contains(&format!("{q}.{}", r.name)) || text.contains(&format!("{q}::{}", r.name)));
-        let imports = qualified_call
-            || text.lines().any(|l| {
-                let l = l.trim_start();
-                (l.starts_with("use ") || l.starts_with("import ") || l.starts_with("from ") || l.contains("require("))
-                    && (l.contains(&r.name) || (!definer_stem.is_empty() && l.contains(&definer_stem)))
-            });
-        r.callers.push(Caller { sym: s, updated, sure: same_place || imports });
+        let sure = file_reaches(r, &s.folder, &s.path, text);
+        // x.push() in a file that does not reach this push: another type's
+        if !sure && COMMON.contains(&r.name.as_str()) {
+            r.common += 1;
+            continue;
+        }
+        r.callers.push(Caller { sym: s, updated, sure });
     }
     r.callers.sort_by_key(|c| (c.updated, !c.sure, c.sym.path.clone()));
     // tests that call it, or call what calls it
@@ -446,13 +705,8 @@ pub fn show(code: &CodeIndex, r: &Ripple, max_callers: usize) -> Vec<String> {
         out.push(format!("  was: {was}"));
         out.push(format!("  now: {now}"));
     }
-    let name = |c: &Caller| {
-        let mut s = format!("{}#{} (line {})", code.display(&c.sym.folder, &c.sym.path), c.sym.qualified, c.sym.start);
-        if !c.sure {
-            s.push_str(", possible");
-        }
-        s
-    };
+    let name =
+        |c: &Caller| format!("{}#{} (line {})", code.display(&c.sym.folder, &c.sym.path), c.sym.qualified, c.sym.start);
     let list = |v: Vec<&Caller>| {
         let more = v.len().saturating_sub(max_callers);
         let mut s = v.iter().take(max_callers).map(|c| name(c)).collect::<Vec<_>>().join(", ");
@@ -461,25 +715,46 @@ pub fn show(code: &CodeIndex, r: &Ripple, max_callers: usize) -> Vec<String> {
         }
         s
     };
+    // sure callers, and apart the guesses (the name alone matched)
+    let lines = |label: &str, v: Vec<&Caller>, out: &mut Vec<String>| {
+        let (sure, guess): (Vec<&Caller>, Vec<&Caller>) = v.into_iter().partition(|c| c.sure);
+        if !sure.is_empty() {
+            out.push(format!("  {label}: {}", list(sure)));
+        }
+        if !guess.is_empty() {
+            out.push(format!("  {label}, by name only (maybe another's): {}", list(guess)));
+        }
+    };
     let (left, done): (Vec<&Caller>, Vec<&Caller>) = r.callers.iter().partition(|c| !c.updated);
     match r.how {
         How::Fields { .. } => {}
-        How::Body => {
-            if !r.callers.is_empty() {
-                out.push(format!("  called by: {}", list(r.callers.iter().collect())));
-            }
-        }
+        How::Body => lines("called by", r.callers.iter().collect(), &mut out),
         _ => {
-            if !left.is_empty() {
-                out.push(format!("  not updated: {}", list(left)));
-            }
-            if !done.is_empty() {
-                out.push(format!("  updated: {}", list(done)));
-            }
-            if r.callers.is_empty() {
+            lines("not updated", left, &mut out);
+            lines("updated", done, &mut out);
+            if r.callers.is_empty() && r.named.is_empty() {
                 out.push("  nothing here calls it".into());
             }
         }
+    }
+    if !r.named.is_empty() {
+        let at = |sure: bool| -> Vec<String> {
+            r.named.iter().filter(|n| n.3 == sure).map(|(f, p, l, _)| format!("{}:{l}", code.display(f, p))).collect()
+        };
+        let (sure, guess) = (at(true), at(false));
+        if !sure.is_empty() {
+            out.push(format!("  named outside a function (a top-level call, a callback): {}", sure.join(", ")));
+        }
+        if !guess.is_empty() {
+            out.push(format!("  named outside a function, by name only: {}", guess.join(", ")));
+        }
+    }
+    if r.common > 0 {
+        out.push(format!(
+            "  ({} of `{}` in files that do not reach it left out: another type's most likely)",
+            crate::output::count(r.common as i64, "call"),
+            r.name
+        ));
     }
     if !r.tests.is_empty() {
         let more = r.tests.len().saturating_sub(max_callers);
@@ -521,21 +796,32 @@ pub fn warning(code: &CodeIndex, r: &Ripple) -> Option<String> {
             ));
         }
     };
+    // the sure ones; the guesses apart, so a guess does not read as a break
     let left = r.not_updated();
-    let shown: Vec<String> = left
+    let mut sure: Vec<String> = left
         .iter()
-        .take(3)
-        .map(|c| {
-            let p = if c.sure { "" } else { ", possible" };
-            format!("{}:{}{p}", code.display(&c.sym.folder, &c.sym.path), c.sym.start)
-        })
+        .filter(|c| c.sure)
+        .map(|c| format!("{}:{}", code.display(&c.sym.folder, &c.sym.path), c.sym.start))
         .collect();
-    let more = left.len().saturating_sub(3);
-    Some(format!(
-        "{}: {what}; not updated: {}{} (pg ripple {})",
-        r.qualified,
-        shown.join(", "),
-        if more > 0 { format!(" +{more}") } else { String::new() },
-        r.name
-    ))
+    sure.extend(r.named.iter().filter(|n| n.3).map(|(f, p, l, _)| format!("{}:{l}", code.display(f, p))));
+    let mut guess: Vec<String> = left
+        .iter()
+        .filter(|c| !c.sure)
+        .map(|c| format!("{}:{}", code.display(&c.sym.folder, &c.sym.path), c.sym.start))
+        .collect();
+    guess.extend(r.named.iter().filter(|n| !n.3).map(|(f, p, l, _)| format!("{}:{l}", code.display(f, p))));
+    let few = |v: &[String]| {
+        let more = v.len().saturating_sub(3);
+        format!(
+            "{}{}",
+            v.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
+            if more > 0 { format!(" +{more}") } else { String::new() }
+        )
+    };
+    let said = match (sure.is_empty(), guess.is_empty()) {
+        (false, true) => format!("not updated: {}", few(&sure)),
+        (false, false) => format!("not updated: {}; by name only: {}", few(&sure), few(&guess)),
+        (true, _) => format!("maybe not updated (by name only, maybe another's): {}", few(&guess)),
+    };
+    Some(format!("{}: {what}; {said} (pg ripple {})", r.qualified, r.name))
 }

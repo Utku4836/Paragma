@@ -82,15 +82,21 @@ impl State {
     }
 
     /// At a handoff: the fixes shown whose tests still fail did not help.
-    /// Call before the handoff's own event.
-    pub fn outcomes_at_handoff(&self) -> Result<()> {
+    /// Call before the handoff's own event. Those: (record, command, tests
+    /// still failing).
+    pub fn outcomes_at_handoff(&self) -> Result<Vec<(String, String, Vec<String>)>> {
+        let mut missed = Vec::new();
         for (id, cmd, tests) in self.pending()? {
             let last = self.my_runs(&cmd)?;
-            if last.is_some_and(|failing| tests.iter().any(|t| failing.contains(t))) {
-                self.outcome(&id, &cmd, false)?;
+            if let Some(failing) = last {
+                let still: Vec<String> = tests.iter().filter(|t| failing.contains(t)).cloned().collect();
+                if !still.is_empty() {
+                    self.outcome(&id, &cmd, false)?;
+                    missed.push((id, cmd, still));
+                }
             }
         }
-        Ok(())
+        Ok(missed)
     }
 
     /// Whether any outcome was kept in this project.

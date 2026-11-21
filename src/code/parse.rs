@@ -37,7 +37,7 @@ pub struct Symbol {
 }
 
 /// Calls kept per symbol.
-const MAX_CALLS: usize = 60;
+const MAX_CALLS: usize = 200;
 
 pub fn symbols(lang: Lang, source: &str) -> Vec<Symbol> {
     symbols_at(lang, source, 0)
@@ -549,14 +549,23 @@ fn calls_in(node: Node, src: &str) -> Vec<String> {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         let k = n.kind();
-        if (k.contains("call") || k.contains("invocation")) && !k.contains("signature") {
+        // a type made is its constructor called: new Refund(), new Refund<T>()
+        // (JS, TS, Java, C#), Refund { .. } (Rust), Refund{..} (Go)
+        let made =
+            matches!(k, "new_expression" | "object_creation_expression" | "struct_expression" | "composite_literal");
+        if made || (k.contains("call") || k.contains("invocation")) && !k.contains("signature") {
             let callee = n
                 .child_by_field_name("function")
+                .or_else(|| n.child_by_field_name("constructor"))
+                .or_else(|| made.then(|| n.child_by_field_name("type")).flatten())
                 .or_else(|| n.child_by_field_name("name"))
                 .or_else(|| n.child_by_field_name("method"))
                 .or_else(|| n.named_child(0));
             if let Some(c) = callee {
-                let t = &src[c.byte_range()];
+                // without its generic arguments: parse::<T>, Vec::<u8>::new keeps new
+                let full = &src[c.byte_range()];
+                let t = strip_generics(full);
+                let t = t.trim_end_matches(':');
                 let last = t.rsplit(['.', ':', '>', ' ']).next().unwrap_or(t).trim();
                 if !last.is_empty()
                     && last.len() < 60
@@ -572,6 +581,22 @@ fn calls_in(node: Node, src: &str) -> Vec<String> {
         }
         let mut cursor = n.walk();
         stack.extend(n.named_children(&mut cursor));
+    }
+    out
+}
+
+/// A callee without its generic arguments: "parse::<u32>" is "parse::",
+/// "Vec::<u8>::new" is "Vec::::new", "make<T>" is "make".
+fn strip_generics(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    let mut depth = 0usize;
+    for c in t.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
     }
     out
 }

@@ -167,7 +167,7 @@ fn names(entry: &str, path: &str, symbol: &str) -> bool {
 }
 
 /// The paths of "(applies: a/, b.go)" at the end of a rule.
-fn applies(text: &str) -> Option<Vec<String>> {
+pub(crate) fn applies(text: &str) -> Option<Vec<String>> {
     let (_, rest) = text.rsplit_once("(applies:")?;
     let inside = rest.split(')').next()?;
     Some(inside.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())

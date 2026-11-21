@@ -241,11 +241,29 @@ fn normalize(line: &str) -> String {
     VAR.replace_all(line.trim(), "_").to_string()
 }
 
-/// Repeated lines (the same but for numbers) said once, with how many.
+/// A line without what changes between runs of the same thing and says
+/// nothing of its result: durations, clock times, dates, addresses. A value
+/// or a name that differs is kept: "case 3: 0 matches" and "case 4: 2
+/// matches" are two results, not one line said twice.
+fn without_timing(line: &str) -> String {
+    static TIMING: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?x)
+            \d{4}-\d{2}-\d{2}([T\ ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?
+            | \b\d{1,2}:\d{2}:\d{2}(\.\d+)?\b
+            | \b0x[0-9a-fA-F]+\b
+            | \b\d+(\.\d+)?\s?(ns|µs|us|ms|s|sec|secs|seconds|m|min)\b",
+        )
+        .expect("timing pattern")
+    });
+    TIMING.replace_all(line.trim(), "_").to_string()
+}
+
+/// Repeated lines (the same but for their timing) said once, with how many.
 fn merge_repeats(lines: &[String]) -> Vec<String> {
     let mut out: Vec<(String, String, usize)> = Vec::new();
     for l in lines {
-        let n = normalize(l);
+        let n = without_timing(l);
         match out.last_mut() {
             Some(last) if last.1 == n && !n.is_empty() && n != "_" => last.2 += 1,
             _ => out.push((l.clone(), n, 1)),

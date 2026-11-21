@@ -344,6 +344,42 @@ pub fn write_note(project: &Project, rel: &str, text: &str, append: bool) -> Res
 /// until that code changes again.
 fn confirm(cx: &Context, id: &str) -> Result<()> {
     let (project, row) = super::read::locate(cx, id)?;
+    // a draft rule pg wrote: confirmed, it is a rule (out of the drafts)
+    if row.path == crate::record::RULES_FILE {
+        let (_, moved) = update_note(&project, &row.path, |n, _, _| {
+            let mut text = None;
+            let lines: Vec<String> = n
+                .body
+                .lines()
+                .filter(|l| match crate::note::rule_line(l) {
+                    Some((rid, t)) if rid == id && t.starts_with("(draft)") => {
+                        text = Some(t.trim_start_matches("(draft)").trim().to_string());
+                        false
+                    }
+                    _ => true,
+                })
+                .map(str::to_string)
+                .collect();
+            let Some(text) = text else { return Ok(false) };
+            n.body = lines.join("\n");
+            if n.section(super::act::DRAFT_RULES).is_some_and(|s| s.trim().is_empty()) {
+                n.remove_section(super::act::DRAFT_RULES);
+            }
+            let section = n.section("General").unwrap_or_default();
+            let line = format!("- {id}: {text}");
+            n.set_section("General", &if section.trim().is_empty() { line } else { format!("{section}\n{line}") });
+            Ok(true)
+        })?;
+        if moved {
+            State::open(&project)?.record(crate::state::journal::Did::Write {
+                kind: "confirm".into(),
+                id: id.to_string(),
+                what: "confirmed the draft rule".into(),
+            })?;
+            println!("ok {id} (a rule now; reword it: pg write --rule \"...\" and pg rm {id})");
+            return Ok(());
+        }
+    }
     // a draft pg wrote: confirming keeps it as a record
     let path = project.dir.join(&row.path);
     if crate::note::Note::parse(&crate::project::files::read_text(&path)?).props.text("status") == Some("draft") {

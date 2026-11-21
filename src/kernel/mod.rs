@@ -15,13 +15,19 @@
 //! An expert is one small rule, "this fact means that": a conversation cut
 //! short, the commands that work here, the change that fixed a test. Experts
 //! do not know each other; attention alone chooses what is worth the
-//! agent's context, says nothing twice and keeps to the budget.
+//! agent's context, says nothing twice and keeps to the budget, weighing
+//! each kind by the phase of the conversation (its start, its work, its
+//! handoff). The gate (gate.rs) says what each expert may do: say, or
+//! write inside memory (learn.rs), or nothing.
 
 pub mod adapt;
 pub mod attention;
 pub mod experts;
+pub mod gate;
+pub mod learn;
 pub mod rank;
 pub mod tidy;
+pub mod watch;
 
 use crate::state::journal::Entry;
 use crate::testrun::Run;
@@ -50,6 +56,25 @@ pub struct Facts {
     pub tidy: Vec<String>,
     /// The hints said to every conversation lately (to learn what helps).
     pub said_log: Vec<adapt::Said>,
+    /// The plan's open steps: number (as pg finish --done takes it), text.
+    pub steps: Vec<(usize, String)>,
+    /// Drafts pg wrote and nobody confirmed: id, when written.
+    pub drafts: Vec<(String, i64)>,
+    /// Archived notes: id, path in the project.
+    pub archived: Vec<(String, String)>,
+    /// Notes read in full lately: id, conversation, when.
+    pub reads: Vec<(String, String, i64)>,
+}
+
+/// Where a conversation is: what is worth its attention changes with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// Its brief: the plan, the handoffs, what others did.
+    Start,
+    /// At work: the code, its errors, the others changing it.
+    Middle,
+    /// Its handoff: what to say in it, what to close, what to tidy.
+    End,
 }
 
 /// Something worth telling the agent, with why.
@@ -65,6 +90,7 @@ pub struct Hint {
 }
 
 /// Every expert's hints for the brief, chosen by attention to fit `tokens`.
+/// A brief again after compacting is the middle of the work.
 pub fn brief_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
     let mut hints = experts::cut_short(f);
     hints.extend(experts::told(f));
@@ -72,17 +98,29 @@ pub fn brief_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
     hints.extend(experts::recipes(f));
     hints.extend(experts::outdated(f));
     hints.extend(experts::tidier(f));
-    let hints = adapt::adapt(hints, &adapt::usage(f, &f.said_log));
-    attention::choose(hints, &f.said, tokens)
+    hints.extend(watch::stuck_steps(f));
+    hints.extend(watch::stale_drafts(f));
+    hints.extend(watch::archive_revival(f));
+    let phase = if f.compacted { Phase::Middle } else { Phase::Start };
+    decide(f, hints, phase, tokens)
 }
 
 /// What any command adds: notes the other conversations left, once.
 pub fn news_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
-    attention::choose(experts::told(f), &f.said, tokens)
+    decide(f, experts::told(f), Phase::Middle, tokens)
 }
 
-/// What `pg finish` adds: what could be tidier, once.
+/// What `pg finish` adds: what could be tidier, drafts waiting, once.
 pub fn finish_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
-    let hints = adapt::adapt(experts::tidier(f), &adapt::usage(f, &f.said_log));
-    attention::choose(hints, &f.said, tokens)
+    let mut hints = experts::tidier(f);
+    hints.extend(watch::stale_drafts(f));
+    decide(f, hints, Phase::End, tokens)
+}
+
+/// The hints the gate lets say, weighed by how their kind fared and by the
+/// phase, chosen to fit.
+pub fn decide(f: &Facts, hints: Vec<Hint>, phase: Phase, tokens: usize) -> Vec<Hint> {
+    let hints: Vec<Hint> = hints.into_iter().filter(|h| gate::may_say(adapt::kind(&h.key))).collect();
+    let hints = adapt::adapt(hints, &adapt::usage(f, &f.said_log));
+    attention::choose(attention::by_phase(hints, phase), &f.said, tokens)
 }

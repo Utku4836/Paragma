@@ -4,11 +4,11 @@ Memory lives in `pg` (Paragma): this project's rules, decisions, past errors wit
 - Record every step of the user's plan, also those for later ("only (a) now" still records (a), (b), (c)), and every decision, in the user's words: the next conversation knows only what was recorded.
 - A question, an error line or a code name: `pg find "..."` before searching files. How a library is called at this version: `pg find "<library> <names>"`.
 - Other conversations on the project: `pg steps --take N` for the step you work on; `pg tell "..."` what they must know.
-- Independent lookups (`pg find`, `pg read`) go together: parallel tool calls, or one `pg batch` (`pg skill coding`).
-- What pg did by itself (a handoff, a draft error record): `pg undo` lists and takes it back.
+- Independent lookups (`pg find`, `pg read`) go together: parallel tool calls, or one `pg batch`.
+- What pg wrote by itself (handoffs, drafts): `pg undo` lists and takes it back.
 - Tests, builds, commands that need a key: `pg run -- <command>`. Act on what it adds: `known:` a fix memory has, `library:` the name the library has, `ripple:` callers your change left behind.
 - Before changing a function's signature, name or existence: `pg ripple <name>` (callers, tests); after: `pg ripple` lists what is left.
-- Learned something the next conversation needs (into `pg`, not your own memory): `pg write --rule "..."`, `--decision "..." --why "..."`, `--error "<error line>" --cause "..." --fix "..."`.
+- Learned something the next conversation needs (into `pg`, not your own memory): `pg write --rule "..."`, `--decision "..." --why "..."`, `--error "<error line>" --cause "..." --fix "..."`; anything else: a note, `pg write <topic>/<name> "..."`.
 - Keys never go into notes: `pg write --secret "<title>" <value>`, then `$NAME` in `pg run`.
 - Before your final answer on real work: `pg finish "<what was done; what is next>" --done <step numbers>`.
 - Exit code 1: memory has nothing on it. More: `pg skill coding | projects | knowledge`.

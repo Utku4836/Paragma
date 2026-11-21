@@ -120,6 +120,251 @@ pub fn draft_fix(
     )))
 }
 
+/// The section of rules.md pg's draft rules go to.
+pub const DRAFT_RULES: &str = "Drafts (written by pg)";
+
+/// A known error shown in several conversations (kernel/learn.rs): a draft
+/// rule in rules.md, once an error; or, while the gate keeps it to saying,
+/// the line that proposes it. Lines to say in the brief.
+pub fn rule_drafts(project: &Project, state: &State, facts: &Facts) -> Result<Vec<String>> {
+    use crate::kernel::learn;
+    let rules_path = project.note_file(crate::record::RULES_FILE);
+    let rules = crate::project::files::read_text(&rules_path).unwrap_or_default();
+    // the errors a rule names already ("from e12")
+    let cited: Vec<String> = rules
+        .split("from ")
+        .skip(1)
+        .filter_map(|r| {
+            let id: String = r.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            (id.starts_with('e') && id.len() > 1).then_some(id)
+        })
+        .collect();
+    let mut said = Vec::new();
+    let index = crate::index::Index::open(project)?;
+    for c in learn::rule_candidates(facts, &cited) {
+        let key = format!("rule-draft:{}", c.error);
+        if state.get(&key).is_some() {
+            continue; // written (or taken back) once: not again
+        }
+        let Some(row) = index.note_by_ref(&c.error)? else { continue };
+        let note = Note::parse(&crate::project::files::read_text(&project.dir.join(&row.path)).unwrap_or_default());
+        if note.props.text("status") == Some("draft") {
+            continue; // a draft is no ground for a rule
+        }
+        let title = note.props.text("title").unwrap_or(&c.error).to_string();
+        let fix = note.section("Fix").unwrap_or_default();
+        let text = learn::rule_text(&c, &title, &fix);
+        if !crate::kernel::gate::may_write(facts, "rule-draft") {
+            if !state.said()?.contains(&key) {
+                state.say(std::slice::from_ref(&key))?;
+                said.push(format!(
+                    "{} keeps coming back ({} conversations): worth a rule? pg write --rule \"...\" (from {})",
+                    c.error, c.conversations, c.error
+                ));
+            }
+            continue;
+        }
+        let (_, id) = update_note(project, crate::record::RULES_FILE, |n, exists, index| {
+            if !exists {
+                n.props.set_text("type", crate::note::Kind::Rule.as_str());
+                n.props.set_text("title", "Rules");
+            }
+            let id = index.next_id(crate::note::Kind::Rule)?;
+            let section = n.section(DRAFT_RULES).unwrap_or_default();
+            let line = format!("- {id}: {text}");
+            n.set_section(DRAFT_RULES, &if section.is_empty() { line } else { format!("{section}\n{line}") });
+            Ok(id)
+        })?;
+        state.set(&key, &id)?;
+        let seq = state.record_numbered(Did::Auto {
+            what: "rule-draft".into(),
+            target: id.clone(),
+            detail: c.error.clone(),
+        })?;
+        said.push(format!(
+            "{} came back in {} conversations: pg wrote {id}, a draft rule from its fix (not binding until confirmed: pg write --confirm {id}; reworded: pg write --rule \"...\"; not worth it: pg undo {seq})",
+            c.error, c.conversations
+        ));
+    }
+    Ok(said)
+}
+
+/// Tests that failed and passed with the same code (kernel/learn.rs): a
+/// draft record for each, once; or the line saying it, while the gate keeps
+/// the expert to saying. Lines to say after the run.
+pub fn flaky_records(project: &Project, state: &State, facts: &Facts, command: &str) -> Result<Vec<String>> {
+    use crate::kernel::learn;
+    let runs = state.runs(None, 200)?;
+    let command = crate::testrun::normalized(command);
+    let mut said = Vec::new();
+    for f in learn::flaky(&runs).into_iter().filter(|f| f.command == command) {
+        let key = format!("flaky:{}:{}", f.command, f.test);
+        if state.get(&key).is_some() {
+            continue;
+        }
+        let line = learn::flaky_line(&f);
+        let index = crate::index::Index::open(project)?;
+        if crate::record::known_error(&index, &line)?.is_some() {
+            state.set(&key, "known")?;
+            continue; // memory has it already
+        }
+        if !crate::kernel::gate::may_write(facts, "flaky") {
+            state.set(&key, "said")?;
+            said.push(format!(
+                "{} failed {} of the last {} runs, and passed with the same code: flaky. Worth a record: pg write --error {:?} --cause \"...\"",
+                f.test, f.fails, f.runs, line
+            ));
+            continue;
+        }
+        let cause = format!(
+            "(draft: failed {} of the last {} runs and passed with the same code: by chance, not by a change)",
+            f.fails, f.runs
+        );
+        let e = crate::record::ErrorInput {
+            line: &line,
+            cause: Some(&cause),
+            fix: None,
+            files: Vec::new(),
+            symbols: Vec::new(),
+            commit: None,
+            code_state: None,
+            draft: true,
+        };
+        let w = crate::record::error(project, &e)?;
+        if w.what != "created" {
+            state.set(&key, "known")?;
+            continue;
+        }
+        let Some(row) = index.note_by_ref(&w.id)? else { continue };
+        update_note(project, &row.path, |n, _, _| {
+            n.props.set_text("status", "draft");
+            Ok(())
+        })?;
+        state.set(&key, &w.id)?;
+        let seq = state.record_numbered(Did::Auto { what: "flaky".into(), target: w.id.clone(), detail: row.path })?;
+        said.push(format!(
+            "{} failed {} of the last {} runs and passed with the same code: pg wrote {}, a draft record of it as flaky (why it fails: pg write --error {:?} --cause \"...\"; not flaky: pg undo {seq})",
+            f.test, f.fails, f.runs, w.id, line
+        ));
+    }
+    Ok(said)
+}
+
+/// At a handoff, the fixes shown whose tests still failed (state/outcome.rs):
+/// a dated line on each record, so every computer knows the fix did not
+/// help this time.
+pub fn outcome_lines(
+    project: &Project,
+    state: &State,
+    facts: &Facts,
+    missed: &[(String, String, Vec<String>)],
+) -> Result<()> {
+    if !crate::kernel::gate::may_write(facts, "outcome") {
+        return Ok(()); // the known fix says it from this computer's outcomes
+    }
+    let index = crate::index::Index::open(project)?;
+    for (id, command, tests) in missed {
+        let Some(row) = index.note_by_ref(id)? else { continue };
+        let line = crate::kernel::learn::outcome_line(&crate::output::date(now()), command, tests);
+        update_note(project, &row.path, |n, _, _| {
+            let section = n.section("Outcomes").unwrap_or_default();
+            n.set_section("Outcomes", &if section.is_empty() { line.clone() } else { format!("{section}\n{line}") });
+            Ok(())
+        })?;
+        state.record_numbered(Did::Auto {
+            what: "outcome".into(),
+            target: id.clone(),
+            detail: format!("{}\t{line}", row.path),
+        })?;
+    }
+    Ok(())
+}
+
+/// The commands that passed here, kept in the project note's "How it
+/// runs" (state.db is not synced: another computer reads them there). Not
+/// when someone changed what pg wrote: then theirs stays.
+pub fn keep_recipes(project: &Project, state: &State, facts: &Facts) -> Result<()> {
+    use crate::kernel::learn::{RECIPE_SECTION, recipe_section};
+    let Some(text) = recipe_section(facts) else { return Ok(()) };
+    if !crate::kernel::gate::may_write(facts, "recipe") {
+        return Ok(()); // the brief says them from the runs
+    }
+    let path = project.note_file(plan::FILE);
+    let note = crate::project::files::read_text(&path).map(|t| Note::parse(&t)).unwrap_or_default();
+    let now_there = note.section(RECIPE_SECTION);
+    let mine = state.get("recipe:written");
+    match &now_there {
+        Some(t) if t.trim() == text.trim() => return Ok(()),
+        // someone wrote it or changed what pg wrote: theirs
+        Some(t) if mine.as_deref().map(str::trim) != Some(t.trim()) => return Ok(()),
+        _ => {}
+    }
+    update_note(project, plan::FILE, |n, exists, _| {
+        if !exists {
+            n.props.set_text("type", crate::note::Kind::Project.as_str());
+            n.props.set_text("title", project.name.clone());
+        }
+        n.set_section(RECIPE_SECTION, &text);
+        Ok(())
+    })?;
+    state.set("recipe:written", &text)?;
+    state.record_numbered(Did::Auto {
+        what: "recipe".into(),
+        target: plan::FILE.into(),
+        detail: now_there.unwrap_or_default().replace('\n', "\u{1f}"),
+    })?;
+    Ok(())
+}
+
+/// What a change added that a rule of that code forbids (kernel/watch.rs):
+/// the rules with what they apply to, the lines the change added. Draft
+/// rules are not rules yet.
+pub fn guarded(
+    project: &Project,
+    code: &crate::code::CodeIndex,
+    only: Option<&[String]>,
+) -> Result<Vec<crate::kernel::Hint>> {
+    use crate::kernel::watch::{Rule, rule_guard};
+    if !crate::kernel::gate::may_say("guard") {
+        return Ok(Vec::new());
+    }
+    let index = crate::index::Index::open(project)?;
+    let rules: Vec<Rule> = index
+        .pieces_of(crate::note::Kind::Rule)?
+        .into_iter()
+        .filter_map(|p| {
+            let text = crate::note::rule_line(&p.text).map(|(_, t)| t.to_string()).unwrap_or(p.text.clone());
+            (!text.starts_with("(draft)")).then(|| Rule {
+                applies: crate::code::notes::applies(&text).unwrap_or_default(),
+                text: text.split("(applies:").next().unwrap_or(&text).trim().to_string(),
+                id: p.id,
+            })
+        })
+        .collect();
+    if rules.iter().all(|r| crate::kernel::watch::forbidden(&r.text).is_empty()) {
+        return Ok(Vec::new());
+    }
+    let mut added: Vec<(String, usize, String)> = Vec::new();
+    for f in &code.folders {
+        for (path, ranges) in crate::code::git::changed(&f.dir) {
+            if only.is_some_and(|o| !o.iter().any(|x| x.replace('\\', "/").ends_with(&path))) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(f.dir.join(&path)) else { continue };
+            let lines: Vec<&str> = text.lines().collect();
+            let ranges = ranges.unwrap_or_else(|| vec![(1, lines.len())]);
+            for (a, b) in ranges {
+                for n in a..=b.min(lines.len()) {
+                    if let Some(l) = lines.get(n.wrapping_sub(1)) {
+                        added.push((path.clone(), n, l.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    Ok(rule_guard(&rules, &added))
+}
+
 /// Whether a record is a draft, and still offered (younger than
 /// `DRAFT_DAYS`).
 pub fn draft_state(note: &Note) -> Option<bool> {

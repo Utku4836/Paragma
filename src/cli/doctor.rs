@@ -39,6 +39,11 @@ fn experts(project: &crate::project::Project) -> Result<()> {
         "tidy" => "notes to tidy",
         "told" => "notes from other conversations (pg tell)",
         "known" => "a known fix for a failing run",
+        "stuck" => "steps left open through several handoffs",
+        "drafts" => "drafts waiting for a cause",
+        "revive" => "an archived note read again",
+        "thin-handoff" => "a handoff without what is next",
+        "guard" => "a change against a rule of that code",
         _ => "",
     };
     for (kind, n) in &said {
@@ -62,11 +67,29 @@ fn experts(project: &crate::project::Project) -> Result<()> {
             .count()
     };
     println!(
-        "what pg did by itself (30 days): {} for conversations that stopped, {}; {} undone (pg undo lists them)",
+        "what pg did by itself (30 days): {} for conversations that stopped, {}, {}, {}, {}, recipes kept {}; {} undone (pg undo lists them)",
         count(count_of("handoff") as i64, "handoff"),
         count(count_of("draft") as i64, "draft record"),
+        count(count_of("flaky") as i64, "flaky test record"),
+        count(count_of("rule-draft") as i64, "draft rule"),
+        count(count_of("outcome") as i64, "fix outcome line"),
+        count(count_of("recipe") as i64, "time"),
         undone
     );
+    // the gate: what each expert may do now (kernel/gate.rs)
+    use crate::kernel::gate::{EXPERTS, Level, undone_often};
+    let writing: Vec<&str> =
+        EXPERTS.iter().filter(|(_, l)| *l == Level::Do).map(|(n, _)| *n).filter(|n| !undone_often(&facts, n)).collect();
+    let held: Vec<&str> =
+        EXPERTS.iter().filter(|(n, l)| *l == Level::Do && undone_often(&facts, n)).map(|(n, _)| *n).collect();
+    let off: Vec<&str> = EXPERTS.iter().filter(|(_, l)| *l == Level::Off).map(|(n, _)| *n).collect();
+    println!("write by themselves: {}", writing.join(", "));
+    if !held.is_empty() {
+        println!("only say for now (a third or more of what they wrote was undone): {}", held.join(", "));
+    }
+    if !off.is_empty() {
+        println!("turned off: {}", off.join(", "));
+    }
     Ok(())
 }
 

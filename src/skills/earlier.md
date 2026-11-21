@@ -11,3 +11,6 @@
 - Tests, builds, and commands that need a key: `pg run -- <command>`. It says what is new, already failing or flaky, and gives the fix memory knows.
 Memory lives in `pg` (Paragma): this project's rules, decisions, past errors with their fixes, its plan and handoffs between conversations, and a map of its code.
 - pg commands are safe together: send independent ones (several `pg find`, `pg read`) at once, as parallel tool calls.
+- Learned something the next conversation needs (into `pg`, not your own memory): `pg write --rule "..."`, `--decision "..." --why "..."`, `--error "<error line>" --cause "..." --fix "..."`.
+- What pg did by itself (a handoff, a draft error record): `pg undo` lists and takes it back.
+- Independent lookups (`pg find`, `pg read`) go together: parallel tool calls, or one `pg batch` (`pg skill coding`).
