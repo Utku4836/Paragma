@@ -1,34 +1,44 @@
-//! The interface's colours and marks: one accent (Paragma's violet), quiet
-//! greys, green for done and red for trouble, on the terminal's own
-//! background. The marks are all one family (geometric shapes), one cell
-//! wide, and none a terminal draws as a coloured emoji (☑, ⚙, ⚠ are).
+//! The interface's colours and marks: Paragma's violet for what matters
+//! (borders, headings, keys, icons), quiet greys for the rest, green for
+//! done and red for trouble, on the terminal's own background. The section
+//! icons are drawn on a violet tile of the same size each, so they read as
+//! one family whatever the font; no mark is one a terminal draws as a
+//! coloured emoji (☑, ⚙, ⚠, ▶ are).
 
 use ratatui::style::{Color, Modifier, Style};
 
 pub const ACCENT: Color = Color::Rgb(167, 139, 250);
 pub const ACCENT_DEEP: Color = Color::Rgb(124, 58, 237);
+/// The frames and lines of what does not have the keys: violet, dark.
+pub const FRAME: Color = Color::Rgb(84, 66, 140);
+/// Behind an icon: its tile.
+pub const TILE: Color = Color::Rgb(64, 46, 120);
 pub const TEXT: Color = Color::Rgb(226, 226, 232);
-pub const DIM: Color = Color::Rgb(150, 150, 162);
-pub const FAINT: Color = Color::Rgb(88, 88, 104);
+pub const DIM: Color = Color::Rgb(160, 156, 178);
+pub const FAINT: Color = Color::Rgb(98, 92, 122);
 pub const OK: Color = Color::Rgb(110, 207, 150);
 pub const BAD: Color = Color::Rgb(248, 113, 113);
 pub const WARN: Color = Color::Rgb(251, 191, 36);
 pub const CODE: Color = Color::Rgb(147, 197, 253);
 pub const LINK: Color = Color::Rgb(125, 211, 252);
 /// Behind the row the mouse is over, and the line the cursor is on.
-pub const HOVER_BG: Color = Color::Rgb(38, 38, 52);
+pub const HOVER_BG: Color = Color::Rgb(40, 34, 62);
 /// Behind the chosen row of a list that does not have the keys.
-pub const IDLE_BG: Color = Color::Rgb(52, 44, 80);
+pub const IDLE_BG: Color = Color::Rgb(54, 42, 92);
+/// Behind a button.
+pub const BUTTON_BG: Color = Color::Rgb(58, 46, 100);
 
 /// The marks of the sections and of what is in them.
 pub mod mark {
+    pub const HOME: &str = "⌂";
     pub const PROJECTS: &str = "◆";
-    pub const NOTES: &str = "▤";
-    pub const PLAN: &str = "◧";
+    pub const NOTES: &str = "■";
+    pub const PLAN: &str = "▲";
     pub const FILES: &str = "▣";
-    pub const ACTIVITY: &str = "◷";
-    pub const SYNC: &str = "◎";
-    pub const SETTINGS: &str = "◈";
+    pub const AGENTS: &str = "●";
+    pub const ACTIVITY: &str = "≡";
+    pub const SYNC: &str = "⇅";
+    pub const SETUP: &str = "✦";
     pub const FOLDER_OPEN: &str = "▾";
     pub const FOLDER: &str = "▸";
     pub const NOTE: &str = "·";
@@ -38,8 +48,13 @@ pub mod mark {
     pub const QUESTION: &str = "?";
     pub const HANDOFF: &str = "↳";
     pub const CURRENT: &str = "●";
-    pub const BAR: &str = "▌";
+    /// Before the chosen row.
+    pub const BAR: &str = "›";
     pub const WARN: &str = "!";
+    /// Changed here, not sent yet.
+    pub const UNSENT: &str = "↑";
+    pub const ON: &str = "●";
+    pub const OFF: &str = "○";
 }
 
 pub fn text() -> Style {
@@ -53,6 +68,9 @@ pub fn faint() -> Style {
 }
 pub fn accent() -> Style {
     Style::default().fg(ACCENT)
+}
+pub fn heading() -> Style {
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
 pub fn ok() -> Style {
     Style::default().fg(OK)
@@ -82,8 +100,23 @@ pub fn selected() -> Style {
     Style::default().fg(Color::White).bg(ACCENT_DEEP)
 }
 pub fn border(focused: bool) -> Style {
-    if focused { Style::default().fg(ACCENT) } else { Style::default().fg(FAINT) }
+    if focused { Style::default().fg(ACCENT) } else { Style::default().fg(FRAME) }
 }
+/// A key in the hints: a violet pill.
 pub fn key() -> Style {
-    Style::default().fg(Color::Black).bg(DIM)
+    Style::default().fg(Color::White).bg(ACCENT_DEEP).add_modifier(Modifier::BOLD)
+}
+pub fn button() -> Style {
+    Style::default().fg(TEXT).bg(BUTTON_BG)
+}
+pub fn button_main() -> Style {
+    Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)
+}
+/// A section's icon on its tile; lit when it is the chosen section.
+pub fn tile(lit: bool) -> Style {
+    if lit {
+        Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(ACCENT).bg(TILE).add_modifier(Modifier::BOLD)
+    }
 }

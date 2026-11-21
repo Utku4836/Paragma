@@ -1,7 +1,9 @@
 //! The interface's state and what keys and clicks do. Drawing is in
-//! ui/draw.rs; what is shown comes from ui/data.rs.
+//! ui/draw.rs; what is shown comes from ui/data.rs; the Home, Agents,
+//! Sync and Setup sections, the palette, the search and the work done in
+//! the background are in ui/panels.rs.
 
-use super::data::{self, ActRow, FileRow, ProjectRow, TreeRow};
+use super::data::{self, ActRow, AgentRow, FileRow, ProjectRow, SetupRow, TreeRow};
 use super::editor::{Editor, Pos};
 use super::theme::mark;
 use crate::project::{Home, Project};
@@ -13,23 +15,30 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
+    Home,
     Projects,
     Notes,
     Plan,
     Files,
+    Agents,
     Activity,
     Sync,
-    Settings,
+    Setup,
 }
 
-pub const SECTIONS: [(Section, &str, &str); 7] = [
+/// How many sections there are.
+pub const N: usize = 9;
+
+pub const SECTIONS: [(Section, &str, &str); N] = [
+    (Section::Home, mark::HOME, "Home"),
     (Section::Projects, mark::PROJECTS, "Projects"),
     (Section::Notes, mark::NOTES, "Notes"),
     (Section::Plan, mark::PLAN, "Plan"),
     (Section::Files, mark::FILES, "Files"),
+    (Section::Agents, mark::AGENTS, "Agents"),
     (Section::Activity, mark::ACTIVITY, "Activity"),
     (Section::Sync, mark::SYNC, "Sync"),
-    (Section::Settings, mark::SETTINGS, "Settings"),
+    (Section::Setup, mark::SETUP, "Setup"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +61,12 @@ pub enum Ask {
     Question,
     Attach,
     AttachTo(String),
-    Search,
+    /// A note to every conversation here (pg tell).
+    Tell,
+    /// The name of a new private repository; moving the memory there or not.
+    NewRepo {
+        moving: bool,
+    },
 }
 
 /// What a yes is for.
@@ -64,6 +78,84 @@ pub enum Confirm {
     QuitUnsaved,
     FilesOn,
     Undo(i64),
+    /// A note (or folder) dragged onto a folder.
+    MoveInto(String, String),
+    Disconnect,
+}
+
+/// What a choice in a window does.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Act {
+    Nothing,
+    /// A pg command in the background; for the project shown or not; what
+    /// is done with what it said.
+    Pg {
+        args: Vec<String>,
+        project: bool,
+        then: Then,
+    },
+    /// Sign in to GitHub (the terminal is GitHub's meanwhile), then list
+    /// the repositories (to move the memory to one, or to connect).
+    SignIn {
+        moving: bool,
+    },
+    /// The repositories to choose from (to connect, or to move to).
+    Repos {
+        moving: bool,
+    },
+    /// Text put in the note as it is (a dropped path, pasted after all).
+    Insert(String),
+    /// Files kept with a note (dropped on the window).
+    Attach {
+        note: String,
+        paths: Vec<String>,
+    },
+    /// A note both computers changed: merged in the editor, this one kept,
+    /// or the other one taken. The note and its copy (name.conflict.md).
+    ResolveMerge(String, String),
+    ResolveKeep(String),
+    ResolveTake(String, String),
+}
+
+/// What is done with a background pg command's answer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Then {
+    /// Its first line in the status bar.
+    Status,
+    /// All of it in a window with this title.
+    Message(String),
+    /// Its first line, then the agents' setup read again.
+    Setup,
+    /// All of it in a window; the Sync section back to its settings.
+    Synced,
+}
+
+/// An entry of the palette (Ctrl+K).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PItem {
+    pub label: String,
+    pub hint: String,
+    pub act: PAct,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PAct {
+    Section(Section),
+    /// A note, by its path without .md.
+    Note(String),
+    Cmd(&'static str),
+    /// Search the memory for the text.
+    Search(String),
+}
+
+/// A note found by the search.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Found {
+    /// Its path, without .md.
+    pub path: String,
+    pub tag: String,
+    pub heading: String,
+    pub snippet: String,
 }
 
 #[derive(Clone, Debug)]
@@ -78,20 +170,35 @@ pub enum Modal {
         title: String,
         lines: Vec<String>,
     },
+    /// Several ways to go on; the first is the usual one.
+    Choose {
+        title: String,
+        lines: Vec<String>,
+        options: Vec<(String, Act)>,
+        cur: usize,
+    },
     /// The note changed outside the editor (an agent): what to do.
     Changed {
         theirs: String,
-    },
-    /// A list to choose from: search results (note paths), with titles.
-    Pick {
-        title: String,
-        items: Vec<(String, String)>,
-        cur: usize,
     },
     /// Lines to read, closed by any key.
     Message {
         title: String,
         lines: Vec<String>,
+    },
+    /// Everything there is to do and go to, by typing a part of its name.
+    Palette {
+        text: String,
+        items: Vec<PItem>,
+        cur: usize,
+    },
+    /// The memory searched as the words are typed.
+    Search {
+        text: String,
+        results: Vec<Found>,
+        cur: usize,
+        /// "3 notes", "nothing on it", "searching…"
+        note: String,
     },
     Help,
 }
@@ -115,6 +222,9 @@ pub struct Open {
     /// Changed outside meanwhile (seen by the watch).
     pub outside: bool,
     pub checked: Instant,
+    /// Merging the other computer's copy (name.conflict.md): taken out
+    /// once this is saved.
+    pub resolving: Option<String>,
 }
 
 /// A place on the screen a click means something, as the last frame drew it.
@@ -127,6 +237,80 @@ pub enum Hit {
     /// The note shown beside the tree: the wheel scrolls it.
     Preview,
     ModalButton(usize),
+    /// A tab of an open note, and its ×.
+    Tab(usize),
+    TabClose(usize),
+}
+
+/// A row of the Home section.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HomeRow {
+    Title(String),
+    Line(String),
+    Blank,
+    Goal(String),
+    Step(usize, String, String),
+    Due(String, String, i64),
+    Recent(String),
+    Agent(String, String),
+    Sync(String, bool),
+    Handoff(String, String),
+    Projects,
+}
+
+impl HomeRow {
+    pub fn acts(&self) -> bool {
+        !matches!(self, HomeRow::Title(_) | HomeRow::Line(_) | HomeRow::Blank)
+    }
+}
+
+/// A row of the Sync section.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SyncRow {
+    Connect,
+    SyncNow,
+    Env(bool),
+    Files(bool),
+    Limit(u64),
+    Transfer,
+    Disconnect,
+    /// A note both computers changed: its copy.
+    Conflict(String),
+    /// The repositories to choose from: a new private one first.
+    NewRepo,
+    Repo(crate::sync::github::Repo),
+}
+
+/// What the Sync section shows: the settings, or the repositories.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SyncView {
+    Main,
+    Repos { login: String, repos: Vec<crate::sync::github::Repo>, filter: String, moving: bool },
+}
+
+/// Something to do with the terminal given away meanwhile.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outside {
+    /// Signing in to GitHub; then the repositories, to move to or not.
+    SignIn(bool),
+}
+
+/// Work done in the background: what it is, and its answer when it ends.
+pub struct Job {
+    pub what: String,
+    pub rx: std::sync::mpsc::Receiver<JobDone>,
+}
+
+pub enum JobDone {
+    Ran(data::Ran, Then),
+    /// The GitHub account, its repositories, and a memory found in one.
+    Account(Result<Option<Accounted>, String>, bool),
+}
+
+pub struct Accounted {
+    pub login: String,
+    pub repos: Vec<crate::sync::github::Repo>,
+    pub found: Option<(crate::sync::github::Repo, String, String)>,
 }
 
 pub struct App {
@@ -140,11 +324,17 @@ pub struct App {
     pub expanded: HashSet<String>,
     pub files: Vec<FileRow>,
     pub activity: Vec<ActRow>,
+    pub agents: Vec<AgentRow>,
+    pub setup: Vec<SetupRow>,
     /// The chosen row of each section's list.
-    pub cur: [usize; 7],
+    pub cur: [usize; N],
     /// The first row shown of each section's list.
-    pub top: [usize; 7],
+    pub top: [usize; N],
     pub open: Option<Open>,
+    /// The other notes open, behind the one shown, and the tabs' order
+    /// (project, path).
+    pub tabs: Vec<Open>,
+    pub tab_order: Vec<(String, String)>,
     pub modal: Option<Modal>,
     pub status: Option<(String, bool, Instant)>,
     pub clipboard: Option<arboard::Clipboard>,
@@ -153,11 +343,14 @@ pub struct App {
     pub hits: Vec<(Rect, Hit)>,
     pub last_click: Option<(Instant, u16, u16)>,
     pub dragging: bool,
+    /// A row of the notes tree being dragged, and the row it is over.
+    pub drag_from: Option<usize>,
+    pub drag_over: Option<usize>,
     pub quit: bool,
-    /// Something outside the interface to run (pg git, pg setup), with the
+    /// Something outside the interface (signing in to GitHub), with the
     /// screen given to it meanwhile.
-    pub run_outside: Option<Vec<String>>,
-    /// The editor's text area, its visual rows and the width they wrap at.
+    pub run_outside: Option<Outside>,
+    /// The editor's text area.
     pub ed_area: Rect,
     /// A file's path typed in the Files section, waiting for its note.
     pub pending_path: String,
@@ -166,9 +359,30 @@ pub struct App {
     /// How far the preview is scrolled, and the note it is of.
     pub preview_scroll: usize,
     pub preview_of: String,
+    /// Notes read once, by their time and size.
+    pub cache: data::Cache,
+    /// The notes opened last in this project, the last first.
+    pub recent: Vec<String>,
+    pub sync_view: SyncView,
+    pub jobs: Vec<Job>,
+    /// The search index, opened once for the project searched.
+    pub index: Option<(String, crate::index::Index)>,
+    /// When the search typed is due to run.
+    pub search_due: Option<Instant>,
+    /// The project's files and state as last seen: a change reads again.
+    pub sig: u64,
+    pub watched: Instant,
+    /// Notes changed here after the last sync.
+    pub unsent: usize,
+    /// The Home section's rows, made at each reload.
+    pub home_list: Vec<HomeRow>,
+    /// The other computer's copies of notes here (name.conflict.md).
+    pub conflicts: Vec<String>,
+    /// The notes linking to the note previewed, and those it links to.
+    pub links_for: Option<(String, Vec<String>, Vec<String>)>,
 }
 
-fn index(s: Section) -> usize {
+pub fn index(s: Section) -> usize {
     SECTIONS.iter().position(|x| x.0 == s).unwrap_or(0)
 }
 
@@ -177,7 +391,7 @@ impl App {
         let mut app = App {
             home,
             exe: data::exe(),
-            section: if project.is_some() { Section::Notes } else { Section::Projects },
+            section: if project.is_some() { Section::Home } else { Section::Projects },
             focus: Focus::Main,
             project,
             projects: Vec::new(),
@@ -185,9 +399,13 @@ impl App {
             expanded: HashSet::new(),
             files: Vec::new(),
             activity: Vec::new(),
-            cur: [0; 7],
-            top: [0; 7],
+            agents: Vec::new(),
+            setup: Vec::new(),
+            cur: [0; N],
+            top: [0; N],
             open: None,
+            tabs: Vec::new(),
+            tab_order: Vec::new(),
             modal: None,
             status: None,
             clipboard: arboard::Clipboard::new().ok(),
@@ -195,6 +413,8 @@ impl App {
             hits: Vec::new(),
             last_click: None,
             dragging: false,
+            drag_from: None,
+            drag_over: None,
             quit: false,
             run_outside: None,
             ed_area: Rect::default(),
@@ -202,9 +422,24 @@ impl App {
             hover: None,
             preview_scroll: 0,
             preview_of: String::new(),
+            cache: data::Cache::default(),
+            recent: Vec::new(),
+            sync_view: SyncView::Main,
+            jobs: Vec::new(),
+            index: None,
+            search_due: None,
+            sig: 0,
+            watched: Instant::now(),
+            unsent: 0,
+            home_list: Vec::new(),
+            conflicts: Vec::new(),
+            links_for: None,
         };
+        app.projects = data::projects(&app.home);
         app.open_small_trees();
+        app.load_recent();
         app.reload();
+        app.move_cur(0);
         app
     }
 
@@ -212,7 +447,7 @@ impl App {
         self.status = Some((text.into(), bad, Instant::now()));
     }
 
-    fn project_name(&self) -> Option<String> {
+    pub fn project_name(&self) -> Option<String> {
         self.project.as_ref().map(|p| p.name.clone())
     }
 
@@ -226,26 +461,46 @@ impl App {
                 }
             }
         }
-        self.reload();
     }
 
-    /// Reads again what the sections show.
+    /// Reads again what the sections show (the notes only where they changed).
     pub fn reload(&mut self) {
-        self.projects = data::projects(&self.home);
+        if self.projects.is_empty() || matches!(self.section, Section::Projects | Section::Home) {
+            self.projects = data::projects(&self.home);
+        }
         if let Some(p) = &self.project {
             self.project = self.home.project(&p.name);
         }
-        match &self.project {
+        let synced = match crate::sync::Config::load(&self.home) {
+            Some(_) => crate::sync::Status::load(&self.home).synced.max(1),
+            None => 0,
+        };
+        match self.project.clone() {
             Some(p) => {
-                self.tree = data::tree(p, &self.expanded);
-                self.files = data::kept_files(p);
-                self.activity = data::activity(p);
+                self.tree = data::tree(&p, &self.expanded, &mut self.cache, synced);
+                self.files = data::kept_files(&p, &mut self.cache);
+                self.activity = data::activity(&p);
+                self.agents = data::agents(&p);
+                let ns = synced.saturating_mul(1_000_000_000);
+                let notes = crate::project::scan::notes(&p.dir);
+                self.unsent = if synced > 0 { notes.iter().filter(|n| n.mtime > ns).count() } else { 0 };
+                self.conflicts =
+                    notes.into_iter().filter(|n| data::conflict_of(&n.rel).is_some()).map(|n| n.rel).collect();
+                self.sig = data::signature(&p);
             }
             None => {
                 self.tree.clear();
                 self.files.clear();
                 self.activity.clear();
+                self.agents.clear();
+                self.unsent = 0;
+                self.conflicts.clear();
             }
+        }
+        self.home_list = self.home_rows();
+        self.links_for = None;
+        if self.section == Section::Setup || self.setup.is_empty() {
+            self.setup = data::setup_rows();
         }
         for (i, (s, _, _)) in SECTIONS.iter().enumerate() {
             let n = self.rows(*s).max(1);
@@ -258,13 +513,15 @@ impl App {
     /// Rows of a section's list.
     pub fn rows(&self, s: Section) -> usize {
         match s {
+            Section::Home => self.home_list.len(),
             Section::Projects => self.projects.len(),
             Section::Notes => self.tree.len(),
             Section::Plan => self.plan_rows().len(),
             Section::Files => self.files.len(),
+            Section::Agents => self.agents.len() + 1,
             Section::Activity => self.activity.len(),
             Section::Sync => self.sync_rows().len(),
-            Section::Settings => SETTINGS.len(),
+            Section::Setup => self.setup.len(),
         }
     }
 
@@ -272,9 +529,52 @@ impl App {
         self.cur[index(self.section)]
     }
 
-    fn set_cur(&mut self, v: usize) {
+    pub fn set_cur(&mut self, v: usize) {
         let n = self.rows(self.section);
         self.cur[index(self.section)] = if n == 0 { 0 } else { v.min(n - 1) };
+    }
+
+    /// Whether a key does something on this row (headings are passed over).
+    fn acts(&self, row: usize) -> bool {
+        match self.section {
+            Section::Home => self.home_list.get(row).is_some_and(HomeRow::acts),
+            Section::Setup => self.setup.get(row).is_some_and(SetupRow::acts),
+            _ => true,
+        }
+    }
+
+    /// Moves the cursor by `by` rows, over the rows nothing is done on.
+    pub fn move_cur(&mut self, by: isize) {
+        let n = self.rows(self.section);
+        if n == 0 {
+            return;
+        }
+        let start = self.cur() as isize;
+        let mut at = (start + by).clamp(0, n as isize - 1);
+        let step = if by < 0 { -1 } else { 1 };
+        while !self.acts(at as usize) {
+            let next = at + step;
+            if next < 0 || next >= n as isize {
+                // none that way: the nearest the other way
+                let mut back = at;
+                while back >= 0 && back < n as isize && !self.acts(back as usize) {
+                    back -= step;
+                }
+                at = if back >= 0 && back < n as isize { back } else { start.clamp(0, n as isize - 1) };
+                break;
+            }
+            at = next;
+        }
+        self.set_cur(at as usize);
+    }
+
+    pub fn go(&mut self, s: Section) {
+        self.section = s;
+        self.focus = Focus::Main;
+        if s == Section::Setup || s == Section::Projects || s == Section::Home {
+            self.reload();
+        }
+        self.move_cur(0);
     }
 
     // ---------- the plan's rows ----------
@@ -297,20 +597,6 @@ impl App {
         out
     }
 
-    pub fn sync_rows(&self) -> Vec<(&'static str, String)> {
-        match crate::sync::Config::load(&self.home) {
-            None => vec![("Connect to GitHub", "keep the memory on GitHub, the same on every computer".into())],
-            Some(c) => vec![
-                ("Sync now", String::new()),
-                (".env files", if c.env { "sent".into() } else { "not sent".into() }),
-                ("Files kept with notes", if c.attachments { "sent".into() } else { "not sent".into() }),
-                ("File size limit", format!("{} MB a file", c.attach_mb)),
-                ("Transfer", "move the memory to another repository".into()),
-                ("Disconnect", String::new()),
-            ],
-        }
-    }
-
     // ---------- keys ----------
 
     pub fn key(&mut self, k: KeyEvent) {
@@ -319,8 +605,18 @@ impl App {
             self.modal_key(k);
             return;
         }
+        // everywhere: the palette, and the tabs of the notes open
+        match k.code {
+            KeyCode::Char('k') if ctrl => return self.palette(),
+            KeyCode::PageDown if ctrl => return self.next_tab(1),
+            KeyCode::PageUp if ctrl => return self.next_tab(-1),
+            _ => {}
+        }
         if self.open.is_some() {
             self.editor_key(k);
+            return;
+        }
+        if self.section == Section::Sync && self.sync_typing(&k) {
             return;
         }
         match k.code {
@@ -330,33 +626,43 @@ impl App {
             KeyCode::Tab | KeyCode::BackTab => {
                 self.focus = if self.focus == Focus::Sidebar { Focus::Main } else { Focus::Sidebar }
             }
-            KeyCode::Char(c @ '1'..='7') => {
-                self.section = SECTIONS[(c as u8 - b'1') as usize].0;
-                self.focus = Focus::Main;
-            }
-            KeyCode::Char('/') => self.ask(Ask::Search, "Search memory", ""),
+            KeyCode::Char(c @ '1'..='9') => self.go(SECTIONS[(c as u8 - b'1') as usize].0),
+            KeyCode::Char('/') => self.search(""),
             KeyCode::F(5) => {
                 self.reload();
                 self.say("read again", false);
             }
             KeyCode::Up if self.focus == Focus::Sidebar => {
                 let i = index(self.section);
-                self.section = SECTIONS[(i + 6) % 7].0;
+                self.section = SECTIONS[(i + N - 1) % N].0;
+                self.move_cur(0);
             }
             KeyCode::Down if self.focus == Focus::Sidebar => {
                 let i = index(self.section);
-                self.section = SECTIONS[(i + 1) % 7].0;
+                self.section = SECTIONS[(i + 1) % N].0;
+                self.move_cur(0);
             }
-            KeyCode::Enter | KeyCode::Right if self.focus == Focus::Sidebar => self.focus = Focus::Main,
+            KeyCode::Enter | KeyCode::Right if self.focus == Focus::Sidebar => self.go(self.section),
             KeyCode::Left | KeyCode::Esc if self.focus == Focus::Main && !self.in_tree_folder_left(&k) => {
-                self.focus = Focus::Sidebar
+                if self.section == Section::Sync && self.sync_view != SyncView::Main {
+                    self.sync_view = SyncView::Main;
+                    self.set_cur(0);
+                } else {
+                    self.focus = Focus::Sidebar
+                }
             }
-            KeyCode::Up => self.set_cur(self.cur().saturating_sub(1)),
-            KeyCode::Down => self.set_cur(self.cur() + 1),
-            KeyCode::PageUp => self.set_cur(self.cur().saturating_sub(10)),
-            KeyCode::PageDown => self.set_cur(self.cur() + 10),
-            KeyCode::Home => self.set_cur(0),
-            KeyCode::End => self.set_cur(usize::MAX),
+            KeyCode::Up => self.move_cur(-1),
+            KeyCode::Down => self.move_cur(1),
+            KeyCode::PageUp => self.move_cur(-10),
+            KeyCode::PageDown => self.move_cur(10),
+            KeyCode::Home => {
+                self.set_cur(0);
+                self.move_cur(0);
+            }
+            KeyCode::End => {
+                self.set_cur(usize::MAX);
+                self.move_cur(0);
+            }
             _ => self.section_key(k),
         }
     }
@@ -382,16 +688,25 @@ impl App {
         false
     }
 
-    fn ask(&mut self, ask: Ask, title: &str, text: &str) {
+    pub fn ask(&mut self, ask: Ask, title: &str, text: &str) {
         self.modal = Some(Modal::Input { ask, title: title.into(), text: text.into() });
     }
 
-    fn confirm(&mut self, what: Confirm, title: &str, lines: Vec<String>) {
+    pub fn confirm(&mut self, what: Confirm, title: &str, lines: Vec<String>) {
         self.modal = Some(Modal::Confirm { what, title: title.into(), lines });
     }
 
+    pub fn choose(&mut self, title: &str, lines: Vec<String>, options: Vec<(&str, Act)>) {
+        self.modal = Some(Modal::Choose {
+            title: title.into(),
+            lines,
+            options: options.into_iter().map(|(l, a)| (l.to_string(), a)).collect(),
+            cur: 0,
+        });
+    }
+
     /// Keys of the section shown.
-    fn section_key(&mut self, k: KeyEvent) {
+    pub fn section_key(&mut self, k: KeyEvent) {
         let c = match k.code {
             KeyCode::Char(c) => c,
             KeyCode::Enter => '\n',
@@ -401,6 +716,7 @@ impl App {
         };
         let row = self.cur();
         match self.section {
+            Section::Home => self.home_key(c, row),
             Section::Projects => match c {
                 '\n' | '→' => self.choose_project(row),
                 'n' => self.ask(Ask::NewProject, "New project: its name", ""),
@@ -424,6 +740,7 @@ impl App {
                         }
                         self.reload();
                     }
+                    '\n' | '→' if r.conflict => self.resolve(&r.rel),
                     '\n' => self.open_note(&r.rel, false),
                     '→' | 'v' => self.open_note(&r.rel, true),
                     'e' => self.open_note(&r.rel, false),
@@ -440,7 +757,7 @@ impl App {
                     ),
                     'a' if !r.folder => self.ask(
                         Ask::AttachTo(r.rel.trim_end_matches(".md").to_string()),
-                        "Keep a file with this note: its path",
+                        "Keep a file with this note: its path (or drop the file on the window)",
                         "",
                     ),
                     _ => {}
@@ -457,7 +774,7 @@ impl App {
                         }
                     }
                 }
-                'a' => self.ask(Ask::Attach, "Keep a file: its path", ""),
+                'a' => self.ask(Ask::Attach, "Keep a file: its path (or drop the file on the window)", ""),
                 'g' => {
                     if let Some(f) = self.files.get(row).cloned() {
                         self.section = Section::Notes;
@@ -466,6 +783,7 @@ impl App {
                 }
                 _ => {}
             },
+            Section::Agents => self.agents_key(c, row),
             Section::Activity => {
                 if c == 'u'
                     && let Some(n) = self.activity.get(row).and_then(|a| a.undo)
@@ -479,34 +797,28 @@ impl App {
                     self.sync_action(row);
                 }
             }
-            Section::Settings => {
-                if c == '\n' {
-                    self.settings_action(row);
-                }
-            }
+            Section::Setup => self.setup_key(c, row),
         }
     }
 
     fn plan_key(&mut self, c: char, row: usize) {
         let rows = self.plan_rows();
-        let name = self.project_name();
         let Some(r) = rows.get(row).cloned() else { return };
-        let run = |app: &mut App, args: Vec<String>| {
-            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let ran = data::pg(&app.exe, name.as_deref(), &refs);
-            app.say(data::first(&ran.out), !ran.ok);
-            app.reload();
+        let pg = |args: &[&str]| Act::Pg {
+            args: args.iter().map(|s| s.to_string()).collect(),
+            project: true,
+            then: Then::Status,
         };
         match (r, c) {
             (_, 'a') => self.ask(Ask::AddStep, "New step", ""),
             (_, '?') => self.ask(Ask::Question, "A question for later", ""),
             (PlanRow::Step(n, s), ' ' | '\n' | 'x') => {
                 let flag = if s.done { "--reopen" } else { "--done" };
-                run(self, vec!["steps".into(), flag.into(), n.to_string()]);
+                self.act(pg(&["steps", flag, &n.to_string()]));
             }
             (PlanRow::Step(n, s), 'l') => {
                 let flag = if s.deferred { "--resume" } else { "--defer" };
-                run(self, vec!["steps".into(), flag.into(), n.to_string()]);
+                self.act(pg(&["steps", flag, &n.to_string()]));
             }
             (PlanRow::Step(n, s), 'e') => self.ask(Ask::EditStep(n), "Step", &s.text),
             (PlanRow::Step(n, s), 'd') => self.confirm(
@@ -520,19 +832,24 @@ impl App {
         }
     }
 
-    fn choose_project(&mut self, row: usize) {
+    pub fn choose_project(&mut self, row: usize) {
         let Some(name) = self.projects.get(row).map(|p| p.name.clone()) else { return };
         self.project = self.home.project(&name);
         self.expanded.clear();
         self.open_small_trees();
-        self.cur = [self.cur[0], 0, 0, 0, 0, self.cur[5], self.cur[6]];
+        for s in [Section::Home, Section::Notes, Section::Plan, Section::Files, Section::Agents, Section::Activity] {
+            self.cur[index(s)] = 0;
+            self.top[index(s)] = 0;
+        }
+        self.index = None;
+        self.load_recent();
         self.reload();
-        self.section = Section::Notes;
+        self.go(Section::Home);
         self.say(format!("project {name}"), false);
     }
 
     /// Opens the folders down to a note and puts the cursor on it.
-    fn reveal(&mut self, rel: &str) {
+    pub fn reveal(&mut self, rel: &str) {
         let mut acc = String::new();
         for part in rel.split('/').collect::<Vec<_>>().iter().rev().skip(1).rev() {
             acc.push_str(part);
@@ -545,10 +862,33 @@ impl App {
         }
     }
 
+    // ---------- notes open, in tabs ----------
+
+    /// Opens a note in the editor (reading it, or writing): in its own tab,
+    /// or the tab it already has.
     pub fn open_note(&mut self, rel: &str, reading: bool) {
-        let Some(p) = &self.project else { return };
+        let Some(p) = self.project.clone() else { return };
+        let key = (p.name.clone(), rel.to_string());
+        self.remember_recent(rel);
+        if let Some(o) = self.open.as_mut()
+            && o.project == key.0
+            && o.rel == key.1
+        {
+            o.reading = reading;
+            return;
+        }
+        if let Some(i) = self.tabs.iter().position(|t| t.project == key.0 && t.rel == key.1) {
+            self.park();
+            let mut t = self.tabs.remove(i);
+            t.reading = reading;
+            t.checked = Instant::now() - std::time::Duration::from_secs(10);
+            self.open = Some(t);
+            self.watch_outside();
+            return;
+        }
         let text = crate::project::files::read_text(&p.dir.join(rel)).unwrap_or_default();
         let note = crate::note::Note::parse(&text);
+        self.park();
         self.open = Some(Open {
             project: p.name.clone(),
             rel: rel.to_string(),
@@ -561,7 +901,94 @@ impl App {
             link_cur: 0,
             outside: false,
             checked: Instant::now(),
+            resolving: None,
         });
+        if !self.tab_order.contains(&key) {
+            self.tab_order.push(key);
+        }
+    }
+
+    /// The note shown goes behind: its tab stays.
+    pub fn park(&mut self) {
+        if let Some(o) = self.open.take() {
+            self.tabs.push(o);
+        }
+    }
+
+    /// The tab at `i` (in `tab_order`) shown.
+    pub fn activate(&mut self, i: usize) {
+        let Some(key) = self.tab_order.get(i).cloned() else { return };
+        if self.open.as_ref().is_some_and(|o| o.project == key.0 && o.rel == key.1) {
+            return;
+        }
+        let Some(j) = self.tabs.iter().position(|t| t.project == key.0 && t.rel == key.1) else { return };
+        self.park();
+        let mut t = self.tabs.remove(j);
+        t.checked = Instant::now() - std::time::Duration::from_secs(10);
+        self.open = Some(t);
+        self.watch_outside();
+    }
+
+    /// The tab shown now, in `tab_order`.
+    pub fn active_tab(&self) -> Option<usize> {
+        let o = self.open.as_ref()?;
+        self.tab_order.iter().position(|(p, r)| *p == o.project && *r == o.rel)
+    }
+
+    fn next_tab(&mut self, by: isize) {
+        let n = self.tab_order.len();
+        if n == 0 {
+            return;
+        }
+        let i = match self.active_tab() {
+            Some(i) => (i as isize + by).rem_euclid(n as isize) as usize,
+            None => 0,
+        };
+        self.activate(i);
+    }
+
+    /// Closes the tab at `i`; asks first when it has changes not saved.
+    pub fn close_tab(&mut self, i: usize) {
+        if self.active_tab() == Some(i) {
+            return self.close_note(false);
+        }
+        let Some(key) = self.tab_order.get(i).cloned() else { return };
+        if let Some(j) = self.tabs.iter().position(|t| t.project == key.0 && t.rel == key.1) {
+            if self.tabs[j].ed.dirty {
+                // shown first, then asked
+                self.activate(i);
+                return self.close_note(false);
+            }
+            self.tabs.remove(j);
+        }
+        self.tab_order.remove(i);
+    }
+
+    /// Whether a note open (shown or behind) has changes not saved.
+    pub fn unsaved(&self) -> bool {
+        self.open.as_ref().is_some_and(|o| o.ed.dirty) || self.tabs.iter().any(|t| t.ed.dirty)
+    }
+
+    fn load_recent(&mut self) {
+        self.recent = self
+            .project
+            .as_ref()
+            .and_then(|p| crate::state::State::open(p).ok())
+            .and_then(|s| s.get("ui.recent"))
+            .map(|v| v.lines().map(str::to_string).collect())
+            .unwrap_or_default();
+    }
+
+    fn remember_recent(&mut self, rel: &str) {
+        self.recent.retain(|r| r != rel);
+        self.recent.insert(0, rel.to_string());
+        self.recent.truncate(12);
+        self.home_list = self.home_rows();
+        if let Some(p) = &self.project
+            && let Ok(s) = crate::state::State::open(p)
+        {
+            let _ = s.set("ui.recent", &self.recent.join("\n"));
+        }
     }
 
     // ---------- the editor ----------
@@ -576,7 +1003,7 @@ impl App {
         self.copied = text;
     }
 
-    fn clipboard_get(&mut self) -> String {
+    pub fn clipboard_get(&mut self) -> String {
         if let Some(c) = self.clipboard.as_mut()
             && let Ok(t) = c.get_text()
         {
@@ -635,6 +1062,9 @@ impl App {
                 }
                 _ => {}
             }
+        }
+        if k.code == KeyCode::Char('w') && ctrl {
+            return self.close_note(false);
         }
         if o.reading {
             match k.code {
@@ -704,7 +1134,11 @@ impl App {
             KeyCode::Char('p') if ctrl => o.reading = true,
             KeyCode::Char('o') if ctrl => {
                 let note = o.rel.trim_end_matches(".md").to_string();
-                self.ask(Ask::AttachTo(note), "Keep a file with this note: its path", "");
+                self.ask(
+                    Ask::AttachTo(note),
+                    "Keep a file with this note: its path (or drop the file on the window)",
+                    "",
+                );
                 return;
             }
             KeyCode::Enter if ctrl || alt => ed.toggle_todo(),
@@ -740,48 +1174,27 @@ impl App {
         self.offer_links();
     }
 
-    /// The notes whose names start with the [[link]] being typed.
+    /// The notes whose names have the [[link]] being typed.
     fn offer_links(&mut self) {
-        let Some(o) = self.open.as_mut() else { return };
-        let Some(typed) = o.ed.link_prefix() else {
-            o.links.clear();
+        let Some(typed) = self.open.as_ref().and_then(|o| o.ed.link_prefix()) else {
+            if let Some(o) = self.open.as_mut() {
+                o.links.clear();
+            }
             return;
         };
         let t = typed.to_lowercase();
-        let mut names: Vec<String> = self
-            .tree
-            .iter()
-            .filter(|r| !r.folder)
-            .map(|r| r.rel.trim_end_matches(".md").to_string())
-            .filter(|n| n.to_lowercase().contains(&t))
-            .take(8)
-            .collect();
-        // the folders closed in the tree have notes too
-        if names.is_empty()
-            && let Some(p) = &self.project
-        {
-            names = crate::project::scan::notes(&p.dir)
+        let names: Vec<String> = match self.project.clone() {
+            Some(p) => data::all_notes(&p, &mut self.cache)
                 .into_iter()
-                .map(|n| n.rel.trim_end_matches(".md").to_string())
+                .map(|(rel, _)| rel)
                 .filter(|n| n.to_lowercase().contains(&t))
                 .take(8)
-                .collect();
-        }
-        o.link_cur = o.link_cur.min(names.len().saturating_sub(1));
-        o.links = names;
-    }
-
-    pub fn paste(&mut self, text: &str) {
-        if let Some(Modal::Input { text: t, .. }) = self.modal.as_mut() {
-            t.push_str(text.lines().next().unwrap_or(""));
-            return;
-        }
+                .collect(),
+            None => Vec::new(),
+        };
         if let Some(o) = self.open.as_mut() {
-            if let Some(q) = o.find.as_mut() {
-                q.push_str(text.lines().next().unwrap_or(""));
-            } else if !o.reading {
-                o.ed.insert(text);
-            }
+            o.link_cur = o.link_cur.min(names.len().saturating_sub(1));
+            o.links = names;
         }
     }
 
@@ -799,8 +1212,10 @@ impl App {
         if o.outside && !o.ed.dirty {
             let note = crate::note::Note::parse(&now);
             let cur = o.ed.cur;
+            let scroll = o.ed.scroll;
             o.ed = Editor::new(&note.body);
             o.ed.click(cur, false);
+            o.ed.scroll = scroll;
             o.base = now;
             o.outside = false;
             self.say("this note was changed outside (an agent?): shown as it is now", false);
@@ -819,6 +1234,7 @@ impl App {
         }
         let body = o.ed.text();
         let rel = o.rel.clone();
+        let resolving = o.resolving.clone();
         let result = crate::index::update_note(&p, &rel, |n, _, _| {
             n.body = if body.ends_with('\n') { body.clone() } else { format!("{body}\n") };
             Ok(())
@@ -830,6 +1246,7 @@ impl App {
                     o.base = saved;
                     o.ed.dirty = false;
                     o.outside = false;
+                    o.resolving = None;
                 }
                 if let Ok(s) = crate::state::State::open(&p) {
                     let _ = s.record(crate::state::journal::Did::Write {
@@ -840,6 +1257,18 @@ impl App {
                 }
                 crate::sync::trigger(&self.home);
                 self.say(format!("saved {}", rel.trim_end_matches(".md")), false);
+                // the other computer's copy is merged in now: taken out
+                if let Some(copy) = resolving {
+                    let ran = data::pg(&self.exe, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
+                    self.say(
+                        if ran.ok {
+                            "saved; the other computer's copy is merged in and archived".to_string()
+                        } else {
+                            data::first(&ran.out)
+                        },
+                        !ran.ok,
+                    );
+                }
                 self.reload();
             }
             Err(e) => self.say(format!("not saved: {e}"), true),
@@ -884,7 +1313,9 @@ impl App {
         }
     }
 
-    fn close_note(&mut self, force: bool) {
+    /// Closes the note shown (asks first when it has changes); the next tab
+    /// is shown, or the sections when it was the last.
+    pub fn close_note(&mut self, force: bool) {
         if !force && self.open.as_ref().is_some_and(|o| o.ed.dirty) {
             self.confirm(
                 Confirm::CloseUnsaved,
@@ -893,14 +1324,22 @@ impl App {
             );
             return;
         }
+        let at = self.active_tab();
         self.open = None;
+        if let Some(i) = at {
+            self.tab_order.remove(i);
+            if !self.tab_order.is_empty() {
+                self.activate(i.min(self.tab_order.len() - 1));
+            }
+        }
         self.reload();
     }
 
-    // ---------- modals ----------
+    // ---------- windows ----------
 
-    fn modal_key(&mut self, k: KeyEvent) {
+    pub fn modal_key(&mut self, k: KeyEvent) {
         let Some(m) = self.modal.clone() else { return };
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match m {
             Modal::Help | Modal::Message { .. } => self.modal = None,
             Modal::Input { ask, title, mut text } => match k.code {
@@ -913,12 +1352,12 @@ impl App {
                     text.pop();
                     self.modal = Some(Modal::Input { ask, title, text });
                 }
-                KeyCode::Char('v') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('v') if ctrl => {
                     let t = self.clipboard_get();
                     text.push_str(t.lines().next().unwrap_or(""));
                     self.modal = Some(Modal::Input { ask, title, text });
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Char(c) if !ctrl => {
                     text.push(c);
                     self.modal = Some(Modal::Input { ask, title, text });
                 }
@@ -930,6 +1369,30 @@ impl App {
                     self.confirmed(what);
                 }
                 KeyCode::Char('n') | KeyCode::Esc => self.modal = None,
+                _ => {}
+            },
+            Modal::Choose { title, lines, options, cur } => match k.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Left | KeyCode::Up | KeyCode::BackTab => {
+                    self.modal = Some(Modal::Choose { title, lines, options, cur: cur.saturating_sub(1) })
+                }
+                KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                    let n = options.len().saturating_sub(1);
+                    self.modal = Some(Modal::Choose { title, lines, options, cur: (cur + 1).min(n) })
+                }
+                KeyCode::Enter => {
+                    self.modal = None;
+                    if let Some((_, a)) = options.get(cur) {
+                        self.act(a.clone());
+                    }
+                }
+                KeyCode::Char(c @ '1'..='9') => {
+                    let i = (c as u8 - b'1') as usize;
+                    if let Some((_, a)) = options.get(i) {
+                        self.modal = None;
+                        self.act(a.clone());
+                    }
+                }
                 _ => {}
             },
             Modal::Changed { theirs } => match k.code {
@@ -954,24 +1417,7 @@ impl App {
                 KeyCode::Esc => self.modal = None,
                 _ => {}
             },
-            Modal::Pick { title, items, cur } => match k.code {
-                KeyCode::Esc => self.modal = None,
-                KeyCode::Up => self.modal = Some(Modal::Pick { title, items, cur: cur.saturating_sub(1) }),
-                KeyCode::Down => {
-                    let n = items.len().saturating_sub(1);
-                    self.modal = Some(Modal::Pick { title, items, cur: (cur + 1).min(n) })
-                }
-                KeyCode::Enter => {
-                    self.modal = None;
-                    if let Some((rel, _)) = items.get(cur) {
-                        let rel = format!("{rel}.md");
-                        self.section = Section::Notes;
-                        self.reveal(&rel);
-                        self.open_note(&rel, true);
-                    }
-                }
-                _ => {}
-            },
+            Modal::Palette { .. } | Modal::Search { .. } => self.finder_key(k),
         }
     }
 
@@ -985,7 +1431,7 @@ impl App {
             app.reload();
             ran.ok
         };
-        if text.is_empty() && !matches!(ask, Ask::Search) {
+        if text.is_empty() {
             return;
         }
         match ask {
@@ -1014,6 +1460,7 @@ impl App {
                                 what: "created by the user".into(),
                             });
                         }
+                        self.section = Section::Notes;
                         self.reveal(&format!("{rel}.md"));
                         self.open_note(&format!("{rel}.md"), false);
                     }
@@ -1034,10 +1481,12 @@ impl App {
             }
             Ask::NewProject => {
                 let p = format!("{}/", text.trim_matches('/'));
-                if run(self, vec!["write".into(), p])
-                    && let Some(i) = self.projects.iter().position(|r| r.name == text.trim_matches('/'))
-                {
-                    self.choose_project(i);
+                self.projects.clear();
+                if run(self, vec!["write".into(), p]) {
+                    self.projects = data::projects(&self.home);
+                    if let Some(i) = self.projects.iter().position(|r| r.name == text.trim_matches('/')) {
+                        self.choose_project(i);
+                    }
                 }
             }
             Ask::AddStep => {
@@ -1055,6 +1504,9 @@ impl App {
             Ask::Question => {
                 run(self, vec!["ask".into(), text]);
             }
+            Ask::Tell => {
+                run(self, vec!["tell".into(), text]);
+            }
             Ask::Attach => {
                 // the path first, then the note it goes with
                 self.pending_path = text;
@@ -1067,110 +1519,83 @@ impl App {
                 } else {
                     (note, text.clone())
                 };
-                let file = file.trim_matches('"').to_string();
-                // a note open with changes: saved first, the card comes after
-                if self.open.as_ref().is_some_and(|o| o.ed.dirty) {
-                    self.save_note(false);
-                }
-                let ok = run(self, vec!["write".into(), note.clone(), "--file".into(), file, "--attach".into()]);
-                if ok && let Some(o) = self.open.as_ref().map(|o| (o.rel.clone(), o.reading)) {
-                    self.open_note(&o.0, o.1);
-                }
+                let paths =
+                    super::panels::dropped_paths(&file).unwrap_or_else(|| vec![file.trim_matches('"').to_string()]);
+                self.attach(&note, &paths);
             }
-            Ask::Search => {
-                let ran = data::pg(&self.exe, name.as_deref(), &["find", &text, "--budget", "3000"]);
-                let items: Vec<(String, String)> = ran
-                    .out
-                    .lines()
-                    .filter_map(|l| {
-                        let rest = l.strip_prefix('[')?;
-                        let (tag, path) = rest.split_once("] ")?;
-                        let path = path.split(['#', ' ']).next()?.to_string();
-                        (!tag.starts_with("code") && !path.is_empty()).then(|| (path, tag.to_string()))
-                    })
-                    .collect();
-                if items.is_empty() {
-                    self.say(format!("nothing in memory on \"{text}\""), true);
-                } else {
-                    self.modal = Some(Modal::Pick { title: format!("Found: {text}"), items, cur: 0 });
-                }
+            Ask::NewRepo { moving } => self.new_repo(&text, moving),
+        }
+    }
+
+    /// Keeps files with a note (pg write --file --attach), one by one.
+    pub fn attach(&mut self, note: &str, paths: &[String]) {
+        let name = self.project_name();
+        // a note open with changes: saved first, the card comes after
+        if self.open.as_ref().is_some_and(|o| o.ed.dirty) {
+            self.save_note(false);
+        }
+        let mut said = Vec::new();
+        let mut ok = true;
+        for f in paths {
+            let ran = data::pg(&self.exe, name.as_deref(), &["write", note, "--file", f, "--attach"]);
+            ok &= ran.ok;
+            said.push(data::first(&ran.out));
+        }
+        self.say(said.join("; "), !ok);
+        if let Some((rel, reading)) = self.open.as_ref().map(|o| (o.rel.clone(), o.reading)) {
+            // read again with its new card
+            let text = self
+                .project
+                .as_ref()
+                .and_then(|p| crate::project::files::read_text(&p.dir.join(&rel)).ok())
+                .unwrap_or_default();
+            if let Some(o) = self.open.as_mut()
+                && !o.ed.dirty
+            {
+                o.ed = Editor::new(&crate::note::Note::parse(&text).body);
+                o.base = text;
+                o.reading = reading;
             }
         }
+        self.reload();
     }
 
     fn confirmed(&mut self, what: Confirm) {
-        let name = self.project_name();
-        let run = |app: &mut App, args: Vec<String>| {
-            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let ran = data::pg(&app.exe, name.as_deref(), &refs);
-            app.say(data::first(&ran.out), !ran.ok);
-            app.reload();
+        let pg = |args: &[&str]| Act::Pg {
+            args: args.iter().map(|s| s.to_string()).collect(),
+            project: true,
+            then: Then::Status,
         };
         match what {
             Confirm::Archive(rel) => {
-                run(self, vec!["rm".into(), rel.trim_end_matches(".md").trim_end_matches('/').into()])
+                let what = rel.trim_end_matches(".md").trim_end_matches('/').to_string();
+                self.act(pg(&["rm", &what]));
             }
-            Confirm::DropStep(n) => run(self, vec!["steps".into(), "--drop".into(), n.to_string()]),
+            Confirm::DropStep(n) => self.act(pg(&["steps", "--drop", &n.to_string()])),
             Confirm::CloseUnsaved => self.close_note(true),
-            Confirm::QuitUnsaved => self.quit = true,
-            Confirm::FilesOn => run(self, vec!["git".into(), "files".into(), "on".into()]),
-            Confirm::Undo(n) => run(self, vec!["undo".into(), n.to_string()]),
-        }
-    }
-
-    fn sync_action(&mut self, row: usize) {
-        let Some(c) = crate::sync::Config::load(&self.home) else {
-            self.run_outside = Some(vec!["git".into()]);
-            return;
-        };
-        let run = |app: &mut App, args: &[&str]| {
-            let ran = data::pg(&app.exe, None, args);
-            app.say(data::first(&ran.out), !ran.ok);
-        };
-        match row {
-            0 => {
-                self.say("syncing…", false);
-                run(self, &["git", "sync"]);
-                self.reload();
+            Confirm::QuitUnsaved => {
+                // the changes are let go: nothing open is kept
+                self.open = None;
+                self.tabs.clear();
+                self.quit = true;
             }
-            1 => run(self, &["git", "env", if c.env { "off" } else { "on" }]),
-            2 if c.attachments => run(self, &["git", "files", "off"]),
-            2 => self.confirm(
-                Confirm::FilesOn,
-                "Send the files kept with notes too?",
-                vec![
-                    format!("Workbooks, documents, images kept with notes, up to {} MB each.", c.attach_mb),
-                    "A file sent to git stays in its history, also after it is taken out.".into(),
-                ],
-            ),
-            3 => {
-                let limits = [5u64, 10, 20, 50, 95];
-                let next =
-                    limits.iter().position(|l| *l == c.attach_mb).map(|i| limits[(i + 1) % limits.len()]).unwrap_or(20);
-                run(self, &["git", "files", "--limit", &next.to_string()]);
+            Confirm::FilesOn => self.act(Act::Pg {
+                args: vec!["git".into(), "files".into(), "on".into()],
+                project: false,
+                then: Then::Status,
+            }),
+            Confirm::Undo(n) => self.act(pg(&["undo", &n.to_string()])),
+            Confirm::MoveInto(from, folder) => {
+                let name = from.trim_end_matches('/').trim_end_matches(".md");
+                let leaf = name.rsplit('/').next().unwrap_or(name);
+                let to = format!("{}{leaf}", folder);
+                self.act(pg(&["mv", name, &to]));
             }
-            // the repository chooser is pg git's own screen
-            4 => self.run_outside = Some(vec!["git".into()]),
-            5 => self.run_outside = Some(vec!["git".into()]),
-            _ => {}
-        }
-    }
-
-    fn settings_action(&mut self, row: usize) {
-        match SETTINGS.get(row).map(|s| s.0) {
-            Some("Agents") => self.run_outside = Some(vec!["setup".into()]),
-            Some("Update the agents' instructions") => {
-                let ran = data::pg(&self.exe, None, &["setup", "--update"]);
-                self.say(data::first(&ran.out), !ran.ok);
-            }
-            Some("Check this project") => {
-                let ran = data::pg(&self.exe, self.project_name().as_deref(), &["doctor"]);
-                self.modal = Some(Modal::Message {
-                    title: "pg doctor".into(),
-                    lines: ran.out.lines().take(40).map(str::to_string).collect(),
-                });
-            }
-            _ => {}
+            Confirm::Disconnect => self.act(Act::Pg {
+                args: vec!["git".into(), "disconnect".into()],
+                project: false,
+                then: Then::Message("Sync".into()),
+            }),
         }
     }
 
@@ -1189,18 +1614,16 @@ impl App {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let down = m.kind == MouseEventKind::ScrollDown;
                 self.hover = Some((x, y));
-                if let Some(o) = self.open.as_mut() {
+                if self.modal.is_some() {
+                    self.modal_key(KeyEvent::new(if down { KeyCode::Down } else { KeyCode::Up }, KeyModifiers::NONE));
+                } else if let Some(o) = self.open.as_mut() {
                     o.ed.scroll = if down { o.ed.scroll + 3 } else { o.ed.scroll.saturating_sub(3) };
                 } else if matches!(hit, Some((_, Hit::Preview))) {
                     self.preview_scroll =
                         if down { self.preview_scroll + 3 } else { self.preview_scroll.saturating_sub(3) };
-                } else if let Some(Modal::Pick { title, items, cur }) = self.modal.clone() {
-                    let cur = if down { (cur + 1).min(items.len().saturating_sub(1)) } else { cur.saturating_sub(1) };
-                    self.modal = Some(Modal::Pick { title, items, cur });
-                } else if self.modal.is_none() {
-                    let c = self.cur();
+                } else {
                     self.focus = Focus::Main;
-                    self.set_cur(if down { c + 1 } else { c.saturating_sub(1) });
+                    self.move_cur(if down { 1 } else { -1 });
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1209,25 +1632,39 @@ impl App {
                 self.last_click = Some((Instant::now(), x, y));
                 let Some((rect, h)) = hit else { return };
                 match h {
-                    Hit::Section(i) if self.open.is_none() && self.modal.is_none() => {
-                        self.section = SECTIONS[i].0;
-                        self.focus = Focus::Main;
+                    Hit::Section(i) if self.modal.is_none() => {
+                        // the note shown goes behind its tab
+                        self.park();
+                        self.go(SECTIONS[i].0);
                     }
+                    Hit::Tab(i) if self.modal.is_none() => self.activate(i),
+                    Hit::TabClose(i) if self.modal.is_none() => self.close_tab(i),
                     Hit::Row(i) if self.modal.is_none() && self.open.is_none() => {
                         self.focus = Focus::Main;
+                        if !self.acts(i) {
+                            return;
+                        }
                         self.set_cur(i);
+                        if self.section == Section::Notes {
+                            self.drag_from = Some(i);
+                            self.drag_over = None;
+                        }
                         if double {
+                            self.drag_from = None;
                             self.section_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                         }
                     }
-                    Hit::Row(i) => {
-                        if let Some(Modal::Pick { title, items, .. }) = self.modal.clone() {
-                            self.modal = Some(Modal::Pick { title, items, cur: i });
-                            if double {
-                                self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-                            }
+                    Hit::Row(i) => match self.modal.clone() {
+                        Some(Modal::Palette { text, items, .. }) => {
+                            self.modal = Some(Modal::Palette { text, items, cur: i });
+                            self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                         }
-                    }
+                        Some(Modal::Search { text, results, note, .. }) => {
+                            self.modal = Some(Modal::Search { text, results, note, cur: i });
+                            self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        }
+                        _ => {}
+                    },
                     Hit::Editor => {
                         let width = rect.width as usize;
                         if let Some(o) = self.open.as_mut()
@@ -1245,18 +1682,24 @@ impl App {
                         }
                     }
                     Hit::Button(b) => self.button(&b),
-                    Hit::ModalButton(i) => {
-                        let key = match (&self.modal, i) {
-                            (Some(Modal::Confirm { .. }), 0) => 'y',
-                            (Some(Modal::Confirm { .. }), _) => 'n',
-                            (Some(Modal::Changed { .. }), 0) => 'm',
-                            (Some(Modal::Changed { .. }), 1) => 'r',
-                            (Some(Modal::Changed { .. }), 2) => 'k',
-                            _ => '\u{1b}',
-                        };
-                        let code = if key == '\u{1b}' { KeyCode::Esc } else { KeyCode::Char(key) };
-                        self.modal_key(KeyEvent::new(code, KeyModifiers::NONE));
-                    }
+                    Hit::ModalButton(i) => match self.modal.clone() {
+                        Some(Modal::Choose { title, lines, options, .. }) => {
+                            self.modal = Some(Modal::Choose { title, lines, options, cur: i });
+                            self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        }
+                        _ => {
+                            let key = match (&self.modal, i) {
+                                (Some(Modal::Confirm { .. }), 0) => 'y',
+                                (Some(Modal::Confirm { .. }), _) => 'n',
+                                (Some(Modal::Changed { .. }), 0) => 'm',
+                                (Some(Modal::Changed { .. }), 1) => 'r',
+                                (Some(Modal::Changed { .. }), 2) => 'k',
+                                _ => '\u{1b}',
+                            };
+                            let code = if key == '\u{1b}' { KeyCode::Esc } else { KeyCode::Char(key) };
+                            self.modal_key(KeyEvent::new(code, KeyModifiers::NONE));
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -1270,12 +1713,45 @@ impl App {
                     o.ed.click(at, true);
                 }
             }
-            MouseEventKind::Up(MouseButton::Left) => self.dragging = false,
+            // a note dragged in the tree: the row under it is where it goes
+            MouseEventKind::Drag(MouseButton::Left) if self.drag_from.is_some() => {
+                self.hover = Some((x, y));
+                if let Some((_, Hit::Row(j))) = hit {
+                    self.drag_over = Some(j);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.dragging = false;
+                if let (Some(from), Some(over)) = (self.drag_from.take(), self.drag_over.take()) {
+                    self.dropped_on(from, over);
+                }
+            }
             _ => {}
         }
     }
 
-    /// A button of a toolbar or the footer.
+    /// A row of the tree dropped on another: into that folder (or the
+    /// folder of that note).
+    fn dropped_on(&mut self, from: usize, over: usize) {
+        if from == over || self.section != Section::Notes {
+            return;
+        }
+        let (Some(a), Some(b)) = (self.tree.get(from).cloned(), self.tree.get(over).cloned()) else { return };
+        let folder = if b.folder { b.rel.clone() } else { parent(&b.rel) };
+        let name = a.rel.trim_end_matches('/');
+        // into itself, or where it already is
+        if folder.starts_with(&a.rel) || parent(name) == folder {
+            return;
+        }
+        let shown = if folder.is_empty() { "the top of the project".to_string() } else { folder.clone() };
+        self.confirm(
+            Confirm::MoveInto(a.rel.clone(), folder),
+            &format!("Move {} into {shown}?", name.trim_end_matches(".md")),
+            vec!["Links to it are changed to its new place (pg mv).".into()],
+        );
+    }
+
+    /// A button of a toolbar or the header.
     fn button(&mut self, b: &str) {
         let key = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
         match b {
@@ -1292,17 +1768,19 @@ impl App {
                 }
             }
             "new" => self.section_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
-            "search" => self.ask(Ask::Search, "Search memory", ""),
+            "search" => self.search(""),
+            "palette" => self.palette(),
             "help" => self.modal = Some(Modal::Help),
             "quit" => self.quit = true,
+            "sync" => self.go(Section::Sync),
             _ => {}
         }
     }
 }
 
 /// The folder a note is in, with '/' ("" at the top).
-fn parent(rel: &str) -> String {
-    rel.rsplit_once('/').map(|(f, _)| format!("{f}/")).unwrap_or_default()
+pub fn parent(rel: &str) -> String {
+    rel.trim_end_matches('/').rsplit_once('/').map(|(f, _)| format!("{f}/")).unwrap_or_default()
 }
 
 #[derive(Clone, Debug)]
@@ -1312,12 +1790,6 @@ pub enum PlanRow {
     Question(usize, crate::project::plan::Question),
     Handoff(crate::project::plan::Handoff),
 }
-
-pub const SETTINGS: [(&str, &str); 3] = [
-    ("Agents", "which coding agents use Paragma, with instructions or hooks"),
-    ("Update the agents' instructions", "bring Paragma's part of them to this version"),
-    ("Check this project", "pg doctor: notes, code and indexes"),
-];
 
 impl Editor {
     /// The whole text replaced (a merge), as one step to undo.

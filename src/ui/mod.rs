@@ -9,6 +9,7 @@ pub mod data;
 pub mod draw;
 pub mod editor;
 pub mod markdown;
+pub mod panels;
 pub mod theme;
 
 use anyhow::Result;
@@ -80,26 +81,31 @@ pub fn run(home: crate::project::Home, project: Option<crate::project::Project>)
                 ratatui::crossterm::cursor::SetCursorStyle::DefaultUserShape
             };
             let _ = execute!(stdout(), style);
-            app.watch_outside();
-            if app.quit && app.open.as_ref().is_some_and(|o| o.ed.dirty) {
+            // the background's answers, the search typed, what agents changed
+            app.tick();
+            if app.quit && app.unsaved() {
                 app.quit = false;
                 app.modal = Some(app::Modal::Confirm {
                     what: app::Confirm::QuitUnsaved,
                     title: "Quit without saving?".into(),
-                    lines: vec!["The open note has changes that are not saved.".into()],
+                    lines: vec!["A note open has changes that are not saved.".into()],
                 });
             }
-            // pg git, pg setup: their own screens, the terminal theirs meanwhile
-            if let Some(args) = app.run_outside.take() {
+            // signing in to GitHub: the terminal is GitHub's meanwhile
+            if let Some(out) = app.run_outside.take() {
                 leave();
-                let _ = std::process::Command::new(&app.exe).args(&args).status();
+                let app::Outside::SignIn(moving) = out;
+                println!("Signing in to GitHub for Paragma's sync…");
+                let ok = matches!(crate::sync::github::Account::sign_in(), Ok(Some(_)));
                 enter()?;
                 term.clear()?;
-                app.reload();
+                app.signed_in(ok, moving);
             }
         }
         Ok(())
     })();
     leave();
+    // a sync or a setup still running ends before pg does
+    app.finish_jobs();
     result
 }
