@@ -43,7 +43,6 @@ fn experts(project: &crate::project::Project) -> Result<()> {
         "drafts" => "drafts waiting for a cause",
         "revive" => "an archived note read again",
         "thin-handoff" => "a handoff without what is next",
-        "guard" => "a change against a rule of that code",
         _ => "",
     };
     for (kind, n) in &said {

@@ -238,12 +238,6 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
             }
         }
     }
-    // what the change added that a rule of that code forbids
-    if let Some(c) = &code {
-        for h in super::act::guarded(project, c, None)?.iter().take(3) {
-            println!("{}", h.text);
-        }
-    }
     if !ripples.is_empty() {
         println!("not updated after a change (finish it, or say so in the handoff):");
         for r in &ripples {

@@ -40,7 +40,6 @@ description: Use when changing code with Paragma memory - finding where things a
 - When a test that failed passes and memory has no fix for its error, pg writes a draft record by itself: the error and the change that fixed it (the functions changed after the failing run). Say why and it is kept: `pg write --error "<the line>" --cause "..."` (`--fix` to change the fix). A draft is offered as `known:` for 14 days, marked as a draft; not worth keeping: `pg undo <number>` (the number is in the line that told it).
 - A test that failed and passed with the same code (no change in between) is flaky: pg writes a draft record of it once. Why it fails: `pg write --error "flaky test: ..." --cause "..."`; not flaky: `pg undo <number>`.
 - A known fix shown to several conversations that keeps coming back becomes a draft rule (`(draft)` in rules.md, not binding): `pg write --confirm <id>` makes it a rule, `pg undo <number>` takes it out. A known fix whose tests still fail at your handoff gets a dated line on its record.
-- After an edit, a line that adds what a rule of that code forbids (`never float`, ``never `unwrap()` ``) is named with the rule: change it, or say why in the handoff.
 - `may be outdated since it was written: ...` on a note: the code it names is gone, or its signature changed. Check it before relying on it; still right: `pg write --confirm <id>`, else change or remove it. `pg doctor` lists every such note.
 
 ## Before you finish

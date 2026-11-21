@@ -167,10 +167,17 @@ fn names(entry: &str, path: &str, symbol: &str) -> bool {
 }
 
 /// The paths of "(applies: a/, b.go)" at the end of a rule.
-pub(crate) fn applies(text: &str) -> Option<Vec<String>> {
+fn applies(text: &str) -> Option<Vec<String>> {
     let (_, rest) = text.rsplit_once("(applies:")?;
     let inside = rest.split(')').next()?;
-    Some(inside.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+    // "payments\" as Windows writes it is payments/; "./payments/" is payments/
+    Some(
+        inside
+            .split(',')
+            .map(|s| s.trim().replace('\\', "/").trim_start_matches("./").to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
 }
 
 /// Rewrites the `symbols` and `files` of the notes that name a renamed or

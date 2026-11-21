@@ -54,7 +54,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     let state = crate::state::State::open(project)?;
     if let Some(number) = a.take {
-        take(project, &state, number, a.force)?;
+        take(project, &state, number, a.force, &cx.cwd.to_string_lossy())?;
     }
     if a.changes() {
         let text = a.text.join(" ");
@@ -157,7 +157,13 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
 
 /// Takes a step for this conversation, unless another one working now has
 /// it (then only with --force).
-fn take(project: &crate::project::Project, state: &crate::state::State, number: usize, force: bool) -> Result<()> {
+fn take(
+    project: &crate::project::Project,
+    state: &crate::state::State,
+    number: usize,
+    force: bool,
+    folder: &str,
+) -> Result<()> {
     let note =
         files::read_text(&project.note_file(plan::FILE)).map(|t| crate::note::Note::parse(&t)).unwrap_or_default();
     let steps = plan::steps(&note);
@@ -175,6 +181,8 @@ fn take(project: &crate::project::Project, state: &crate::state::State, number: 
             format!("step {number} is {mark}: leave it, or take it over with pg steps --take {number} --force"),
         ));
     }
+    // the others see who took it: where this conversation works
+    state.touch_session(folder)?;
     state.record(crate::state::journal::Did::Take { step: number })?;
     println!(
         "ok step {number} is yours ({}): the other conversations here see it taken until you hand off or go quiet for an hour",

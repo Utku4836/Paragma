@@ -114,7 +114,11 @@ fn prepare(project: &Project, rel: &str) -> Option<Prepared> {
     let path = project.dir.join(rel);
     let meta = std::fs::metadata(&path).ok()?;
     let text = files::read_text(&path).ok()?;
-    let n = Note::parse(&text);
+    let mut n = Note::parse(&text);
+    // the rules file is the rules, also written by hand without a type
+    if rel == crate::record::RULES_FILE && n.props.text("type").is_none() {
+        n.props.set_text("type", note::Kind::Rule.as_str());
+    }
     let mtime = meta
         .modified()
         .ok()

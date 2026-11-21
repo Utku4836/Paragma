@@ -169,6 +169,10 @@ pub fn rule_drafts(project: &Project, state: &State, facts: &Facts) -> Result<Ve
             continue;
         }
         let (_, id) = update_note(project, crate::record::RULES_FILE, |n, exists, index| {
+            // another pg, at the same moment, wrote it already
+            if n.body.contains(&format!("(from {}, in ", c.error)) {
+                return Ok(None);
+            }
             if !exists {
                 n.props.set_text("type", crate::note::Kind::Rule.as_str());
                 n.props.set_text("title", "Rules");
@@ -177,8 +181,12 @@ pub fn rule_drafts(project: &Project, state: &State, facts: &Facts) -> Result<Ve
             let section = n.section(DRAFT_RULES).unwrap_or_default();
             let line = format!("- {id}: {text}");
             n.set_section(DRAFT_RULES, &if section.is_empty() { line } else { format!("{section}\n{line}") });
-            Ok(id)
+            Ok(Some(id))
         })?;
+        let Some(id) = id else {
+            state.set(&key, "written by another pg")?;
+            continue;
+        };
         state.set(&key, &id)?;
         let seq = state.record_numbered(Did::Auto {
             what: "rule-draft".into(),
@@ -318,55 +326,6 @@ pub fn keep_recipes(project: &Project, state: &State, facts: &Facts) -> Result<(
         detail: now_there.unwrap_or_default().replace('\n', "\u{1f}"),
     })?;
     Ok(())
-}
-
-/// What a change added that a rule of that code forbids (kernel/watch.rs):
-/// the rules with what they apply to, the lines the change added. Draft
-/// rules are not rules yet.
-pub fn guarded(
-    project: &Project,
-    code: &crate::code::CodeIndex,
-    only: Option<&[String]>,
-) -> Result<Vec<crate::kernel::Hint>> {
-    use crate::kernel::watch::{Rule, rule_guard};
-    if !crate::kernel::gate::may_say("guard") {
-        return Ok(Vec::new());
-    }
-    let index = crate::index::Index::open(project)?;
-    let rules: Vec<Rule> = index
-        .pieces_of(crate::note::Kind::Rule)?
-        .into_iter()
-        .filter_map(|p| {
-            let text = crate::note::rule_line(&p.text).map(|(_, t)| t.to_string()).unwrap_or(p.text.clone());
-            (!text.starts_with("(draft)")).then(|| Rule {
-                applies: crate::code::notes::applies(&text).unwrap_or_default(),
-                text: text.split("(applies:").next().unwrap_or(&text).trim().to_string(),
-                id: p.id,
-            })
-        })
-        .collect();
-    if rules.iter().all(|r| crate::kernel::watch::forbidden(&r.text).is_empty()) {
-        return Ok(Vec::new());
-    }
-    let mut added: Vec<(String, usize, String)> = Vec::new();
-    for f in &code.folders {
-        for (path, ranges) in crate::code::git::changed(&f.dir) {
-            if only.is_some_and(|o| !o.iter().any(|x| x.replace('\\', "/").ends_with(&path))) {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(f.dir.join(&path)) else { continue };
-            let lines: Vec<&str> = text.lines().collect();
-            let ranges = ranges.unwrap_or_else(|| vec![(1, lines.len())]);
-            for (a, b) in ranges {
-                for n in a..=b.min(lines.len()) {
-                    if let Some(l) = lines.get(n.wrapping_sub(1)) {
-                        added.push((path.clone(), n, l.to_string()));
-                    }
-                }
-            }
-        }
-    }
-    Ok(rule_guard(&rules, &added))
 }
 
 /// Whether a record is a draft, and still offered (younger than

@@ -453,8 +453,25 @@ fn relative(folders: &[String], file: &Path) -> Option<(String, String)> {
         let rest = key.strip_prefix(f.as_str())?.strip_prefix('/')?;
         // the path as written (the key is lower case on Windows)
         let tail = original.get(original.len() - rest.len()..).filter(|t| t.eq_ignore_ascii_case(rest)).unwrap_or(rest);
-        Some((f.clone(), tail.to_string()))
+        // as the folder has it: "PAYMENTS/Refund.go" is payments/refund.go there
+        Some((f.clone(), if cfg!(windows) { real_case(Path::new(f), tail) } else { tail.to_string() }))
     })
+}
+
+/// A path under `dir` in the letter case its files have (Windows ignores
+/// case; git and pg's index do not). As given where a part is not there.
+fn real_case(dir: &Path, rel: &str) -> String {
+    let mut at = dir.to_path_buf();
+    let mut out: Vec<String> = Vec::new();
+    for part in rel.split('/').filter(|p| !p.is_empty()) {
+        let found = std::fs::read_dir(&at).ok().and_then(|es| {
+            es.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case(part))
+        });
+        let name = found.unwrap_or_else(|| part.to_string());
+        at.push(&name);
+        out.push(name);
+    }
+    out.join("/")
 }
 
 /// After a tool: an edit is remembered, a failing test run is explained.
@@ -463,8 +480,11 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
     let edited = edited_files(tool, &event["tool_input"]);
     if !edited.is_empty() {
         let state = State::open(project)?;
+        let linked = crate::state::links::Links::load(&cx.home).folders_of(&project.name);
         for f in &edited {
-            state.record(Did::Edit { file: f.to_string() })?;
+            // as the code folder has it ("payments/refund.go"), not where it is on this disk
+            let file = relative(&linked, &cx.cwd.join(f)).map(|(_, p)| p).unwrap_or_else(|| f.to_string());
+            state.record(Did::Edit { file })?;
         }
         let mut text = after_edit(project, &state)?;
         // the edit changed a function's shape and left its callers as they were
@@ -475,24 +495,6 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
             let left = super::ripple::warnings(project, &code, Some(&files), false);
             if !left.is_empty() {
                 let said = format!("Paragma: this change leaves code that calls it as it was:\n{}", left.join("\n"));
-                text = Some(match text {
-                    Some(t) => format!("{t}\n{said}"),
-                    None => said,
-                });
-            }
-            // what the edit added that a rule of that code forbids, once
-            let paths: Vec<String> = files.iter().map(|(_, p)| p.clone()).collect();
-            let state = State::open(project)?;
-            let said = state.said()?;
-            let guard: Vec<crate::kernel::Hint> = super::act::guarded(project, &code, Some(&paths))?
-                .into_iter()
-                .filter(|h| !said.contains(&h.key))
-                .take(2)
-                .collect();
-            if !guard.is_empty() {
-                state.say(&guard.iter().map(|h| h.key.clone()).collect::<Vec<_>>())?;
-                let lines: Vec<&str> = guard.iter().map(|h| h.text.as_str()).collect();
-                let said = format!("Paragma: {}", lines.join("\nParagma: "));
                 text = Some(match text {
                     Some(t) => format!("{t}\n{said}"),
                     None => said,

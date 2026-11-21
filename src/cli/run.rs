@@ -288,16 +288,15 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         && !run.errors.is_empty()
         && !same_as_before
         && output.lines().filter(|l| !l.trim().is_empty()).count() > WHOLE_OUTPUT
+        && let Some(path) = log.keep(&output)
     {
-        if let Some(path) = log.keep(&output) {
-            let lines = places.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
-            let at = match places.len() {
-                0 => String::new(),
-                1 => format!("; the error at line {lines}"),
-                _ => format!("; the errors at lines {lines}"),
-            };
-            b.add(&format!("(whole output: {}{at})", path.display()));
-        }
+        let lines = places.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
+        let at = match places.len() {
+            0 => String::new(),
+            1 => format!("; the error at line {lines}"),
+            _ => format!("; the errors at lines {lines}"),
+        };
+        b.add(&format!("(whole output: {}{at})", path.display()));
     }
     let tests_seen = run.passed > 0 || !run.failing.is_empty();
     if exit != 0 && run.errors.is_empty() {

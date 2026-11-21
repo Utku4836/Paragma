@@ -18,7 +18,6 @@ const PHASE: &[(&str, Phase, u32)] = &[
     ("revive", Phase::Middle, 60),
     ("recipes", Phase::Middle, 80),
     ("told", Phase::Middle, 110),
-    ("guard", Phase::Middle, 120),
     ("tidy", Phase::End, 130),
     ("drafts", Phase::End, 130),
     ("thin-handoff", Phase::End, 130),
