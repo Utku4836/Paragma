@@ -475,6 +475,16 @@ fn real_case(dir: &Path, rel: &str) -> String {
     out.join("/")
 }
 
+/// A document worth keeping with the notes: a workbook, a document, a
+/// deck, a PDF, a table of data (by its form, the extension).
+pub fn is_document(path: &str) -> bool {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "xlsx" | "xlsm" | "xls" | "docx" | "doc" | "pptx" | "ppt" | "pdf" | "csv" | "tsv" | "odt" | "ods" | "odp"
+    )
+}
+
 /// After a tool: an edit is remembered, a failing test run is explained.
 fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) -> Result<Option<String>> {
     let tool = event["tool_name"].as_str().unwrap_or("");
@@ -503,6 +513,17 @@ fn after_tool(cx: &Context, project: &crate::project::Project, event: &Value) ->
             }
         }
         return Ok(text);
+    }
+    // a document read that is not kept with the notes: remembered (one
+    // read again and again is worth keeping, kernel/watch.rs)
+    if tool == "Read" {
+        if let Some(f) = event["tool_input"]["file_path"].as_str()
+            && is_document(f)
+            && !std::path::Path::new(f).starts_with(&project.dir)
+        {
+            State::open(project)?.record(Did::ReadFile { file: f.to_string() })?;
+        }
+        return Ok(None);
     }
     if tool != "Bash" {
         return Ok(None);

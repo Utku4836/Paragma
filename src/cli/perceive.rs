@@ -28,9 +28,25 @@ pub fn news(project: &Project, state: &State) -> Result<Vec<String>> {
         steps: open_steps(project),
         ..Facts::default()
     };
+    // where the kept files came from, only when documents were read lately
+    let mut f = f;
+    if f.journal.iter().any(|e| matches!(e.did, crate::state::journal::Did::ReadFile { .. })) {
+        f.kept = kept_sources(project);
+    }
     let hints = crate::kernel::news_hints(&f, 200);
     state.say(&hints.iter().map(|h| h.key.clone()).collect::<Vec<_>>())?;
     Ok(hints.into_iter().map(|h| h.text).collect())
+}
+
+/// Where the files kept with this project's notes came from.
+fn kept_sources(project: &Project) -> Vec<String> {
+    let parent = project.dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    crate::project::scan::all_notes(&parent)
+        .into_iter()
+        .filter(|(rel, _)| rel.split('/').next() == Some(project.name.as_str()))
+        .flat_map(|(_, text)| crate::project::attach::cards(&crate::note::Note::parse(&text)))
+        .map(|c| crate::kernel::watch::same_path(&c.source))
+        .collect()
 }
 
 /// The plan's open steps: number and text.
@@ -101,6 +117,7 @@ pub fn facts(project: &Project, state: &State, compacted: bool) -> Result<Facts>
         archived,
         reads: state.reads(now - LOOK_BACK)?,
         dues,
+        kept: Vec::new(),
     };
     crate::output::mark("perceive: done");
     Ok(facts)

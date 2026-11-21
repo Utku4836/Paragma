@@ -111,6 +111,11 @@ pub enum Did {
     Undone {
         of: i64,
     },
+    /// Read a document that is not in memory (a workbook, a PDF): seen by
+    /// the hooks, or by pg read.
+    ReadFile {
+        file: String,
+    },
     /// An action of another version of pg, kept as it was.
     Other {
         action: String,
@@ -162,6 +167,7 @@ impl Did {
             Did::Told { text } => (s("tell"), text.clone(), String::new()),
             Did::Auto { what, target, detail } => (s("auto"), what.clone(), format!("{target}\t{detail}")),
             Did::Undone { of } => (s("undone"), of.to_string(), String::new()),
+            Did::ReadFile { file } => (s("read-file"), file.clone(), String::new()),
             Did::Other { action, target, detail } => (action.clone(), target.clone(), detail.clone()),
         }
     }
@@ -207,6 +213,7 @@ impl Did {
                 Did::Auto { what: t, target: tg.to_string(), detail: de.to_string() }
             }
             "undone" => Did::Undone { of: target.parse().unwrap_or(0) },
+            "read-file" => Did::ReadFile { file: t },
             a if a.ends_with("-offered") => Did::Offered { what: a.trim_end_matches("-offered").to_string(), about: t },
             _ => Did::Other { action: action.to_string(), target: t, detail: d },
         }

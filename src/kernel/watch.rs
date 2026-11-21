@@ -201,6 +201,47 @@ pub fn long_work(f: &Facts) -> Vec<Hint> {
     }]
 }
 
+/// Reads of a document before keeping it is worth saying: by this many
+/// conversations, or this many times in all.
+pub const KEEP_CONVERSATIONS: usize = 2;
+pub const KEEP_READS: usize = 3;
+
+/// The same path, compared: without case, with '/'.
+pub fn same_path(p: &str) -> String {
+    p.trim().replace('\\', "/").to_lowercase()
+}
+
+/// A document read again and again that is not kept with the notes: the
+/// next conversation would look for it again.
+pub fn keep_file(f: &Facts) -> Vec<Hint> {
+    let mut by: std::collections::BTreeMap<String, (String, BTreeSet<&str>, usize)> = std::collections::BTreeMap::new();
+    for e in &f.journal {
+        if let Did::ReadFile { file } = &e.did {
+            let k = same_path(file);
+            let entry = by.entry(k).or_insert_with(|| (file.clone(), BTreeSet::new(), 0));
+            entry.1.insert(e.conversation.as_str());
+            entry.2 += 1;
+        }
+    }
+    let mut out = Vec::new();
+    for (k, (file, convs, reads)) in by {
+        if f.kept.contains(&k) || (convs.len() < KEEP_CONVERSATIONS && reads < KEEP_READS) {
+            continue;
+        }
+        let name = file.rsplit(['/', '\\']).next().unwrap_or(&file).to_string();
+        out.push(Hint {
+            key: format!("keep:{k}"),
+            weight: 40,
+            text: format!(
+                "{name} was read {reads} times here{}: keep it with the notes so a later conversation finds it: pg write <topic>/<note> --file \"{file}\"",
+                if convs.len() > 1 { format!(", in {} conversations", convs.len()) } else { String::new() }
+            ),
+            why: "a document read again and again, not kept".into(),
+        });
+    }
+    out
+}
+
 /// Notes due within `DUE_AHEAD` days, or past due.
 pub fn due_soon(f: &Facts) -> Vec<Hint> {
     let Some(today) = crate::output::parse_date(&crate::output::date(f.now)) else { return Vec::new() };

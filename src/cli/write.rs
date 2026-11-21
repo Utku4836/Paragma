@@ -47,9 +47,13 @@ pub struct Args {
     #[arg(long)]
     append: bool,
 
-    /// Read the text from a file
+    /// A file: a text file's text is the note's; any other file (a workbook, a PDF, an image) is kept with the note
     #[arg(long, value_name = "FILE")]
     file: Option<std::path::PathBuf>,
+
+    /// With --file: keep the file itself with the note, also a text file
+    #[arg(long, requires = "file")]
+    attach: bool,
 
     /// Keep a secret (API key, token, password) under this title in the project's env file;
     /// the value follows, or "-" reads it from stdin
@@ -136,6 +140,11 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     if a.due.is_some() || !a.table.is_empty() {
         return note_items(cx, &a);
     }
+    if let Some(f) = &a.file
+        && (a.attach || !is_text(f))
+    {
+        return attach(cx, &a, f);
+    }
     if let Some(title) = a.secret.clone() {
         return write_secret(cx, &title, &a);
     }
@@ -205,6 +214,76 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     // a note that has grown to hold unrelated topics: one note each
     if let Some(t) = super::sleep::topics_of(&project, &rel) {
         println!("{t}");
+    }
+    Ok(())
+}
+
+/// Whether a file is text to put in a note (UTF-8, no NUL, not a document).
+fn is_text(path: &std::path::Path) -> bool {
+    if crate::docs::Kind::of(path).is_some() {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else { return true }; // its error comes when it is read
+    std::str::from_utf8(&bytes).is_ok_and(|t| !t.contains(' '))
+}
+
+/// A file kept with a note; said what was done and whether it goes with
+/// the memory to other computers.
+fn attach(cx: &Context, a: &Args, file: &std::path::Path) -> Result<()> {
+    use crate::project::attach::{Kept, keep, size};
+    let Some(path) = a.path.as_deref() else {
+        return Err(fail(USAGE, "say which note it goes with: pg write <note> --file <path>"));
+    };
+    if !file.is_file() {
+        return Err(fail(NOT_FOUND, format!("no file {}", file.display())));
+    }
+    let (project, rel) = target(cx, path.trim_end_matches('/'))?;
+    let project = match cx.home.project(&project) {
+        Some(p) => p,
+        None => cx.home.create_project(&project).map_err(|e| fail(USAGE, e.to_string()))?,
+    };
+    let kept = keep(&project, &rel, file).map_err(|e| fail(USAGE, e.to_string()))?;
+    let note = rel.trim_end_matches(".md");
+    let bytes = match &kept {
+        Kept::New { name, size: s } => {
+            println!(
+                "ok {}/{note}: {name} kept with it ({}); the note lists it under Attachments",
+                project.name,
+                size(*s)
+            );
+            *s
+        }
+        Kept::Version { name, size: s, old } => {
+            println!(
+                "ok {}/{note}: {name} changed, kept as the new version ({}); the old one is {old}",
+                project.name,
+                size(*s)
+            );
+            *s
+        }
+        Kept::Same { name } => {
+            println!("ok {}/{note}: {name} is kept already, the same (nothing copied)", project.name);
+            return Ok(());
+        }
+    };
+    State::open(&project)?.touch_session(&cx.cwd.to_string_lossy())?;
+    State::open(&project)?.record(crate::state::journal::Did::Write {
+        kind: "attach".into(),
+        id: String::new(),
+        what: format!("{note} {}", file.display()),
+    })?;
+    // whether it goes with the memory to the other computers
+    match crate::sync::Config::load(&cx.home) {
+        None => {}
+        Some(c) if !c.attachments => {
+            println!("attachments are not synced: it stays on this computer (pg git turns them on)")
+        }
+        Some(c) if bytes > c.attach_mb * 1024 * 1024 => println!(
+            "it stays on this computer: {} is over the sync limit of {} MB (pg git changes the limit)",
+            size(bytes),
+            c.attach_mb
+        ),
+        Some(_) => println!("it goes with the memory to your other computers at the next sync"),
     }
     Ok(())
 }

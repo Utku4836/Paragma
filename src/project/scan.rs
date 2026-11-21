@@ -48,6 +48,29 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<FileState>) {
 }
 
 /// Folders of a project (for `pg ls`), dot folders left out.
+/// Every note of every project below the projects folder that keeps files
+/// (an "## Attachments" section): its path under that folder, and text.
+pub fn all_notes(projects: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(projects) else { return out };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !e.path().is_dir() {
+            continue;
+        }
+        for n in notes(&e.path()) {
+            let Ok(text) = std::fs::read_to_string(e.path().join(&n.rel)) else { continue };
+            if text.contains(
+                "
+## Attachments",
+            ) {
+                out.push((format!("{name}/{}", n.rel), text));
+            }
+        }
+    }
+    out
+}
+
 pub fn folders(dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
     fn go(dir: &Path, prefix: &str, out: &mut Vec<String>) {

@@ -25,6 +25,11 @@ const QUIET: std::time::Duration = std::time::Duration::from_secs(3);
 /// A sync in the background waits at most this long for a quiet moment.
 const MOST_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// The size limit of a file kept with a note that syncs, by default.
+pub const ATTACH_MB: u64 = 20;
+/// The most it can be: GitHub refuses files of 100 MB.
+pub const MOST_MB: u64 = 95;
+
 /// The name of a new repository for the memory.
 pub const NEW_REPO: &str = "paragma-memory";
 /// The folder of the memory in a repository that holds other things.
@@ -51,6 +56,9 @@ pub struct Config {
     /// When that was set: the setting changed last, on any computer, counts.
     pub env_at: i64,
     pub public: bool,
+    /// Files kept with notes go too (pg write --file), up to this size.
+    pub attachments: bool,
+    pub attach_mb: u64,
     pub account: String,
     /// git signs in with the GitHub CLI (its path), not its own helper.
     pub gh: String,
@@ -95,17 +103,25 @@ impl Config {
             env: v["env"].as_bool().unwrap_or(false),
             env_at: v["env_at"].as_i64().unwrap_or(0),
             public: v["public"].as_bool().unwrap_or(false),
+            attachments: v["attachments"].as_bool().unwrap_or(false),
+            attach_mb: v["attach_mb"].as_u64().unwrap_or(ATTACH_MB).clamp(1, MOST_MB),
             account: s("account"),
             gh: s("gh"),
             connected: v["connected"].as_i64().unwrap_or(0),
         })
     }
 
+    /// The config of the usual home, for a choice made before (the size
+    /// limit) when there is no home at hand.
+    pub fn load_any() -> Option<Config> {
+        Config::load(&crate::project::Home::locate())
+    }
+
     pub fn save(&self, home: &crate::project::Home) -> Result<()> {
         let v = json!({
             "repo": self.repo, "remote": self.remote, "branch": self.branch, "prefix": self.prefix,
             "env": self.env, "env_at": self.env_at, "public": self.public, "account": self.account, "gh": self.gh,
-            "connected": self.connected,
+            "connected": self.connected, "attachments": self.attachments, "attach_mb": self.attach_mb,
         });
         crate::project::files::write_atomic(
             &dir(home).join("config.json"),

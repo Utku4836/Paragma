@@ -66,6 +66,9 @@ pub struct Facts {
     pub reads: Vec<(String, String, i64)>,
     /// Notes with a due date: id, title, date.
     pub dues: Vec<(String, String, String)>,
+    /// Where the files kept with notes came from (their cards), as paths
+    /// compared without case and with '/'.
+    pub kept: Vec<String>,
 }
 
 /// Where a conversation is: what is worth its attention changes with it.
@@ -114,6 +117,7 @@ pub fn news_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
     let mut hints = experts::told(f);
     hints.extend(watch::unplanned_work(f));
     hints.extend(watch::long_work(f));
+    hints.extend(watch::keep_file(f));
     decide(f, hints, Phase::Middle, tokens)
 }
 

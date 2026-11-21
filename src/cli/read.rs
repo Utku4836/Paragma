@@ -25,6 +25,11 @@ pub struct Args {
 }
 
 pub fn run(cx: &Context, a: Args) -> Result<()> {
+    // a document, kept with a note or anywhere: by its parts
+    if let Some(done) = read_document(cx, &a.target)? {
+        print!("{done}");
+        return Ok(());
+    }
     let looks_like_code = a.target.contains('#') || lines_of(&a.target).is_some() || Lang::of(&a.target).is_some();
     if looks_like_code && let Some(done) = read_code(cx, &a.target)? {
         print!("{done}");
@@ -120,6 +125,62 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
         shown_in_full(&project, &index, &row.id);
     }
     Ok(())
+}
+
+/// A workbook, a document or a deck (xlsx, docx, pptx), by its path in the
+/// project's notes (where pg write --file keeps it) or on disk: its parts
+/// listed, or the part after '#' (a sheet, a range Sheet1!A1:D20, a
+/// heading, a slide number). None when the target is no such file.
+fn read_document(cx: &Context, target: &str) -> Result<Option<String>> {
+    let (path, part) = target.split_once('#').map(|(p, x)| (p, Some(x))).unwrap_or((target, None));
+    if crate::docs::Kind::of(std::path::Path::new(path)).is_none() {
+        return Ok(None);
+    }
+    // (an absolute path joined stays itself: in memory only if under it)
+    let in_memory = cx
+        .project
+        .as_ref()
+        .map(|p| (p.dir.join(path), p.dir.clone()))
+        .filter(|(f, d)| f.is_file() && f.starts_with(d))
+        .map(|(f, _)| f);
+    let outside = in_memory.is_none();
+    let file = match in_memory.or_else(|| Some(cx.cwd.join(path)).filter(|f| f.is_file())) {
+        Some(f) => f,
+        None => return Err(fail(NOT_FOUND, format!("no file {path} in the notes or here"))),
+    };
+    // read from outside memory: remembered (kernel/watch.rs keep_file)
+    if outside && let Some(p) = &cx.project {
+        let abs = std::path::absolute(&file).unwrap_or_else(|_| file.clone());
+        let _ = State::open(p)
+            .and_then(|s| s.record(crate::state::journal::Did::ReadFile { file: abs.display().to_string() }));
+    }
+    let mut b = Budget::new(cx.budget);
+    match part {
+        Some(which) => {
+            let p = crate::docs::part(&file, which).map_err(|e| fail(NOT_FOUND, e.to_string()))?;
+            b.add(&format!("[{path}#{}]", p.name));
+            for line in p.text.lines() {
+                if !b.add(line) {
+                    b.add("(cut to the budget: a smaller part, or --budget)");
+                    break;
+                }
+            }
+        }
+        None => {
+            let parts = crate::docs::parts(&file).map_err(|e| fail(NOT_FOUND, e.to_string()))?;
+            let what = match crate::docs::Kind::of(&file) {
+                Some(crate::docs::Kind::Xlsx) => "sheets",
+                Some(crate::docs::Kind::Docx) => "sections",
+                _ => "slides",
+            };
+            b.add(&format!("[{path}] {} {what} (one: pg read {path}#<name or number>)", parts.len()));
+            for (i, p) in parts.iter().enumerate() {
+                let first = p.text.lines().find(|l| !l.trim().is_empty() && !l.starts_with("|---")).unwrap_or("");
+                b.add(&format!("{}. {}  {}", i + 1, p.name, crate::output::one_line(first, 80)));
+            }
+        }
+    }
+    Ok(Some(b.out))
 }
 
 /// Later searches in this conversation show it as one line, while it does

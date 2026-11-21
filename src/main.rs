@@ -4,6 +4,7 @@ mod agents;
 mod cli;
 mod code;
 mod db;
+mod docs;
 mod embed;
 mod index;
 mod kernel;
