@@ -107,7 +107,11 @@ pub fn tree(p: &Project, open: &std::collections::HashSet<String>) -> Vec<TreeRo
                 add(p, &rel, depth + 1, folders, notes, open, out);
             }
         }
-        for n in notes.iter().filter(|n| n.rel.strip_prefix(prefix).is_some_and(|rest| !rest.contains('/'))) {
+        // the project note is the plan (its own section)
+        for n in notes
+            .iter()
+            .filter(|n| n.rel != plan::FILE && n.rel.strip_prefix(prefix).is_some_and(|rest| !rest.contains('/')))
+        {
             let text = files::read_text(&p.dir.join(&n.rel)).unwrap_or_default();
             let note = Note::parse(&text);
             let stem = n.rel.rsplit('/').next().unwrap_or(&n.rel).trim_end_matches(".md").to_string();

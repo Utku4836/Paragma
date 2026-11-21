@@ -215,8 +215,15 @@ fn draw_notes(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(pb, c[1]);
     let Some(row) = app.tree.get(app.cur()).cloned() else { return };
     if row.folder {
-        let text = format!("{} notes in {}.\n\nEnter opens the folder; n makes a note in it.", row.count, row.rel);
-        f.render_widget(Paragraph::new(Span::styled(text, theme::dim())).wrap(Wrap { trim: false }), pin);
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("{} in {}", crate::output::count(row.count as i64, "note"), row.rel),
+                theme::dim(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("Enter opens the folder; n makes a note in it.", theme::faint())),
+        ];
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), pin);
         return;
     }
     let Some(p) = &app.project else { return };
