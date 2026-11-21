@@ -19,6 +19,7 @@ mod state;
 mod sync;
 mod terminal;
 mod testrun;
+mod ui;
 mod upgrade;
 
 #[cfg(all(test, paragma_local))]

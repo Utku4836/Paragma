@@ -46,6 +46,8 @@ tree-sitter-wgsl-bevy = "0.1.4"
 tree-sitter-zig = "1.1.2"
 unicode-normalization = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+ratatui = "0.29"
+arboard = { version = "3", default-features = false }
 quick-xml = "0.37"
 
 [target.'cfg(windows)'.dependencies]

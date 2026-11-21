@@ -1,0 +1,90 @@
+//! The interface for people: `pg` alone, in a terminal. Projects, notes
+//! (read formatted, written in an editor with the usual keys), the plan,
+//! the files kept with notes, what agents and pg did, sync and settings, by
+//! keyboard and mouse. Every change is a pg command or the same code the
+//! commands use: agents see it as they see each other's work.
+
+pub mod app;
+pub mod data;
+pub mod draw;
+pub mod editor;
+pub mod markdown;
+pub mod theme;
+
+use anyhow::Result;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::{execute, terminal};
+use std::io::stdout;
+use std::time::Duration;
+
+fn enter() -> Result<()> {
+    terminal::enable_raw_mode()?;
+    execute!(
+        stdout(),
+        terminal::EnterAlternateScreen,
+        event::EnableMouseCapture,
+        event::EnableBracketedPaste,
+        event::EnableFocusChange
+    )?;
+    Ok(())
+}
+
+fn leave() {
+    let _ = execute!(
+        stdout(),
+        event::DisableFocusChange,
+        event::DisableBracketedPaste,
+        event::DisableMouseCapture,
+        terminal::LeaveAlternateScreen
+    );
+    let _ = terminal::disable_raw_mode();
+}
+
+pub fn run(home: crate::project::Home, project: Option<crate::project::Project>) -> Result<()> {
+    // the terminal comes back as it was, also after a crash
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        leave();
+        hook(info);
+    }));
+    enter()?;
+    let backend = ratatui::backend::CrosstermBackend::new(stdout());
+    let mut term = ratatui::Terminal::new(backend)?;
+    term.clear()?;
+    let mut app = app::App::new(home, project);
+    let result = (|| -> Result<()> {
+        while !app.quit {
+            term.draw(|f| draw::draw(f, &mut app))?;
+            if event::poll(Duration::from_millis(400))? {
+                match event::read()? {
+                    // Windows sends a release too: a key counts once
+                    Event::Key(k) if k.kind != KeyEventKind::Release => app.key(k),
+                    Event::Mouse(m) => app.mouse(m),
+                    Event::Paste(t) => app.paste(&t),
+                    Event::FocusGained => app.reload(),
+                    _ => {}
+                }
+            }
+            app.watch_outside();
+            if app.quit && app.open.as_ref().is_some_and(|o| o.ed.dirty) {
+                app.quit = false;
+                app.modal = Some(app::Modal::Confirm {
+                    what: app::Confirm::QuitUnsaved,
+                    title: "Quit without saving?".into(),
+                    lines: vec!["The open note has changes that are not saved.".into()],
+                });
+            }
+            // pg git, pg setup: their own screens, the terminal theirs meanwhile
+            if let Some(args) = app.run_outside.take() {
+                leave();
+                let _ = std::process::Command::new(&app.exe).args(&args).status();
+                enter()?;
+                term.clear()?;
+                app.reload();
+            }
+        }
+        Ok(())
+    })();
+    leave();
+    result
+}

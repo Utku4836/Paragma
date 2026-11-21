@@ -100,7 +100,7 @@ struct Cli {
     budget: usize,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -160,6 +160,18 @@ enum Command {
     /// The work done after pg finish, in the background (what may be outdated, what could be tidier)
     #[command(hide = true)]
     Sleep(sleep::Args),
+}
+
+/// The command line with its command.
+struct Parsed {
+    project: Option<String>,
+    budget: usize,
+    command: Command,
+}
+
+/// What pg did by itself, said for people (the interface's activity).
+pub fn undo_describe(e: &crate::state::journal::Entry) -> String {
+    undo::describe(e)
 }
 
 /// What every command needs.
@@ -243,6 +255,20 @@ fn not_let_in(home: &Home) -> String {
 
 fn dispatch(cli: Cli) -> Result<()> {
     crate::output::mark("parsed");
+    // pg alone: the interface for people, in a terminal; else the commands
+    let Some(command) = cli.command else {
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
+            let home = Home::locate();
+            crate::upgrade::run(&home);
+            let cx = context(cli.project.as_deref(), cli.budget)?;
+            return crate::ui::run(home, cx.project);
+        }
+        use clap::CommandFactory;
+        Cli::command().print_help()?;
+        return Ok(());
+    };
+    let cli = Parsed { project: cli.project, budget: cli.budget, command };
     let home = Home::locate();
     crate::upgrade::run(&home);
     crate::code::files::keep_listings_in(home.projects_dir().join(".pg").join("listings"));
