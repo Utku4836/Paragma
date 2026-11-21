@@ -145,9 +145,9 @@ impl Editor {
             return Some(l[byte(l, a.col)..byte(l, b.col)].to_string());
         }
         let mut out = self.lines[a.row][byte(&self.lines[a.row], a.col)..].to_string();
-        for r in a.row + 1..b.row {
+        for line in &self.lines[a.row + 1..b.row] {
             out.push('\n');
-            out.push_str(&self.lines[r]);
+            out.push_str(line);
         }
         out.push('\n');
         out.push_str(&self.lines[b.row][..byte(&self.lines[b.row], b.col)]);
