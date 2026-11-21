@@ -224,7 +224,11 @@ fn is_text(path: &std::path::Path) -> bool {
         return false;
     }
     let Ok(bytes) = std::fs::read(path) else { return true }; // its error comes when it is read
-    std::str::from_utf8(&bytes).is_ok_and(|t| !t.contains(' '))
+    // text: UTF-8 with no NUL, and hardly any control character but tabs and line ends
+    std::str::from_utf8(&bytes).is_ok_and(|t| {
+        let control = t.chars().filter(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r')).count();
+        !t.contains('\0') && control * 100 <= t.chars().count().max(1)
+    })
 }
 
 /// A file kept with a note; said what was done and whether it goes with

@@ -261,7 +261,7 @@ fn listing(project: &crate::project::Project, index: &Index, mut found: Vec<(&Li
         .map(|l| l.replace("  ", " "))
         .collect();
     if more > 0 {
-        out.push(format!("+{more} more about this code: pg tree <file>"));
+        out.push(format!("+{more} more about this code: pg ls <file>"));
     }
     Ok(out)
 }

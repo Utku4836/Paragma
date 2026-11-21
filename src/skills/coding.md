@@ -6,7 +6,7 @@ description: Use when changing code with Paragma memory - finding where things a
 
 ## Find your way
 - The brief of `pg open` already lists the rules and past errors for the task, the likely code, the test command and what changed since the last conversation. Start from it.
-- The map: `pg tree` (folders and files with their functions; `[1 rule: r3; 1 error: e12]` marks code memory has notes on), `pg tree <folder>/`, `pg tree <file>` (every function with its lines).
+- The map: `pg ls --code` (folders and files with their functions; `[1 rule: r3; 1 error: e12]` marks code memory has notes on), `pg ls <code folder>/`, `pg ls <file>` (every function with its lines).
 - One function instead of a whole file: `pg read <file>#Function` (`Type.Method` for a method), or `pg read <file>:40-60`. It shows the notes about that function too.
 - Several things to look up: send them together, not one per turn. Either parallel tool calls, or one `pg batch` with all of them:
   `pg batch '[["find", "refund window"], ["read", "e12"], ["ripple", "Refund"]]'` (MCP: one `pg_batch` call with `calls`). Those that only look run side by side; one that writes waits for those before it, so a later command sees it. Each answers under its own line.

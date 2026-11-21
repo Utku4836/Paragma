@@ -26,9 +26,9 @@ description: Use for work that spans steps or conversations with Paragma - openi
 ## Notes and folders
 - A note: `pg write <folder>/<name> "text"` (`--append` adds below; `-` reads stdin, `--file PATH` a file). A folder: `pg write <folder>/`. In another project: `pg write <project>/<path> "..."`.
 - One topic per note, named for it: `kargo/yurtici-anlasmasi`, `kargo/ucretler`, `kargo/iade-kodu`, not one `kargo/durum` holding everything. A folder is a category with many notes; a new topic is a new note, not another section appended to one. Split a note that has come to hold several topics.
-- Code, scripts and big files do not go in the memory folder (it goes to GitHub with the notes, and .md files there count as notes): keep them in a folder of their own and link it.
-- The folders a project's code is in: `pg link` lists them; `pg link <folder>` links one (`pg open` does it for the folder it runs in), `--replace` when the code moved (the others are taken out), `pg link --remove <folder>` takes one out, `--remove --gone` the ones that no longer exist.
-- What is where: `pg ls`, `pg ls <folder>`; projects: `pg ls` outside a project.
+- Code and scripts do not go in the memory folder (it goes to GitHub with the notes, and .md files there count as notes): keep them in a folder of their own. A document the work needs again (a workbook, a contract, a deck, a PDF) is kept with its note: `pg write <topic>/<note> --file <path>` (`pg skill knowledge`).
+- `pg open` links the folder it runs in to the project. `pg link` is for the rest (the folders of a project, one that moved: `--replace`, one taken out: `--remove`).
+- What is where: `pg ls`, `pg ls <folder>`; projects: `pg ls` outside a project. The to-dos of every note: `pg ls --todo`; due dates: `pg ls --due`.
 - Rename or move a note, folder or project: `pg mv <from> <to>` (`<folder>/` moves into it). Ids stay, `[[links]]` to it follow (also `[[folder/name]]`).
 - `pg rm <id | path | folder/ | project>` moves it to `.archive/` (`pg mv .archive/<path> <path>` brings it back); `--hard` deletes it.
 - A path's first part names this project's folder when it has one, else a project of that name: `pg write` says so when the note went to another project.
