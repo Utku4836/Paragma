@@ -382,7 +382,24 @@ fn confirm(cx: &Context, id: &str) -> Result<()> {
     }
     // a draft pg wrote: confirming keeps it as a record
     let path = project.dir.join(&row.path);
-    if crate::note::Note::parse(&crate::project::files::read_text(&path)?).props.text("status") == Some("draft") {
+    let status =
+        crate::note::Note::parse(&crate::project::files::read_text(&path)?).props.text("status").map(str::to_string);
+    // archived for being unused: in use again
+    if status.as_deref() == Some("archived") {
+        update_note(&project, &row.path, |n, _, _| {
+            n.props.set_text("status", "active");
+            n.props.set_text("last_seen", crate::output::date(crate::output::now()));
+            Ok(())
+        })?;
+        State::open(&project)?.record(crate::state::journal::Did::Write {
+            kind: "confirm".into(),
+            id: id.to_string(),
+            what: "back in use".into(),
+        })?;
+        println!("ok {id} (back in use: no longer archived)");
+        return Ok(());
+    }
+    if status.as_deref() == Some("draft") {
         update_note(&project, &row.path, |n, _, _| {
             n.props.set_text("status", "active");
             Ok(())

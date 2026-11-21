@@ -132,7 +132,8 @@ pub fn at_work(f: &Facts) -> Vec<Hint> {
     // by folder: "shop ×2 (just now)"
     let mut by_folder: Vec<(&str, usize, i64)> = Vec::new();
     for e in &busy {
-        let who = f.folders.get(&e.conversation).filter(|x| !x.is_empty()).map(String::as_str).unwrap_or("?");
+        let who =
+            f.folders.get(&e.conversation).filter(|x| !x.is_empty()).map(String::as_str).unwrap_or("a conversation");
         match by_folder.iter_mut().find(|b| b.0 == who) {
             Some(b) => b.1 += 1,
             None => by_folder.push((who, 1, e.at)),

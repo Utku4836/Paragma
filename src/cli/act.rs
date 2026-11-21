@@ -151,7 +151,11 @@ pub fn rule_drafts(project: &Project, state: &State, facts: &Facts) -> Result<Ve
         if note.props.text("status") == Some("draft") {
             continue; // a draft is no ground for a rule
         }
-        let title = note.props.text("title").unwrap_or(&c.error).to_string();
+        // the line as it was seen (the title is its signature, numbers taken out)
+        let title = note
+            .section("Symptom")
+            .and_then(|s| s.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
+            .unwrap_or_else(|| note.props.text("title").unwrap_or(&c.error).to_string());
         let fix = note.section("Fix").unwrap_or_default();
         let text = learn::rule_text(&c, &title, &fix);
         if !crate::kernel::gate::may_write(facts, "rule-draft") {
@@ -204,7 +208,7 @@ pub fn flaky_records(project: &Project, state: &State, facts: &Facts, command: &
         }
         let line = learn::flaky_line(&f);
         let index = crate::index::Index::open(project)?;
-        if crate::record::known_error(&index, &line)?.is_some() {
+        if index.error_with_signature(&crate::record::signature::normalize(&line))?.is_some() {
             state.set(&key, "known")?;
             continue; // memory has it already
         }

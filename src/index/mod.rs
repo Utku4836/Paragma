@@ -184,11 +184,12 @@ impl Index {
             .optional()?)
     }
 
-    /// Archived notes (in `.archive/`, or marked archived): id, path.
+    /// Notes pg archived for being unused (status: archived; still read and
+    /// found, weighed less): id, path. Those taken out to `.archive/` are
+    /// not in the index.
     pub fn archived(&self) -> Result<Vec<(String, String)>> {
-        let mut st = self.db.prepare(
-            "SELECT id, path FROM notes WHERE id IS NOT NULL AND (path LIKE '.archive/%' OR status = 'archived') ORDER BY path",
-        )?;
+        let mut st =
+            self.db.prepare("SELECT id, path FROM notes WHERE id IS NOT NULL AND status = 'archived' ORDER BY path")?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }

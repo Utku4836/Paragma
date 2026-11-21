@@ -226,6 +226,9 @@ pub fn error(project: &Project, e: &ErrorInput) -> Result<Written> {
     let near = nearest(&index, Kind::Error, &signature::message(&signature))?;
     let same = match same_signature(&index, &signature)? {
         Some(path) => Some(path),
+        // pg's own drafts are one a thing, by their line: "flaky test: TestA"
+        // and "... TestB" are close in words, not the same
+        None if e.draft => None,
         None => near.as_ref().filter(|p| p.1 >= SAME_ERROR).map(|p| p.0.path.clone()),
     };
     let today = date(now());

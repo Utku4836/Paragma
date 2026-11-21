@@ -12,7 +12,8 @@ description: Use to look up or record project knowledge with Paragma - rules, de
 - `pg doctor` lists the records that may be outdated (their code is gone or its signature changed: `pg write --confirm <id>` when still right) and what could be tidier (notes about the same thing, a note on unrelated topics, a folder with one note), each with the command that does it.
 
 ## Record it
-- A rule from the user: `pg write --rule "<one sentence>" --group <Group>`. Tie it to code: end it with `(applies: payments/, pricing/vat.go)`.
+- A rule from the user: `pg write --rule "<one sentence>" --group <Group>`. Tie it to code: end it with `(applies: payments/, pricing/vat.go)`. What it forbids in words code has (`never float`, ``never `unwrap()` ``) is named after an edit that adds it there.
+- `(draft)` rules in rules.md are pg's, from a fix that kept coming back: not binding until `pg write --confirm <id>`.
 - A decision: `pg write --decision "<what>" --why "<why>" --alternatives "<what else>"`. One that replaces another: `--supersedes d7`.
 - A fixed error: `pg write --error "<error line as printed>" --cause "..." --fix "..."` (`--files a.go,b.go` when the line names none).
 - The same rule, decision or error written again updates the one memory has. A record that seems to contradict another is pointed out: replace it with `--supersedes` (decisions) or `pg rm r3` (rules).

@@ -17,7 +17,7 @@ description: Use when changing code with Paragma memory - finding where things a
 
 ## Before and after a change
 - What reaches a function before you change it: `pg ripple Refund` (or `pg ripple payments/refund.go#Refund`): who calls it, which tests reach it, the notes about it. `pg read <file>#Function` shows the callers and tests too.
-- After changing a signature, renaming or removing something: `pg ripple` lists what changed since the last commit and the callers left as they were (`not updated:`), and the tests to run. A shader struct, GraphQL or Protobuf type or SQL table whose fields changed lists the other code that names it or its old fields (possible).
+- After changing a signature, renaming or removing something: `pg ripple` lists what changed since the last commit and the callers left as they were (`not updated:`), and the tests to run. Callers it is sure of come first; `by name only` ones may call another function of that name: check them. `named outside a function` are lines that use it at a file's top level or pass it as a callback. A common method name (`push`, `get`) called on what may be another type is counted, not listed. A shader struct, GraphQL or Protobuf type or SQL table whose fields changed lists the other code that names it or its old fields (possible).
 - `pg run`, the hooks after an edit and `pg finish` say it by themselves once (`ripple: ...`). Update those callers, or say in the handoff why not.
 
 ## Libraries
@@ -28,15 +28,19 @@ description: Use when changing code with Paragma memory - finding where things a
 
 ## Test
 - `pg run -- <test command>` instead of running it directly: failing tests marked new, failing already or flaky; each error line with the function it points at, the values an assertion compared (long ones cut to where they differ), the project's own stack frames, and the fix memory has (from this project or another). The same errors as your last run are said in one line. Fixed tests are named too. It exits with the command's exit code.
+- The numbers of tests are the test tool's own when it says them (`(node's count)`, cargo, pytest, jest, vitest, mocha, dotnet); else pg counts the lines. `pg run --json -- <command>` gives the counts, the failing tests, the error lines and the run's log file to a script.
 - `how it runs here:` in the brief: the test, build and check commands that passed in this project. Use them as they are.
 - The brief names the tests to run first for the likely code (`go test ./payments/`).
 - Any command that needs a key: `pg run -- curl -H "Authorization: Bearer $STRIPE_TEST" ...`. `$NAME` is put in on every system; the value never shows.
 
 ## Errors
-- `pg run` shows the output made short (errors whole, warnings grouped, repeats and progress counted, a library's frames counted); a failure names the file with all of it and the lines of its errors: read only those.
+- `pg run` shows the output made short (errors whole, warnings grouped, repeats and progress counted, a library's frames counted; lines that differ in a value or a name are kept apart); a failure names the file with all of it (each run its own) and the lines of its errors: read only those.
 - A failure memory knows: `pg run` prints `known: e12 ... fix: ...`. Read it: `pg read e12`.
 - Fixed something that was not obvious: `pg write --error "<the error line as printed>" --cause "..." --fix "..."`. Without `--files`, the file and function in the error line are linked. The same error again is counted, not duplicated.
 - When a test that failed passes and memory has no fix for its error, pg writes a draft record by itself: the error and the change that fixed it (the functions changed after the failing run). Say why and it is kept: `pg write --error "<the line>" --cause "..."` (`--fix` to change the fix). A draft is offered as `known:` for 14 days, marked as a draft; not worth keeping: `pg undo <number>` (the number is in the line that told it).
+- A test that failed and passed with the same code (no change in between) is flaky: pg writes a draft record of it once. Why it fails: `pg write --error "flaky test: ..." --cause "..."`; not flaky: `pg undo <number>`.
+- A known fix shown to several conversations that keeps coming back becomes a draft rule (`(draft)` in rules.md, not binding): `pg write --confirm <id>` makes it a rule, `pg undo <number>` takes it out. A known fix whose tests still fail at your handoff gets a dated line on its record.
+- After an edit, a line that adds what a rule of that code forbids (`never float`, ``never `unwrap()` ``) is named with the rule: change it, or say why in the handoff.
 - `may be outdated since it was written: ...` on a note: the code it names is gone, or its signature changed. Check it before relying on it; still right: `pg write --confirm <id>`, else change or remove it. `pg doctor` lists every such note.
 
 ## Before you finish

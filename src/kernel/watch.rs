@@ -4,7 +4,8 @@
 //! - stuck step: open while several conversations handed off without
 //!   touching it;
 //! - stale drafts: drafts pg wrote that nobody confirmed in two weeks;
-//! - archive revival: an archived note read again in several conversations;
+//! - archive revival: a note pg archived (unused for long) read again in
+//!   several conversations;
 //! - thin handoff: a handoff that says what was done, not what is next;
 //! - rule guard: a change that adds what a rule of that code forbids.
 
@@ -109,16 +110,13 @@ pub fn archive_revival(f: &Facts) -> Vec<Hint> {
         if readers.len() < REVIVE_AFTER {
             continue;
         }
-        let back = path.strip_prefix(".archive/").unwrap_or(path).trim_end_matches(".md");
-        let how = if path.starts_with(".archive/") {
-            format!("pg mv {} {back}", path.trim_end_matches(".md"))
-        } else {
-            format!("pg write --confirm {id}")
-        };
         out.push(Hint {
             key: format!("revive:{id}"),
             weight: 22,
-            text: format!("{id} is archived but was read again in {} conversations: back in use? {how}", readers.len()),
+            text: format!(
+                "{id} was archived (unused for long) but was read again in {} conversations: back in use? pg write --confirm {id}",
+                readers.len()
+            ),
             why: "an archived note in use again".into(),
         });
     }
@@ -197,8 +195,9 @@ pub fn forbidden(rule: &str) -> Vec<String> {
                 continue;
             }
             let rest = &rule[at + neg.len()..];
-            // backticked terms up to the end of the clause
-            let clause: &str = rest.split(['.', ';']).next().unwrap_or(rest);
+            // backticked terms up to the end of the clause: a ';', or a '.'
+            // ending a sentence, not one inside backticks (`time.Now`)
+            let clause: &str = clause_end(rest).map(|e| &rest[..e]).unwrap_or(rest);
             let mut ticks = clause.split('`');
             ticks.next();
             let mut any = false;
@@ -224,6 +223,22 @@ pub fn forbidden(rule: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Where a clause ends: the first ';', or '.' followed by a space or the
+/// end, outside backticks.
+fn clause_end(text: &str) -> Option<usize> {
+    let mut ticked = false;
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    for (k, (i, c)) in chars.iter().enumerate() {
+        match c {
+            '`' => ticked = !ticked,
+            ';' if !ticked => return Some(*i),
+            '.' if !ticked && chars.get(k + 1).is_none_or(|(_, n)| n.is_whitespace()) => return Some(*i),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Words after "never" or "no" that are English, not code.
