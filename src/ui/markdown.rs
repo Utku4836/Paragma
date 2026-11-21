@@ -148,10 +148,10 @@ pub fn render(body: &str) -> Vec<Line<'static>> {
         let indent = " ".repeat(line.len() - t.len());
         let mut spans: Vec<Span<'static>> = vec![Span::raw(indent)];
         if let Some(rest) = t.strip_prefix("- [ ] ") {
-            spans.push(Span::styled("☐ ", theme::accent()));
+            spans.push(Span::styled(format!("{} ", theme::mark::TODO), theme::accent()));
             spans.extend(inline(rest));
         } else if let Some(rest) = t.strip_prefix("- [x] ").or_else(|| t.strip_prefix("- [X] ")) {
-            spans.push(Span::styled("☑ ", theme::ok()));
+            spans.push(Span::styled(format!("{} ", theme::mark::DONE), theme::ok()));
             spans.extend(inline(rest).into_iter().map(|s| s.style(theme::dim().add_modifier(Modifier::CROSSED_OUT))));
         } else if let Some(rest) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
             spans.push(Span::styled("• ", theme::accent()));

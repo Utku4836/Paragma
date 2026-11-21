@@ -3,6 +3,7 @@
 
 use super::data::{self, ActRow, FileRow, ProjectRow, TreeRow};
 use super::editor::{Editor, Pos};
+use super::theme::mark;
 use crate::project::{Home, Project};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -22,13 +23,13 @@ pub enum Section {
 }
 
 pub const SECTIONS: [(Section, &str, &str); 7] = [
-    (Section::Projects, "◆", "Projects"),
-    (Section::Notes, "▤", "Notes"),
-    (Section::Plan, "☑", "Plan"),
-    (Section::Files, "▣", "Files"),
-    (Section::Activity, "◷", "Activity"),
-    (Section::Sync, "⇅", "Sync"),
-    (Section::Settings, "⚙", "Settings"),
+    (Section::Projects, mark::PROJECTS, "Projects"),
+    (Section::Notes, mark::NOTES, "Notes"),
+    (Section::Plan, mark::PLAN, "Plan"),
+    (Section::Files, mark::FILES, "Files"),
+    (Section::Activity, mark::ACTIVITY, "Activity"),
+    (Section::Sync, mark::SYNC, "Sync"),
+    (Section::Settings, mark::SETTINGS, "Settings"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +41,7 @@ pub enum Focus {
 /// What a typed answer is for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ask {
+    Goal,
     NewNote,
     NewFolder,
     Move(String),
@@ -122,6 +124,8 @@ pub enum Hit {
     Row(usize),
     Button(String),
     Editor,
+    /// The note shown beside the tree: the wheel scrolls it.
+    Preview,
     ModalButton(usize),
 }
 
@@ -157,6 +161,11 @@ pub struct App {
     pub ed_area: Rect,
     /// A file's path typed in the Files section, waiting for its note.
     pub pending_path: String,
+    /// Where the mouse is: the row under it is lit.
+    pub hover: Option<(u16, u16)>,
+    /// How far the preview is scrolled, and the note it is of.
+    pub preview_scroll: usize,
+    pub preview_of: String,
 }
 
 fn index(s: Section) -> usize {
@@ -190,7 +199,11 @@ impl App {
             run_outside: None,
             ed_area: Rect::default(),
             pending_path: String::new(),
+            hover: None,
+            preview_scroll: 0,
+            preview_of: String::new(),
         };
+        app.open_small_trees();
         app.reload();
         app
     }
@@ -201,6 +214,19 @@ impl App {
 
     fn project_name(&self) -> Option<String> {
         self.project.as_ref().map(|p| p.name.clone())
+    }
+
+    /// A project with few notes shows them all at once: its folders open.
+    fn open_small_trees(&mut self) {
+        if let Some(p) = &self.project {
+            let notes = crate::project::scan::notes(&p.dir);
+            if notes.len() <= 40 {
+                for f in crate::project::scan::folders(&p.dir) {
+                    self.expanded.insert(format!("{}/", f.trim_end_matches('/')));
+                }
+            }
+        }
+        self.reload();
     }
 
     /// Reads again what the sections show.
@@ -489,6 +515,7 @@ impl App {
                 vec![s.text.clone(), "The other steps keep their numbers.".into()],
             ),
             (PlanRow::Question(n, q), '\n') if q.answer.is_none() => self.ask(Ask::Answer(n), &q.text, ""),
+            (PlanRow::Goal(g), '\n' | 'e') => self.ask(Ask::Goal, "The project's goal", &g),
             _ => {}
         }
     }
@@ -497,6 +524,7 @@ impl App {
         let Some(name) = self.projects.get(row).map(|p| p.name.clone()) else { return };
         self.project = self.home.project(&name);
         self.expanded.clear();
+        self.open_small_trees();
         self.cur = [self.cur[0], 0, 0, 0, 0, self.cur[5], self.cur[6]];
         self.reload();
         self.section = Section::Notes;
@@ -961,6 +989,12 @@ impl App {
             return;
         }
         match ask {
+            Ask::Goal => {
+                if let Some(n) = name.clone() {
+                    run(self, vec!["open".into(), n, "--goal".into(), text]);
+                    self.say("goal saved", false);
+                }
+            }
             Ask::NewNote => {
                 let rel = text.trim_matches('/').trim_end_matches(".md").to_string();
                 let Some(p) = self.project.clone() else { return };
@@ -1151,13 +1185,22 @@ impl App {
             .find(|(r, _)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
             .cloned();
         match m.kind {
+            MouseEventKind::Moved => self.hover = Some((x, y)),
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let down = m.kind == MouseEventKind::ScrollDown;
+                self.hover = Some((x, y));
                 if let Some(o) = self.open.as_mut() {
                     o.ed.scroll = if down { o.ed.scroll + 3 } else { o.ed.scroll.saturating_sub(3) };
+                } else if matches!(hit, Some((_, Hit::Preview))) {
+                    self.preview_scroll =
+                        if down { self.preview_scroll + 3 } else { self.preview_scroll.saturating_sub(3) };
+                } else if let Some(Modal::Pick { title, items, cur }) = self.modal.clone() {
+                    let cur = if down { (cur + 1).min(items.len().saturating_sub(1)) } else { cur.saturating_sub(1) };
+                    self.modal = Some(Modal::Pick { title, items, cur });
                 } else if self.modal.is_none() {
                     let c = self.cur();
-                    self.set_cur(if down { c + 3 } else { c.saturating_sub(3) });
+                    self.focus = Focus::Main;
+                    self.set_cur(if down { c + 1 } else { c.saturating_sub(1) });
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {

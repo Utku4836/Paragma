@@ -4,12 +4,14 @@
 
 use super::app::{App, Focus, Hit, Modal, PlanRow, SECTIONS, SETTINGS, Section};
 use super::markdown;
-use super::theme;
+use super::theme::{self, mark};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     app.hits.clear();
@@ -52,12 +54,19 @@ fn rows3(area: Rect) -> [Rect; 3] {
 }
 
 fn block<'a>(title: &'a str, focused: bool) -> Block<'a> {
-    Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(theme::border(focused)).title(
+    let title = if focused {
         Span::styled(
             format!(" {title} "),
-            if focused { theme::accent().add_modifier(Modifier::BOLD) } else { theme::dim() },
-        ),
-    )
+            Style::default().fg(ratatui::style::Color::Black).bg(theme::ACCENT).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(format!(" {title} "), theme::dim())
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::border(focused))
+        .title(title)
 }
 
 fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
@@ -92,7 +101,7 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
-    let focused = app.focus == Focus::Sidebar && app.open.is_none();
+    let focused = app.focus == Focus::Sidebar && app.open.is_none() && app.modal.is_none();
     let b = block("Paragma", focused);
     let inner = b.inner(area);
     f.render_widget(b, area);
@@ -101,22 +110,54 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         if y >= inner.y + inner.height {
             break;
         }
-        let chosen = *s == app.section;
-        let style = if chosen { theme::chosen() } else { theme::text() };
-        let text = format!(" {icon}  {label:<11}{}", i + 1);
         let r = Rect { x: inner.x, y, width: inner.width, height: 1 };
-        f.render_widget(Paragraph::new(Span::styled(fit(&text, inner.width as usize), style)), r);
+        let chosen = *s == app.section;
+        let hovered = app.hover.is_some_and(|(hx, hy)| hy == y && hx >= r.x && hx < r.x + r.width);
+        // the chosen section: lit when it has the keys, marked when not
+        let (bg, fg, bar) = if chosen && focused {
+            (Some(theme::ACCENT), Style::default().fg(ratatui::style::Color::Black).add_modifier(Modifier::BOLD), "▌")
+        } else if chosen {
+            (Some(theme::IDLE_BG), theme::accent().add_modifier(Modifier::BOLD), "▌")
+        } else if hovered {
+            (Some(theme::HOVER_BG), theme::text(), " ")
+        } else {
+            (None, theme::dim(), " ")
+        };
+        if let Some(bg) = bg {
+            f.render_widget(Block::default().style(Style::default().bg(bg)), r);
+        }
+        let key = format!("{}", i + 1);
+        let label_w = (inner.width as usize).saturating_sub(7);
+        let line = Line::from(vec![
+            Span::styled(bar, if chosen { theme::accent() } else { theme::faint() }),
+            Span::styled(format!("{icon} "), if chosen { fg } else { theme::accent() }),
+            Span::styled(fit(label, label_w), fg),
+            Span::styled(format!(" {key} "), if chosen && focused { fg } else { theme::faint() }),
+        ]);
+        let line = match bg {
+            Some(bg) => line.patch_style(Style::default().bg(bg)),
+            None => line,
+        };
+        f.render_widget(Paragraph::new(line), r);
         app.hits.push((r, Hit::Section(i)));
     }
 }
 
-/// A list of rows that scrolls with its chosen one; each row clickable.
+/// A list of rows that scrolls with its chosen one; each row clickable,
+/// the chosen one lit, the one under the mouse shaded, a scrollbar when it
+/// is longer than the room.
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect, section: Section, lines: Vec<Line<'static>>, empty: &str) {
     let k = SECTIONS.iter().position(|s| s.0 == section).unwrap_or(0);
     if lines.is_empty() {
-        f.render_widget(Paragraph::new(Span::styled(empty.to_string(), theme::dim())).wrap(Wrap { trim: false }), area);
+        f.render_widget(
+            Paragraph::new(Span::styled(format!(" {empty}"), theme::dim())).wrap(Wrap { trim: false }),
+            area,
+        );
         return;
     }
+    let total = lines.len();
+    let long = total > area.height as usize;
+    let width = if long { area.width.saturating_sub(1) } else { area.width };
     let height = area.height as usize;
     let cur = app.cur[k];
     if cur < app.top[k] {
@@ -125,23 +166,67 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, section: Section, lines: 
     if cur >= app.top[k] + height {
         app.top[k] = cur + 1 - height;
     }
-    let focused = app.focus == Focus::Main && app.modal.is_none();
+    let focused = app.focus == Focus::Main && app.modal.is_none() && app.open.is_none();
     for (row, line) in lines.into_iter().enumerate().skip(app.top[k]).take(height) {
         let y = area.y + (row - app.top[k]) as u16;
-        let r = Rect { x: area.x, y, width: area.width, height: 1 };
-        let line = if row == cur {
-            let style = if focused { theme::chosen() } else { Style::default().bg(theme::FAINT) };
-            line.style(style)
+        let r = Rect { x: area.x, y, width, height: 1 };
+        let hovered = app.hover.is_some_and(|(hx, hy)| hy == y && hx >= r.x && hx < r.x + r.width);
+        let (bg, style) = if row == cur && focused {
+            (Some(theme::ACCENT), Some(theme::chosen()))
+        } else if row == cur {
+            (Some(theme::IDLE_BG), Some(theme::chosen_idle()))
+        } else if hovered {
+            (Some(theme::HOVER_BG), None)
         } else {
-            line
+            (None, None)
         };
+        if let Some(bg) = bg {
+            f.render_widget(Block::default().style(Style::default().bg(bg)), r);
+        }
+        let bar = if row == cur {
+            Span::styled(
+                mark::BAR,
+                if focused { Style::default().fg(theme::ACCENT_DEEP).bg(theme::ACCENT) } else { theme::accent() },
+            )
+        } else {
+            Span::raw(" ")
+        };
+        let mut spans = vec![bar];
+        spans.extend(line.spans);
+        let mut line = Line::from(spans);
+        if let Some(st) = style {
+            // the chosen row in one colour over its band, so it reads at once
+            line = Line::from(line.spans.into_iter().map(|sp| sp.style(st)).collect::<Vec<_>>());
+        } else if let Some(bg) = bg {
+            line = line.patch_style(Style::default().bg(bg));
+        }
         f.render_widget(Paragraph::new(line), r);
         app.hits.push((r, Hit::Row(row)));
     }
+    if long && area.height > 1 && area.width > 1 {
+        let mut state = ScrollbarState::new(total.saturating_sub(height) + 1).position(app.top[k]);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_style(theme::accent())
+                .track_style(theme::faint()),
+            area,
+            &mut state,
+        );
+    }
+}
+
+/// "Notes  3/12": where the chosen row is.
+fn titled(name: &str, app: &App, section: Section) -> String {
+    let n = app.rows(section);
+    let k = SECTIONS.iter().position(|s| s.0 == section).unwrap_or(0);
+    if n == 0 { name.to_string() } else { format!("{name}  {}/{n}", app.cur[k] + 1) }
 }
 
 fn draw_projects(f: &mut Frame, app: &mut App, area: Rect) {
-    let b = block("Projects", app.focus == Focus::Main);
+    let t = titled("Projects", app, Section::Projects);
+    let b = block(&t, app.focus == Focus::Main);
     let inner = b.inner(area);
     f.render_widget(b, area);
     let current = app.project.as_ref().map(|p| p.name.clone()).unwrap_or_default();
@@ -149,7 +234,7 @@ fn draw_projects(f: &mut Frame, app: &mut App, area: Rect) {
         .projects
         .iter()
         .map(|p| {
-            let mark = if p.name == current { "● " } else { "  " };
+            let mark = if p.name == current { format!("{} ", mark::CURRENT) } else { "  ".to_string() };
             Line::from(vec![
                 Span::styled(mark, theme::accent()),
                 Span::styled(format!("{:<28}", p.name), theme::text().add_modifier(Modifier::BOLD)),
@@ -183,7 +268,8 @@ fn draw_notes(f: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
-    let b = block("Notes", app.focus == Focus::Main);
+    let t = titled("Notes", app, Section::Notes);
+    let b = block(&t, app.focus == Focus::Main);
     let inner = b.inner(c[0]);
     f.render_widget(b, c[0]);
     let lines: Vec<Line<'static>> = app
@@ -195,13 +281,13 @@ fn draw_notes(f: &mut Frame, app: &mut App, area: Rect) {
                 let open = app.expanded.contains(&r.rel);
                 Line::from(vec![
                     Span::raw(pad),
-                    Span::styled(if open { "▾ " } else { "▸ " }, theme::accent()),
+                    Span::styled(format!("{} ", if open { mark::FOLDER_OPEN } else { mark::FOLDER }), theme::accent()),
                     Span::styled(r.title.clone(), theme::text().add_modifier(Modifier::BOLD)),
                     Span::styled(format!("  {}", r.count), theme::faint()),
                 ])
             } else {
                 Line::from(vec![
-                    Span::raw(format!("{pad}  ")),
+                    Span::styled(format!("{pad}{} ", mark::NOTE), theme::faint()),
                     Span::styled(r.title.clone(), theme::text()),
                     Span::styled(format!("  {}", r.tag), theme::faint()),
                 ])
@@ -210,7 +296,7 @@ fn draw_notes(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     draw_list(f, app, inner, Section::Notes, lines, "No notes yet. Press n for a new note, N for a folder.");
     // the chosen note, as it reads
-    let pb = block("Preview", false);
+    let pb = block("Preview  (wheel scrolls it)", false);
     let pin = pb.inner(c[1]);
     f.render_widget(pb, c[1]);
     let Some(row) = app.tree.get(app.cur()).cloned() else { return };
@@ -239,14 +325,34 @@ fn draw_notes(f: &mut Frame, app: &mut App, area: Rect) {
     }
     lines.push(Line::from(""));
     lines.extend(markdown::render(&note.body));
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), pin);
+    if app.preview_of != row.rel {
+        app.preview_of = row.rel.clone();
+        app.preview_scroll = 0;
+    }
+    let total = lines.len();
+    app.preview_scroll = app.preview_scroll.min(total.saturating_sub(1));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((app.preview_scroll as u16, 0)), pin);
+    app.hits.push((pin, Hit::Preview));
+    if total > pin.height as usize && c[1].height > 2 {
+        let mut state = ScrollbarState::new(total).position(app.preview_scroll);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_style(theme::accent())
+                .track_style(theme::faint()),
+            c[1],
+            &mut state,
+        );
+    }
 }
 
 fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
     if app.project.is_none() {
         return no_project(f, area, "Plan");
     }
-    let b = block("Plan", app.focus == Focus::Main);
+    let t = titled("Plan", app, Section::Plan);
+    let b = block(&t, app.focus == Focus::Main);
     let inner = b.inner(area);
     f.render_widget(b, area);
     let lines: Vec<Line<'static>> = app
@@ -258,27 +364,30 @@ fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(if g.is_empty() { "(none yet)".into() } else { g }, theme::text()),
             ]),
             PlanRow::Step(n, s) => {
-                let (mark, style) = if s.done {
-                    ("☑", theme::dim().add_modifier(Modifier::CROSSED_OUT))
+                let (m, style) = if s.done {
+                    (mark::DONE, theme::dim().add_modifier(Modifier::CROSSED_OUT))
                 } else if s.deferred {
-                    ("◌", theme::dim())
+                    (mark::LATER, theme::dim())
                 } else {
-                    ("☐", theme::text())
+                    (mark::TODO, theme::text())
                 };
                 Line::from(vec![
-                    Span::styled(format!("  {mark} "), if s.done { theme::ok() } else { theme::accent() }),
+                    Span::styled(format!("  {m} "), if s.done { theme::ok() } else { theme::accent() }),
                     Span::styled(format!("{n:>3}. "), theme::faint()),
                     Span::styled(s.text.clone(), style),
                     Span::styled(if s.deferred { "  (later)".to_string() } else { String::new() }, theme::faint()),
                 ])
             }
             PlanRow::Question(n, q) => Line::from(vec![
-                Span::styled(if q.answer.is_some() { "  ✓ " } else { "  ? " }, theme::warn()),
+                Span::styled(
+                    if q.answer.is_some() { format!("  {} ", mark::DONE) } else { format!("  {} ", mark::QUESTION) },
+                    theme::warn(),
+                ),
                 Span::styled(format!("{n}. {}", q.text), theme::text()),
                 Span::styled(q.answer.map(|a| format!("  → {a}")).unwrap_or_default(), theme::dim()),
             ]),
             PlanRow::Handoff(h) => Line::from(vec![
-                Span::styled("  ⇢ ", theme::faint()),
+                Span::styled(format!("  {} ", mark::HANDOFF), theme::faint()),
                 Span::styled(format!("{}  ", h.heading), theme::dim()),
                 Span::styled(crate::output::one_line(&h.text, 120), theme::faint()),
             ]),
@@ -291,7 +400,8 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
     if app.project.is_none() {
         return no_project(f, area, "Files");
     }
-    let b = block("Files kept with notes", app.focus == Focus::Main);
+    let t = titled("Files kept with notes", app, Section::Files);
+    let b = block(&t, app.focus == Focus::Main);
     let inner = b.inner(area);
     f.render_widget(b, area);
     let lines: Vec<Line<'static>> = app
@@ -299,7 +409,7 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|r| {
             Line::from(vec![
-                Span::styled("▣ ", theme::accent()),
+                Span::styled(format!("{} ", mark::FILES), theme::accent()),
                 Span::styled(format!("{:<40}", fit(&r.rel, 40)), theme::text()),
                 Span::styled(format!("{:>9}  ", crate::project::attach::size(r.size)), theme::dim()),
                 Span::styled(format!("{}  ", r.date), theme::faint()),
@@ -332,7 +442,8 @@ fn draw_activity(f: &mut Frame, app: &mut App, area: Rect) {
     if app.project.is_none() {
         return no_project(f, area, "Activity");
     }
-    let b = block("Activity: what agents and pg did here", app.focus == Focus::Main);
+    let t = titled("Activity: what agents and pg did here", app, Section::Activity);
+    let b = block(&t, app.focus == Focus::Main);
     let inner = b.inner(area);
     f.render_widget(b, area);
     let now = crate::output::now();
@@ -445,10 +556,10 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(o) = app.open.as_ref() else { return };
     let title = format!(
         "{} {}{}{}",
-        if o.reading { "◉" } else { "✎" },
+        if o.reading { "Reading" } else { "Editing" },
         o.rel.trim_end_matches(".md"),
         if o.ed.dirty { "  ● unsaved" } else { "" },
-        if o.outside { "  ⚠ changed outside" } else { "" }
+        if o.outside { format!("  {} changed outside", mark::WARN) } else { String::new() }
     );
     let reading = o.reading;
     let b = block(&title, true);
@@ -462,8 +573,8 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     if reading {
-        button(f, app, &mut x, y, end, "✎ Edit  e", "edit");
-        button(f, app, &mut x, y, end, "✕ Close  Esc", "close");
+        button(f, app, &mut x, y, end, "Edit  e", "edit");
+        button(f, app, &mut x, y, end, "Close  Esc", "close");
     } else {
         button(f, app, &mut x, y, end, "Save ^S", "save");
         button(f, app, &mut x, y, end, "Find ^F", "find");
@@ -475,10 +586,18 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let Some(o) = app.open.as_mut() else { return };
     let finding = o.find.is_some();
-    let text_area = Rect {
+    // line numbers beside the text when writing, as wide as the last one
+    let gutter = if reading || inner.width < 30 { 0 } else { (o.ed.lines.len().to_string().len() + 2) as u16 };
+    let gutter_area = Rect {
         x: inner.x,
         y: inner.y + 2,
-        width: inner.width,
+        width: gutter,
+        height: inner.height.saturating_sub(if finding { 3 } else { 2 }),
+    };
+    let text_area = Rect {
+        x: inner.x + gutter,
+        y: inner.y + 2,
+        width: inner.width.saturating_sub(gutter),
         height: inner.height.saturating_sub(if finding { 3 } else { 2 }),
     };
     app.ed_area = text_area;
@@ -504,7 +623,29 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
             fenced = !fenced;
         }
     }
+    let cur_row = o.ed.cur.row;
     for (vi, (r, a, b)) in rows.iter().enumerate().skip(o.ed.scroll).take(height) {
+        let y = text_area.y + (vi - o.ed.scroll) as u16;
+        // the line the cursor is on, shaded; its number lit
+        if *r == cur_row {
+            f.render_widget(
+                Block::default().style(Style::default().bg(theme::HOVER_BG)),
+                Rect { x: gutter_area.x, y, width: gutter + text_area.width, height: 1 },
+            );
+        }
+        if gutter > 0 {
+            let first_of_line = *a == 0;
+            let n = if first_of_line {
+                format!("{:>w$} ", r + 1, w = gutter as usize - 2)
+            } else {
+                " ".repeat(gutter as usize - 1)
+            };
+            let style = if *r == cur_row { theme::accent().bg(theme::HOVER_BG) } else { theme::faint() };
+            f.render_widget(
+                Paragraph::new(Span::styled(n, style)),
+                Rect { x: gutter_area.x, y, width: gutter, height: 1 },
+            );
+        }
         let line = &o.ed.lines[*r];
         let chars: Vec<char> = line.chars().collect();
         let part: String = chars[*a..*b].iter().collect();
@@ -522,11 +663,11 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
             }
             _ => vec![Span::styled(part, base)],
         };
-        let y = text_area.y + (vi - o.ed.scroll) as u16;
-        f.render_widget(
-            Paragraph::new(Line::from(spans)),
-            Rect { x: text_area.x, y, width: text_area.width, height: 1 },
-        );
+        let mut line = Line::from(spans);
+        if *r == cur_row {
+            line = line.patch_style(Style::default().bg(theme::HOVER_BG));
+        }
+        f.render_widget(Paragraph::new(line), Rect { x: text_area.x, y, width: text_area.width, height: 1 });
     }
     let (cr, cc) = o.ed.cursor_row(&rows);
     if !finding && cr >= o.ed.scroll && cr < o.ed.scroll + height {

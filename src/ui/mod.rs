@@ -32,6 +32,7 @@ fn enter() -> Result<()> {
 fn leave() {
     let _ = execute!(
         stdout(),
+        ratatui::crossterm::cursor::SetCursorStyle::DefaultUserShape,
         event::DisableFocusChange,
         event::DisableBracketedPaste,
         event::DisableMouseCapture,
@@ -55,16 +56,30 @@ pub fn run(home: crate::project::Home, project: Option<crate::project::Project>)
     let result = (|| -> Result<()> {
         while !app.quit {
             term.draw(|f| draw::draw(f, &mut app))?;
-            if event::poll(Duration::from_millis(400))? {
-                match event::read()? {
-                    // Windows sends a release too: a key counts once
-                    Event::Key(k) if k.kind != KeyEventKind::Release => app.key(k),
-                    Event::Mouse(m) => app.mouse(m),
-                    Event::Paste(t) => app.paste(&t),
-                    Event::FocusGained => app.reload(),
-                    _ => {}
+            // every event waiting is taken before the next frame: keys held
+            // down or a wheel turned fast do not queue up behind drawing
+            if event::poll(Duration::from_millis(250))? {
+                loop {
+                    match event::read()? {
+                        // Windows sends a release too: a key counts once
+                        Event::Key(k) if k.kind != KeyEventKind::Release => app.key(k),
+                        Event::Mouse(m) => app.mouse(m),
+                        Event::Paste(t) => app.paste(&t),
+                        Event::FocusGained => app.reload(),
+                        _ => {}
+                    }
+                    if app.quit || app.run_outside.is_some() || !event::poll(Duration::ZERO)? {
+                        break;
+                    }
                 }
             }
+            // a bar cursor while writing, as editors have it
+            let style = if app.open.as_ref().is_some_and(|o| !o.reading) || app.modal.is_some() {
+                ratatui::crossterm::cursor::SetCursorStyle::BlinkingBar
+            } else {
+                ratatui::crossterm::cursor::SetCursorStyle::DefaultUserShape
+            };
+            let _ = execute!(stdout(), style);
             app.watch_outside();
             if app.quit && app.open.as_ref().is_some_and(|o| o.ed.dirty) {
                 app.quit = false;
