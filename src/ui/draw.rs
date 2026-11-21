@@ -158,41 +158,37 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     let b = block("Paragma", focused);
     let inner = b.inner(area);
     f.render_widget(b, area);
-    // a line between the sections when there is room
-    let gap = if inner.height as usize >= SECTIONS.len() * 2 { 2 } else { 1 };
+    // a line above the first and between the sections when there is room
+    let n = SECTIONS.len();
+    let gap = if inner.height as usize > n * 2 { 2 } else { 1 };
+    let top = if inner.height as usize > n * gap { 1 } else { 0 };
     for (i, (s, icon, label)) in SECTIONS.iter().enumerate() {
-        let y = inner.y + (i * gap) as u16;
+        let y = inner.y + top + (i * gap) as u16;
         if y >= inner.y + inner.height {
             break;
         }
         let r = Rect { x: inner.x, y, width: inner.width, height: 1 };
         let chosen = *s == app.section && app.open.is_none();
         let hovered = app.hover.is_some_and(|(hx, hy)| hy == y && hx >= r.x && hx < r.x + r.width);
-        let bg = if chosen && focused {
-            Some(theme::IDLE_BG)
-        } else if chosen || hovered {
-            Some(theme::HOVER_BG)
-        } else {
-            None
-        };
+        let bg = if hovered && !chosen { Some(theme::HOVER_BG) } else { None };
         if let Some(bg) = bg {
             f.render_widget(Block::default().style(Style::default().bg(bg)), r);
         }
-        let fg = if chosen { theme::accent().add_modifier(Modifier::BOLD) } else { theme::text() };
-        let label_w = (inner.width as usize).saturating_sub(8);
+        // the names in capitals and bold: they read larger in a terminal
+        let fg = if chosen { theme::accent() } else { theme::text() }.add_modifier(Modifier::BOLD);
+        let label_w = (inner.width as usize).saturating_sub(9);
         let mut spans = vec![
-            Span::styled(if chosen { mark::BAR } else { " " }, theme::accent().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                if chosen { format!(" {}", mark::BAR) } else { "  ".into() },
+                theme::accent().add_modifier(Modifier::BOLD),
+            ),
             Span::styled(format!(" {icon} "), theme::tile(chosen)),
             Span::raw(" "),
-            Span::styled(fit(label, label_w), fg),
+            Span::styled(fit(&label.to_uppercase(), label_w), fg),
             Span::styled(format!("{}", i + 1), theme::faint()),
         ];
         if let Some(bg) = bg {
-            spans = spans
-                .into_iter()
-                .enumerate()
-                .map(|(k, sp)| if k == 1 { sp } else { sp.patch_style(Style::default().bg(bg)) })
-                .collect();
+            spans = spans.into_iter().map(|sp| sp.patch_style(Style::default().bg(bg))).collect();
         }
         f.render_widget(Paragraph::new(Line::from(spans)), r);
         app.hits.push((r, Hit::Section(i)));
@@ -268,11 +264,11 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, section: Section, lines: 
         let hovered = app.hover.is_some_and(|(hx, hy)| hy == y && hx >= r.x && hx < r.x + r.width);
         let target = dragging && app.drag_over == Some(row);
         let (bg, style) = if target {
-            (Some(theme::ACCENT_DEEP), None)
+            (None, Some(theme::chosen().add_modifier(Modifier::UNDERLINED)))
         } else if row == cur && focused {
-            (Some(theme::ACCENT), Some(theme::chosen()))
+            (None, Some(theme::chosen()))
         } else if row == cur {
-            (Some(theme::IDLE_BG), Some(theme::chosen_idle()))
+            (None, Some(theme::chosen_idle()))
         } else if hovered {
             (Some(theme::HOVER_BG), None)
         } else {
@@ -1266,9 +1262,6 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
                 let rr = Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 };
                 let text = format!(" {} {}  {label} ", if i == cur { mark::BAR } else { " " }, i + 1);
                 let style = if i == cur { theme::chosen() } else { theme::text() };
-                if i == cur {
-                    f.render_widget(Block::default().style(Style::default().bg(theme::ACCENT)), rr);
-                }
                 f.render_widget(Paragraph::new(Span::styled(text, style)), rr);
                 app.hits.push((rr, Hit::ModalButton(i)));
             }
@@ -1420,7 +1413,6 @@ fn finder(
             Span::styled(format!(" {hint}"), theme::faint()),
         ]);
         let line = if i == cur {
-            f.render_widget(Block::default().style(Style::default().bg(theme::ACCENT)), rr);
             Line::from(line.spans.into_iter().map(|s| s.style(theme::chosen())).collect::<Vec<_>>())
         } else {
             line

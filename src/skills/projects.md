@@ -18,6 +18,7 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - What pg does by itself, inside memory only, each undone with one command: a handoff for a conversation that stopped without one (written from what the log says it did; its own `pg finish` replaces it), a draft record of an error a test run fixed or of a flaky test, a draft rule from a fix that keeps coming back, a dated line on a record whose fix did not help, the commands that pass here in the project note (`How it runs`; a section you changed is yours and stays). `pg undo` lists them with numbers; `pg undo <number>` takes one back. One that gets undone often only says what it would write (`pg doctor --experts`). pg never deletes or moves a note, changes your text or touches code by itself.
 - A question only the user can answer, and the work waits on it (an address, a document, a choice): `pg ask "..."` keeps it; the brief lists the open ones under "waiting on the user", so it is neither asked twice nor forgotten. When the user answers: `pg ask <number> "..."`; several at once: `pg ask --json '[{"question": "2", "answer": "..."}, {"question": "3", "answer": "..."}]'`.
 - Inside a project's own folder in memory (`~/.paragma/projects/<name>`), commands work on that project without `-p`.
+- The user works in the same memory with `pg` alone (an interface in their terminal): their changes show as `you` in the activity and as `changed by the user`; a note they changed is the newest word on it. A note from them (`pg tell` there) comes as `from the user`.
 - Decisions, rules, errors as you learn them: `pg skill knowledge`.
 
 ## Finish
@@ -35,5 +36,6 @@ description: Use for work that spans steps or conversations with Paragma - openi
 - pg says a file of its own is damaged: `pg doctor` finds it and makes it again (notes are never touched).
 
 ## Memory on GitHub
-- The user may back up and sync memory with `pg git` (their screen). What you write then goes there by itself; never wait for it or sync by hand.
+- The user may back up and sync memory with `pg git` or the Sync section of `pg` (their screens). What you write then goes there by itself; never wait for it or sync by hand.
+- A note changed on two computers keeps the other one beside it as `<name>.conflict.md`: the user chooses in `pg` (Sync); asked to do it yourself, join what both say in the note, then `pg rm` the copy.
 - `pg git status` says where it goes and how the last sync went. Connect, move or disconnect only when the user asks: `pg git connect --new`, `--repo owner/name`.
