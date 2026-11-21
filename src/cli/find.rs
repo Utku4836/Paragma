@@ -152,7 +152,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     }
     // a note another conversation here left, once
     if !several && let Some(state) = &states[0] {
-        for line in super::perceive::news(state).unwrap_or_default() {
+        for line in super::perceive::news(&projects[0], state).unwrap_or_default() {
             b.add(&line);
         }
     }

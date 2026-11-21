@@ -10,7 +10,7 @@ description: Use when changing code with Paragma memory - finding where things a
 - One function instead of a whole file: `pg read <file>#Function` (`Type.Method` for a method), or `pg read <file>:40-60`. It shows the notes about that function too.
 - Several things to look up: send them together, not one per turn. Either parallel tool calls, or one `pg batch` with all of them:
   `pg batch '[["find", "refund window"], ["read", "e12"], ["ripple", "Refund"]]'` (MCP: one `pg_batch` call with `calls`). Those that only look run side by side; one that writes waits for those before it, so a later command sees it. Each answers under its own line.
-- Group what belongs together: one `pg open` with every step and decision of the plan (`--step` and `--decision` repeated), one `pg write` per record, one `pg finish` at the end; many answers of the user at once: `pg answer --json '[{"question": "2", "answer": "..."}]'`.
+- Group what belongs together: one `pg open` with every step and decision of the plan (`--step` and `--decision` repeated), one `pg write` per record, one `pg finish` at the end; many answers of the user at once: `pg ask --json '[{"question": "2", "answer": "..."}]'`.
 - A code name or a file in `pg find` (`pg find Refund`, `pg find payments/refund.go`) finds the code itself first, with its notes.
 - Shaders and queries kept in strings (`/* wgsl */` or `glsl`, `sql`, `gql` tags) are code too: `pg find groundAt` finds `sea.ts#SEA_SHADER.groundAt`. So are SQL, GraphQL and Protobuf files, Dockerfile stages and CI jobs.
 - Documents have sections: `docs:` in the brief and `[doc]` in `pg find` name the one to read; `pg read README.md#Install` reads only it.

@@ -10,6 +10,7 @@
 
 pub mod env;
 pub mod files;
+pub mod items;
 pub mod names;
 pub mod plan;
 pub mod scan;

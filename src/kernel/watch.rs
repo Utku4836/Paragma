@@ -6,7 +6,10 @@
 //! - stale drafts: drafts pg wrote that nobody confirmed in two weeks;
 //! - archive revival: a note pg archived (unused for long) read again in
 //!   several conversations;
-//! - thin handoff: a handoff without the part that says what is next.
+//! - thin handoff: a handoff without the part that says what is next;
+//! - unplanned work: code changed or tests run, and no plan recorded;
+//! - long work: an hour of changes without a handoff;
+//! - due soon: a note's due date is near or past.
 
 use super::{Facts, Hint};
 use crate::output::{count, one_line};
@@ -142,6 +145,94 @@ pub fn thin_handoff(summary: &str, open_steps: usize) -> Option<Hint> {
         ),
         why: "a handoff without its part after ';', steps still open".into(),
     })
+}
+
+/// Minutes of work since the last handoff before it is worth one now.
+pub const LONG_WORK: i64 = 60 * 60;
+/// Days before a due date it is said.
+pub const DUE_AHEAD: i64 = 2;
+
+/// This conversation's events since its last handoff.
+fn mine_since_handoff(f: &Facts) -> Vec<&crate::state::journal::Entry> {
+    let mine: Vec<&crate::state::journal::Entry> = f.journal.iter().filter(|e| e.conversation == f.me).collect();
+    let from = mine.iter().rposition(|e| matches!(e.did, Did::Finish { .. })).map(|i| i + 1).unwrap_or(0);
+    mine[from..].to_vec()
+}
+
+/// Work without a recorded plan: this conversation changed code (seen by
+/// the hooks) or ran the tests twice, while the project has no open step
+/// and it recorded none. Told by what was done, not by what was said.
+pub fn unplanned_work(f: &Facts) -> Vec<Hint> {
+    if !f.steps.is_empty() {
+        return Vec::new();
+    }
+    let mine = mine_since_handoff(f);
+    let edits = mine.iter().filter(|e| matches!(e.did, Did::Edit { .. })).count();
+    let runs = mine.iter().filter(|e| matches!(e.did, Did::Run { .. })).count();
+    let planned = mine.iter().any(|e| matches!(e.did, Did::Step { .. }));
+    if planned || (edits == 0 && runs < 2) {
+        return Vec::new();
+    }
+    vec![Hint {
+        key: format!("unplanned:{}", f.me),
+        weight: 70,
+        text: "this work has no recorded plan: pg open --goal \"...\" --step \"...\" (every step of the user's plan, also the later ones, and --decision for each decision): the next conversation knows only what is recorded".into(),
+        why: "code changed or tests ran, no step recorded, none open".into(),
+    }]
+}
+
+/// An hour or more of work since this conversation's last handoff, and it
+/// is still at it: a handoff now keeps it if the conversation ends without
+/// one (it is replaced at the end).
+pub fn long_work(f: &Facts) -> Vec<Hint> {
+    let mine = mine_since_handoff(f);
+    let Some(first) = mine.iter().find(|e| e.did.changes()) else { return Vec::new() };
+    if f.now - first.at < LONG_WORK {
+        return Vec::new();
+    }
+    vec![Hint {
+        key: format!("long:{}:{}", f.me, first.seq),
+        weight: 45,
+        text: format!(
+            "{} of work since the last handoff: pg finish \"<what was done>; <what is next>\" keeps it now (go on after it; the next one replaces it)",
+            crate::output::ago(first.at, f.now).trim_end_matches(" ago")
+        ),
+        why: "an hour of changes without a handoff".into(),
+    }]
+}
+
+/// Notes due within `DUE_AHEAD` days, or past due.
+pub fn due_soon(f: &Facts) -> Vec<Hint> {
+    let Some(today) = crate::output::parse_date(&crate::output::date(f.now)) else { return Vec::new() };
+    let mut near: Vec<(i64, &str, &str, &str)> = f
+        .dues
+        .iter()
+        .filter_map(|(id, title, date)| {
+            let days = (crate::output::parse_date(date)? - today) / 86_400;
+            (days <= DUE_AHEAD).then_some((days, id.as_str(), title.as_str(), date.as_str()))
+        })
+        .collect();
+    if near.is_empty() {
+        return Vec::new();
+    }
+    near.sort();
+    let shown: Vec<String> = near
+        .iter()
+        .take(4)
+        .map(|(d, id, title, date)| {
+            format!("{id} {} {date} ({})", one_line(title, 40), crate::project::items::when(*d))
+        })
+        .collect();
+    vec![Hint {
+        key: format!("due:{}", near.iter().map(|n| format!("{}={}", n.1, n.3)).collect::<Vec<_>>().join(",")),
+        weight: 75,
+        text: format!(
+            "due: {}{} (pg ls --due; done or moved: pg write <note> --due <date>|none)",
+            shown.join("; "),
+            if near.len() > 4 { format!(" +{}", near.len() - 4) } else { String::new() }
+        ),
+        why: "a due date is near or past".into(),
+    }]
 }
 
 #[cfg(all(test, paragma_local))]

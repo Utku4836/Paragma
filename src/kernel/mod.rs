@@ -64,6 +64,8 @@ pub struct Facts {
     pub archived: Vec<(String, String)>,
     /// Notes read in full lately: id, conversation, when.
     pub reads: Vec<(String, String, i64)>,
+    /// Notes with a due date: id, title, date.
+    pub dues: Vec<(String, String, String)>,
 }
 
 /// Where a conversation is: what is worth its attention changes with it.
@@ -101,13 +103,18 @@ pub fn brief_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
     hints.extend(watch::stuck_steps(f));
     hints.extend(watch::stale_drafts(f));
     hints.extend(watch::archive_revival(f));
+    hints.extend(watch::due_soon(f));
     let phase = if f.compacted { Phase::Middle } else { Phase::Start };
     decide(f, hints, phase, tokens)
 }
 
-/// What any command adds: notes the other conversations left, once.
+/// What any command adds: notes the other conversations left, and what
+/// this conversation's own work calls for (a plan, a handoff), once.
 pub fn news_hints(f: &Facts, tokens: usize) -> Vec<Hint> {
-    decide(f, experts::told(f), Phase::Middle, tokens)
+    let mut hints = experts::told(f);
+    hints.extend(watch::unplanned_work(f));
+    hints.extend(watch::long_work(f));
+    decide(f, hints, Phase::Middle, tokens)
 }
 
 /// What `pg finish` adds: what could be tidier, drafts waiting, once.

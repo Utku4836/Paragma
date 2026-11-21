@@ -264,7 +264,7 @@ pub fn run(cx: &Context, mut a: Args) -> Result<()> {
     }
     // what the last sleep found to tidy, once a conversation; then the
     // next sleep looks over the memory again, in the background
-    for line in super::perceive::news(&state)? {
+    for line in super::perceive::news(project, &state)? {
         println!("{line}");
     }
     let facts = super::perceive::facts(project, &state, false)?;

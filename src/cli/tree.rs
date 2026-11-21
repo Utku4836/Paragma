@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 #[derive(clap::Args)]
 pub struct Args {
     /// A folder or a file of the code (default: all of it)
-    path: Option<String>,
+    pub path: Option<String>,
 }
 
 /// Top-level symbols named per file in the map.

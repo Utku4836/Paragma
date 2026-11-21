@@ -149,7 +149,7 @@ pub fn run(cx: &Context, a: Args) -> Result<()> {
     if open > 0 {
         println!("(done: pg finish \"...\" --done <numbers>)");
     }
-    for line in super::perceive::news(&state)? {
+    for line in super::perceive::news(project, &state)? {
         println!("{line}");
     }
     Ok(())
