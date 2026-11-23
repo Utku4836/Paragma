@@ -20,14 +20,16 @@ pub struct Ran {
 }
 
 /// Runs a pg command (this same program) for a project.
-pub fn pg(exe: &Path, project: Option<&str>, args: &[&str]) -> Ran {
-    pg_input(exe, project, args, None)
+pub fn pg(exe: &Path, home: &Path, project: Option<&str>, args: &[&str]) -> Ran {
+    pg_input(exe, home, project, args, None)
 }
 
 /// A pg command given a line on its input (a password, never on the
 /// command line).
-pub fn pg_input(exe: &Path, project: Option<&str>, args: &[&str], input: Option<&str>) -> Ran {
+pub fn pg_input(exe: &Path, home: &Path, project: Option<&str>, args: &[&str], input: Option<&str>) -> Ran {
     let mut c = std::process::Command::new(exe);
+    // the memory shown here, whatever the environment says
+    c.env("PARAGMA_HOME", home);
     if let Some(p) = project {
         c.args(["--project", p]);
     }

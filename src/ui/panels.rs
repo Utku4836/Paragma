@@ -434,10 +434,11 @@ impl App {
     /// A pg command in the background, with a line on its input.
     fn run_pg(&mut self, args: Vec<String>, input: Option<String>, what: &str) {
         let exe = self.exe.clone();
+        let root = self.home.root.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let ran = data::pg_input(&exe, None, &refs, input.as_deref());
+            let ran = data::pg_input(&exe, &root, None, &refs, input.as_deref());
             let _ = tx.send(JobDone::Ran(ran, Then::Synced));
         });
         self.jobs.push(Job { what: what.into(), rx });
@@ -606,12 +607,13 @@ impl App {
             Act::Nothing => {}
             Act::Pg { args, project, then } => {
                 let exe = self.exe.clone();
+                let root = self.home.root.clone();
                 let name = if project { self.project_name() } else { None };
                 let what = format!("pg {}…", args.iter().take(2).cloned().collect::<Vec<_>>().join(" "));
                 let (tx, rx) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
                     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                    let ran = data::pg(&exe, name.as_deref(), &refs);
+                    let ran = data::pg(&exe, &root, name.as_deref(), &refs);
                     let _ = tx.send(JobDone::Ran(ran, then));
                 });
                 self.jobs.push(Job { what, rx });

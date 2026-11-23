@@ -1321,7 +1321,7 @@ impl App {
                 self.say(format!("saved {}", rel.trim_end_matches(".md")), false);
                 // the other computer's copy is merged in now: taken out
                 if let Some(copy) = resolving {
-                    let ran = data::pg(&self.exe, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
+                    let ran = data::pg(&self.exe, &self.home.root, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
                     self.say(
                         if ran.ok {
                             "saved; the other computer's copy is merged in and archived".to_string()
@@ -1488,7 +1488,7 @@ impl App {
         let name = self.project_name();
         let run = |app: &mut App, args: Vec<String>| -> bool {
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let ran = data::pg(&app.exe, name.as_deref(), &refs);
+            let ran = data::pg(&app.exe, &app.home.root, name.as_deref(), &refs);
             app.say(data::first(&ran.out), !ran.ok);
             app.reload();
             ran.ok
@@ -1625,7 +1625,7 @@ impl App {
         let mut said = Vec::new();
         let mut ok = true;
         for f in paths {
-            let ran = data::pg(&self.exe, name.as_deref(), &["write", note, "--file", f, "--attach"]);
+            let ran = data::pg(&self.exe, &self.home.root, name.as_deref(), &["write", note, "--file", f, "--attach"]);
             ok &= ran.ok;
             said.push(data::first(&ran.out));
         }

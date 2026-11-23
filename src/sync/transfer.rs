@@ -169,6 +169,8 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Re
     if new.id.is_empty() {
         new.id = old.id.clone();
     }
+    // what this computer knows of the old place, kept for going back
+    let kept = keep_base(home);
     let moved = connect(home, &new, true).and_then(|lines| {
         // 3. the checks
         let now = Config::load(home).context("the new place's settings")?;
@@ -178,9 +180,11 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Re
     let (lines, now) = match moved {
         Ok(x) => x,
         Err(e) => {
-            // back as it was: the settings, the memory from the copy
+            // back as it was: the settings, what it knew of the old place,
+            // the memory from the copy
             let _ = old.save(home);
             let _ = forget_place(home);
+            put_base_back(home, &kept);
             let back = backup::read_checked(&safety).and_then(|(_, files)| {
                 restore_files(home, &files)?;
                 Ok(())
@@ -196,6 +200,7 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Re
             };
         }
     };
+    drop_kept(&kept);
     out.extend(lines);
     out.push(format!("ok checked: the connection works and every file is in {} as here", now.place()));
     // 4. the note in the old place, the copy deleted
@@ -217,6 +222,35 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Re
         out.push("it was public: change the keys that were in its .env files".into());
     }
     Ok(out)
+}
+
+/// The base of a place of files (sync/store.rs), moved aside while
+/// another place is tried: its manifest and copies.
+fn keep_base(home: &Home) -> Vec<(std::path::PathBuf, std::path::PathBuf)> {
+    let d = dir(home);
+    let mut kept = Vec::new();
+    for name in ["base.json", "base"] {
+        let (from, to) = (d.join(name), d.join(format!("{name}.before-transfer")));
+        let _ = std::fs::remove_file(&to);
+        let _ = std::fs::remove_dir_all(&to);
+        if from.exists() && std::fs::rename(&from, &to).is_ok() {
+            kept.push((from, to));
+        }
+    }
+    kept
+}
+
+fn put_base_back(_home: &Home, kept: &[(std::path::PathBuf, std::path::PathBuf)]) {
+    for (from, to) in kept {
+        let _ = std::fs::rename(to, from);
+    }
+}
+
+fn drop_kept(kept: &[(std::path::PathBuf, std::path::PathBuf)]) {
+    for (_, to) in kept {
+        let _ = std::fs::remove_file(to);
+        let _ = std::fs::remove_dir_all(to);
+    }
 }
 
 /// The old place's note of where the memory went (and its files out, when

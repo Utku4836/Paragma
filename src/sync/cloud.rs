@@ -160,7 +160,8 @@ pub fn search(root: &Path, id: &str) -> Option<PathBuf> {
         if looked > 3000 {
             return None;
         }
-        if marker_id(&dir).is_some_and(|m| m == id) {
+        // no id: any memory
+        if marker_id(&dir).is_some_and(|m| id.is_empty() || m == id) {
             return Some(dir);
         }
         if depth >= 3 {
