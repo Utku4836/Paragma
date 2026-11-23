@@ -280,10 +280,10 @@ fn attach(cx: &Context, a: &Args, file: &std::path::Path) -> Result<()> {
     match crate::sync::Config::load(&cx.home) {
         None => {}
         Some(c) if !c.attachments => {
-            println!("attachments are not synced: it stays on this computer (pg git turns them on)")
+            println!("attachments are not synced: it stays on this computer (pg sync files on turns them on)")
         }
         Some(c) if bytes > c.attach_mb * 1024 * 1024 => println!(
-            "it stays on this computer: {} is over the sync limit of {} MB (pg git changes the limit)",
+            "it stays on this computer: {} is over the sync limit of {} MB (pg sync files --limit changes it)",
             size(bytes),
             c.attach_mb
         ),
