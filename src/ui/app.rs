@@ -357,6 +357,8 @@ pub enum Outside {
 pub struct Job {
     pub what: String,
     pub rx: std::sync::mpsc::Receiver<JobDone>,
+    /// When it started: how long it has been going is shown.
+    pub started: Instant,
 }
 
 pub enum JobDone {
@@ -1321,7 +1323,8 @@ impl App {
                 self.say(format!("saved {}", rel.trim_end_matches(".md")), false);
                 // the other computer's copy is merged in now: taken out
                 if let Some(copy) = resolving {
-                    let ran = data::pg(&self.exe, &self.home.root, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
+                    let ran =
+                        data::pg(&self.exe, &self.home.root, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
                     self.say(
                         if ran.ok {
                             "saved; the other computer's copy is merged in and archived".to_string()

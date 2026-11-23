@@ -32,6 +32,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         [c[0], c[1]]
     };
     draw_sidebar(f, app, side);
+    // work going on: a band at the top, moving while it runs
+    let main = if app.jobs.is_empty() || main.height < 6 {
+        main
+    } else {
+        draw_working(f, app, Rect { height: 1, ..main });
+        Rect { y: main.y + 1, height: main.height - 1, ..main }
+    };
     // the notes open: their tabs above what is shown
     let main = if app.tab_order.is_empty() || main.height < 4 {
         main
@@ -101,11 +108,7 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
     // on the right: the sync, work going on, the buttons
     let mut right: Vec<(Vec<Span>, Option<&str>)> = Vec::new();
-    if let Some(j) = app.jobs.first() {
-        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-        let frame = (ms / 100) as usize % SPIN.len();
-        right.push((vec![Span::styled(format!("{} {}  ", SPIN[frame], j.what), theme::accent())], None));
-    }
+    // work going on is shown as a band over the main area (draw_working)
     if let Some(chip) = sync_chip(app) {
         right.push((vec![chip, Span::raw("  ")], Some("sync")));
     }
@@ -133,6 +136,35 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
         }
         x += w;
     }
+}
+
+/// What is going on in the background: its name, a bar that moves, and
+/// how long it has been going.
+fn draw_working(f: &mut Frame, app: &App, area: Rect) {
+    let Some(j) = app.jobs.first() else { return };
+    let ms = j.started.elapsed().as_millis() as usize;
+    let secs = ms / 1000;
+    let more = if app.jobs.len() > 1 { format!("  (+{} more)", app.jobs.len() - 1) } else { String::new() };
+    let left = format!(" {} {}{more}  ", SPIN[ms / 100 % SPIN.len()], j.what);
+    let right = format!("  {secs} s ");
+    let w = (area.width as usize).saturating_sub(left.chars().count() + right.chars().count());
+    // a lit stretch that runs along the bar and comes back
+    let seg = (w / 5).clamp(3, 16);
+    let span = w.saturating_sub(seg).max(1);
+    let t = ms / 60 % (2 * span);
+    let at = if t < span { t } else { 2 * span - t };
+    let bar: String = (0..w).map(|i| if i >= at && i < at + seg { '━' } else { '─' }).collect();
+    let (before, rest) = bar.split_at(bar.char_indices().nth(at).map(|(i, _)| i).unwrap_or(bar.len()));
+    let (lit, after) =
+        rest.split_at(rest.char_indices().nth(seg.min(rest.chars().count())).map(|(i, _)| i).unwrap_or(rest.len()));
+    let line = Line::from(vec![
+        Span::styled(left, theme::accent().add_modifier(Modifier::BOLD)),
+        Span::styled(before.to_string(), Style::default().fg(theme::FRAME)),
+        Span::styled(lit.to_string(), theme::accent().add_modifier(Modifier::BOLD)),
+        Span::styled(after.to_string(), Style::default().fg(theme::FRAME)),
+        Span::styled(right, theme::dim()),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
 }
 
 /// The sync, said in a few letters: synced, waiting to send, failed.

@@ -428,7 +428,20 @@ impl App {
             None
         };
         self.pending.password.clear();
-        self.run_pg(args, input, if p.moving { "moving the memory…" } else { "connecting…" });
+        let to = match p.target.first().map(String::as_str) {
+            Some("--repo" | "--new") => p.target.get(1).cloned().unwrap_or_default(),
+            Some("git") => "the git repository".into(),
+            Some("folder") => p.target.get(1).cloned().unwrap_or_default(),
+            Some("webdav") => "WebDAV".into(),
+            Some(id) => crate::sync::cloud::name(id).to_string(),
+            None => "GitHub".into(),
+        };
+        let what = if p.moving {
+            format!("moving the memory to {to}: copied, sent, then every file checked…")
+        } else {
+            format!("connecting to {to}: every file sent and read back…")
+        };
+        self.run_pg(args, input, &what);
     }
 
     /// A pg command in the background, with a line on its input.
@@ -441,7 +454,7 @@ impl App {
             let ran = data::pg_input(&exe, &root, None, &refs, input.as_deref());
             let _ = tx.send(JobDone::Ran(ran, Then::Synced));
         });
-        self.jobs.push(Job { what: what.into(), rx });
+        self.jobs.push(Job { what: what.into(), rx, started: Instant::now() });
     }
 
     /// The backups found on this computer, to restore one.
@@ -490,7 +503,7 @@ impl App {
             })();
             let _ = tx.send(JobDone::Account(got.map_err(|e| format!("{e:#}")), moving));
         });
-        self.jobs.push(Job { what: "reading your GitHub repositories…".into(), rx });
+        self.jobs.push(Job { what: "reading your GitHub repositories…".into(), rx, started: Instant::now() });
     }
 
     /// Signed in (or not) outside the interface: the repositories next.
@@ -616,7 +629,7 @@ impl App {
                     let ran = data::pg(&exe, &root, name.as_deref(), &refs);
                     let _ = tx.send(JobDone::Ran(ran, then));
                 });
-                self.jobs.push(Job { what, rx });
+                self.jobs.push(Job { what, rx, started: Instant::now() });
             }
             Act::SignIn { moving } => self.run_outside = Some(Outside::SignIn(moving)),
             Act::Repos { moving } => {
