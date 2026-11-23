@@ -49,7 +49,7 @@ pub struct Mirror<'a> {
 }
 
 /// A file's bytes as one number: whether it changed.
-fn fingerprint(bytes: &[u8]) -> u64 {
+pub(crate) fn fingerprint(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
         h ^= *b as u64;
@@ -61,7 +61,13 @@ fn fingerprint(bytes: &[u8]) -> u64 {
 impl<'a> Mirror<'a> {
     /// The clone, made when it is not there yet (or is of another remote).
     pub fn new(home: &'a Home, config: &'a Config) -> Result<Mirror<'a>> {
-        let m = Mirror { home, config, dir: checkout(home), env: std::cell::Cell::new(config.env && !config.public) };
+        Mirror::at(home, config, checkout(home))
+    }
+
+    /// A clone in another folder (the place the memory leaves, while the
+    /// new one is pg's usual clone).
+    pub fn at(home: &'a Home, config: &'a Config, dir: PathBuf) -> Result<Mirror<'a>> {
+        let m = Mirror { home, config, dir, env: std::cell::Cell::new(config.env && !config.public) };
         let ours = m.dir.join(".git").is_dir()
             && m.git(&["config", "--get", "remote.origin.url"]).map(|u| u.trim() == config.remote).unwrap_or(false);
         if !ours {
@@ -276,7 +282,7 @@ impl<'a> Mirror<'a> {
 
     /// Writes the marker: the memory is here, and how.
     fn mark(&self, moved_to: Option<Value>) -> Result<()> {
-        let mut v = json!({ "paragma": 1, "env": self.env.get(), "env_at": self.config.env_at });
+        let mut v = json!({ "paragma": 1, "id": self.config.id, "env": self.env.get(), "env_at": self.config.env_at });
         if let Some(m) = moved_to {
             v["moved_to"] = m;
         }
@@ -286,7 +292,7 @@ impl<'a> Mirror<'a> {
         Ok(())
     }
 
-    fn marker(&self) -> Option<Value> {
+    pub fn marker(&self) -> Option<Value> {
         serde_json::from_str(&std::fs::read_to_string(self.root().join(MARKER)).ok()?).ok()
     }
 
@@ -519,6 +525,36 @@ impl<'a> Mirror<'a> {
         Ok(out)
     }
 
+    /// The connection works: the repository's branch is what was pushed.
+    pub fn probe(&self) -> Result<()> {
+        let head = self.head().context("nothing was committed")?;
+        let out = self.git(&["ls-remote", "origin", &format!("refs/heads/{}", self.config.branch)])?;
+        let there = out.split_whitespace().next().unwrap_or("");
+        if there != head {
+            bail!("the repository's branch {} is not what was sent", self.config.branch);
+        }
+        Ok(())
+    }
+
+    /// Every file that goes is in the clone as sent, byte for byte: what
+    /// differs.
+    pub fn verify(&self) -> Result<Vec<String>> {
+        let projects = self.home.projects_dir();
+        let root = self.root();
+        let mut wrong = Vec::new();
+        for rel in self.local_files()? {
+            let here = std::fs::read(projects.join(&rel))?;
+            if std::fs::read(root.join(&rel)).ok().as_deref() != Some(here.as_slice()) {
+                wrong.push(rel);
+            }
+        }
+        // and the clone holds no change that was not sent
+        if !self.git(&["status", "--porcelain"])?.trim().is_empty() {
+            wrong.push("(the clone has changes not sent)".into());
+        }
+        Ok(wrong)
+    }
+
     /// Leaves a note in this repository that the memory moved, so other
     /// computers follow; with `remove`, the memory's files go from it (they
     /// stay in its history).
@@ -536,24 +572,15 @@ impl<'a> Mirror<'a> {
                 remove_empty_dirs(&self.root(), &rel);
             }
         }
-        let place = json!({ "repo": to.repo, "remote": to.remote, "prefix": to.prefix, "branch": to.branch });
-        self.mark(Some(place))?;
+        self.mark(Some(to.place_json()))?;
         self.commit(&format!("Paragma: the memory moved to {}", to.place()))?;
         self.push()
     }
 }
 
-/// Reads where the memory moved, from a marker's `moved_to`.
-pub fn parse_moved(to: &str) -> Option<(String, String, String, String)> {
-    let v: Value = serde_json::from_str(to).ok()?;
-    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-    let remote = s("remote");
-    (!remote.is_empty()).then(|| (s("repo"), remote, s("prefix"), s("branch")))
-}
-
 /// Both versions of a note, lines of each kept (git's union merge, from an
 /// empty base).
-fn union(here: &[u8], there: &[u8], scratch: &Path) -> Result<Vec<u8>> {
+pub(crate) fn union(here: &[u8], there: &[u8], scratch: &Path) -> Result<Vec<u8>> {
     let dir = scratch.join(".git").join("paragma-join");
     std::fs::create_dir_all(&dir)?;
     let (a, base, b) = (dir.join("here"), dir.join("base"), dir.join("there"));
@@ -570,7 +597,7 @@ fn union(here: &[u8], there: &[u8], scratch: &Path) -> Result<Vec<u8>> {
 }
 
 /// The name a file's other version is kept under: notes.conflict.md.
-fn conflict_name(path: &str) -> String {
+pub(crate) fn conflict_name(path: &str) -> String {
     match path.rsplit_once('.') {
         Some((stem, ext)) if !stem.ends_with('/') && !stem.is_empty() => format!("{stem}.conflict.{ext}"),
         _ => format!("{path}.conflict"),
@@ -580,7 +607,7 @@ fn conflict_name(path: &str) -> String {
 /// What goes into the repository, by its path under projects/: not the
 /// indexes, state and lock (.pg/), not this computer's folder links, not
 /// files being written, the .env files only when chosen.
-fn kept(rel: &str, is_dir: bool, env: bool) -> bool {
+pub(crate) fn kept(rel: &str, is_dir: bool, env: bool) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     if is_dir {
         return name != ".pg" && name != ".git";
@@ -592,7 +619,7 @@ fn kept(rel: &str, is_dir: bool, env: bool) -> bool {
 }
 
 /// Files below `root`, by their path with '/', as `keep` allows.
-fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(&str, bool) -> bool) -> Result<()> {
+pub(crate) fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(&str, bool) -> bool) -> Result<()> {
     let dir = if rel.is_empty() { root.to_path_buf() } else { root.join(rel) };
     let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(()) };
     for e in entries.flatten() {
@@ -611,7 +638,7 @@ fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(&str, bool)
 }
 
 /// Removes the folders of `rel` that became empty, up to `root`.
-fn remove_empty_dirs(root: &Path, rel: &str) {
+pub(crate) fn remove_empty_dirs(root: &Path, rel: &str) {
     let mut p = PathBuf::from(rel);
     while p.pop() && !p.as_os_str().is_empty() {
         let d = root.join(&p);
@@ -626,7 +653,7 @@ fn remove_empty_dirs(root: &Path, rel: &str) {
 }
 
 /// This computer's name, for commit messages.
-fn host() -> String {
+pub(crate) fn host() -> String {
     for k in ["COMPUTERNAME", "HOSTNAME"] {
         if let Ok(h) = std::env::var(k)
             && !h.trim().is_empty()

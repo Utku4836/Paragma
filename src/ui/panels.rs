@@ -4,8 +4,8 @@
 //! never waits.
 
 use super::app::{
-    Accounted, Act, App, Ask, Confirm, Found, HomeRow, Job, JobDone, Modal, Outside, PAct, PItem, PlanRow, SECTIONS,
-    Section, SyncRow, SyncView, Then,
+    Accounted, Act, App, Ask, Confirm, Found, HomeRow, Job, JobDone, Modal, Outside, PAct, PItem, Pending, PlanRow,
+    SECTIONS, Section, SyncRow, SyncView, Then,
 };
 use super::data::{self, AgentState, SetupRow};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -169,6 +169,9 @@ impl App {
 
     // ---------- Sync ----------
 
+    /// The Sync section by its parts: the status, where the memory goes,
+    /// what goes with it, backups, notes changed on two computers. Or the
+    /// GitHub repositories, while one is being chosen.
     pub fn sync_rows(&self) -> Vec<SyncRow> {
         if let SyncView::Repos { repos, filter, .. } = &self.sync_view {
             let f = filter.to_lowercase();
@@ -182,18 +185,62 @@ impl App {
             );
             return out;
         }
-        let mut out = match crate::sync::Config::load(&self.home) {
-            None => vec![SyncRow::Connect],
-            Some(c) => vec![
-                SyncRow::SyncNow,
-                SyncRow::Env(c.env),
-                SyncRow::Files(c.attachments),
-                SyncRow::Limit(c.attach_mb),
-                SyncRow::Transfer,
-                SyncRow::Disconnect,
-            ],
-        };
-        out.extend(self.conflicts.iter().cloned().map(SyncRow::Conflict));
+        let config = crate::sync::Config::load(&self.home);
+        let mut out = vec![SyncRow::Head("Status")];
+        match &config {
+            None => {
+                out.push(SyncRow::Info("Not connected: the memory is only on this computer.".into(), false));
+            }
+            Some(c) => {
+                let s = crate::sync::Status::load(&self.home);
+                let now = crate::output::now();
+                out.push(SyncRow::Info(
+                    format!("{}: {}", crate::cli::sync_kind_name(&c.kind), c.place()),
+                    c.kind == "github" && c.public,
+                ));
+                out.push(SyncRow::Info(
+                    if s.synced > 0 {
+                        format!("last sync {}: {}", crate::output::ago(s.synced, now), s.did)
+                    } else {
+                        "not synced yet".into()
+                    },
+                    false,
+                ));
+                if self.unsent > 0 {
+                    out.push(SyncRow::Info(
+                        format!("{} changed here, to send", crate::output::count(self.unsent as i64, "note")),
+                        false,
+                    ));
+                }
+                if !s.error.is_empty() {
+                    out.push(SyncRow::Info(s.error.clone(), true));
+                }
+                out.push(SyncRow::SyncNow);
+            }
+        }
+        out.push(SyncRow::Head("Where"));
+        match &config {
+            None => out.push(SyncRow::Connect),
+            Some(_) => {
+                out.push(SyncRow::Transfer);
+                out.push(SyncRow::Disconnect);
+            }
+        }
+        if let Some(c) = &config {
+            out.push(SyncRow::Head("What goes"));
+            out.push(SyncRow::Env(c.env));
+            out.push(SyncRow::Files(c.attachments));
+            out.push(SyncRow::Limit(c.attach_mb));
+        }
+        out.push(SyncRow::Head("Backup"));
+        out.push(SyncRow::BackupNow);
+        let d = crate::sync::backup::Daily::load(&self.home);
+        out.push(SyncRow::Daily(d.on, d.folder.clone()));
+        out.push(SyncRow::Restore);
+        if !self.conflicts.is_empty() {
+            out.push(SyncRow::Head("Changed on two computers"));
+            out.extend(self.conflicts.iter().cloned().map(SyncRow::Conflict));
+        }
         out
     }
 
@@ -223,10 +270,12 @@ impl App {
         let moving = matches!(self.sync_view, SyncView::Repos { moving: true, .. });
         let Some(r) = self.sync_rows().get(row).cloned() else { return };
         match r {
-            SyncRow::Connect => self.connect_github(false),
-            SyncRow::SyncNow => self.act(pg(&["git", "sync"], Then::Status)),
-            SyncRow::Env(on) => self.act(pg(&["git", "env", if on { "off" } else { "on" }], Then::Status)),
-            SyncRow::Files(true) => self.act(pg(&["git", "files", "off"], Then::Status)),
+            SyncRow::Head(_) | SyncRow::Info(..) => {}
+            SyncRow::Connect => self.choose_place(false),
+            SyncRow::Transfer => self.choose_place(true),
+            SyncRow::SyncNow => self.act(pg(&["sync", "now"], Then::Status)),
+            SyncRow::Env(on) => self.act(pg(&["sync", "env", if on { "off" } else { "on" }], Then::Status)),
+            SyncRow::Files(true) => self.act(pg(&["sync", "files", "off"], Then::Status)),
             SyncRow::Files(false) => {
                 let mb = crate::sync::Config::load(&self.home).map(|c| c.attach_mb).unwrap_or(20);
                 self.confirm(
@@ -234,16 +283,15 @@ impl App {
                     "Send the files kept with notes too?",
                     vec![
                         format!("Workbooks, documents, images kept with notes, up to {mb} MB each."),
-                        "A file sent to git stays in its history, also after it is taken out.".into(),
+                        "In a git repository a file sent stays in its history, also after it is taken out.".into(),
                     ],
                 )
             }
             SyncRow::Limit(mb) => {
                 let limits = [5u64, 10, 20, 50, 95];
                 let next = limits.iter().position(|l| *l == mb).map(|i| limits[(i + 1) % limits.len()]).unwrap_or(20);
-                self.act(pg(&["git", "files", "--limit", &next.to_string()], Then::Status));
+                self.act(pg(&["sync", "files", "--limit", &next.to_string()], Then::Status));
             }
-            SyncRow::Transfer => self.connect_github(true),
             SyncRow::Disconnect => {
                 let place = crate::sync::Config::load(&self.home).map(|c| c.place()).unwrap_or_default();
                 self.confirm(
@@ -255,6 +303,31 @@ impl App {
                     ],
                 )
             }
+            SyncRow::BackupNow => {
+                let downloads = std::env::home_dir().unwrap_or_default().join("Downloads");
+                self.pending = Pending::default();
+                self.ask(
+                    Ask::BackupFolder,
+                    "Back up the whole memory into one zip, in this folder",
+                    &downloads.to_string_lossy(),
+                );
+            }
+            SyncRow::Daily(true, _) => self.act(pg(&["sync", "backup", "--daily", "off"], Then::Status)),
+            SyncRow::Daily(false, folder) => {
+                let folder = if folder.is_empty() {
+                    std::env::home_dir()
+                        .unwrap_or_default()
+                        .join("Documents")
+                        .join("Paragma backups")
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    folder
+                };
+                self.pending = Pending::default();
+                self.ask(Ask::DailyFolder, "A backup every day, the last 7 kept, in this folder", &folder);
+            }
+            SyncRow::Restore => self.choose_backup(),
             SyncRow::Conflict(rel) => self.resolve(&rel),
             SyncRow::NewRepo => self.ask(
                 Ask::NewRepo { moving },
@@ -263,6 +336,143 @@ impl App {
             ),
             SyncRow::Repo(r) => self.use_repo(&r, moving),
         }
+    }
+
+    /// Where to connect, or move the memory: GitHub, another git host, the
+    /// cloud folders found here, any folder, WebDAV.
+    pub fn choose_place(&mut self, moving: bool) {
+        self.pending = Pending { moving, ..Pending::default() };
+        let place = |kind: &str| Act::Place { kind: kind.into(), moving };
+        let mut options: Vec<(String, Act)> = vec![("GitHub".into(), place("github"))];
+        options.push(("Another git host (GitLab, Gitea, Bitbucket, your server)".into(), place("git")));
+        for c in crate::sync::cloud::found() {
+            options.push((format!("{}  (its folder on this computer)", c.name), place(c.id)));
+        }
+        options.push(("A folder (any other synced folder, a disk)".into(), place("folder")));
+        options.push(("WebDAV (Nextcloud, ownCloud, a NAS)".into(), place("webdav")));
+        options.push(("Cancel".into(), Act::Nothing));
+        let title = if moving { "Move the memory to" } else { "Keep the memory in" };
+        let lines = if moving {
+            vec![
+                "The memory is copied first, moved, then checked: the connection and every file.".into(),
+                "Only when both checks pass is the old place left; else nothing changes.".into(),
+            ]
+        } else {
+            vec!["Every computer connected to the same place has the same memory.".into()]
+        };
+        self.modal = Some(Modal::Choose { title: title.into(), lines, options, cur: 0 });
+    }
+
+    /// A kind of place chosen: what it needs next.
+    fn place_kind(&mut self, kind: &str, moving: bool) {
+        self.pending.moving = moving;
+        match kind {
+            "github" => self.connect_github(moving),
+            "git" => self.ask(
+                Ask::Place { kind: "git".into(), moving },
+                "The repository's address (https://gitlab.com/me/notes.git; an empty private one is best)",
+                "",
+            ),
+            "folder" => self.ask(Ask::Place { kind: "folder".into(), moving }, "The folder (its full path)", ""),
+            "webdav" => self.ask(
+                Ask::Place { kind: "webdav".into(), moving },
+                "The WebDAV address of the memory's folder (Nextcloud: …/remote.php/dav/files/<you>/Paragma)",
+                "https://",
+            ),
+            cloud => {
+                self.pending.target = vec![cloud.to_string()];
+                self.place_env();
+            }
+        }
+    }
+
+    /// An address typed for a place.
+    pub fn place_address(&mut self, kind: &str, text: &str, moving: bool) {
+        self.pending.moving = moving;
+        self.pending.target = vec![kind.to_string(), text.trim().trim_matches('"').to_string()];
+        if kind == "webdav" {
+            self.ask(Ask::DavUser, "Your user name there", "");
+        } else {
+            self.place_env();
+        }
+    }
+
+    /// Whether the .env files go too.
+    pub fn place_env(&mut self) {
+        self.choose(
+            "Send the .env files (API keys) too?",
+            vec![
+                "Each project's keys stay on this computer unless you say so.".into(),
+                "They never go to a public repository.".into(),
+            ],
+            vec![("No (recommended)", Act::PlaceEnv(false)), ("Yes, the keys go too", Act::PlaceEnv(true))],
+        );
+    }
+
+    /// The last step: pg sync connect or move, in the background.
+    fn place_go(&mut self, remove_old: bool) {
+        let p = self.pending.clone();
+        let mut args = vec!["sync".to_string(), if p.moving { "move" } else { "connect" }.to_string()];
+        args.extend(p.target.iter().cloned());
+        if p.env {
+            args.push("--env".into());
+        }
+        if p.moving && remove_old {
+            args.push("--remove-old".into());
+        }
+        args.push("--yes".into());
+        let input = if p.target.first().map(String::as_str) == Some("webdav") {
+            args.extend(["--user".into(), p.user.clone(), "--password-stdin".into()]);
+            Some(p.password.clone())
+        } else {
+            None
+        };
+        self.pending.password.clear();
+        self.run_pg(args, input, if p.moving { "moving the memory…" } else { "connecting…" });
+    }
+
+    /// A pg command in the background, with a line on its input.
+    fn run_pg(&mut self, args: Vec<String>, input: Option<String>, what: &str) {
+        let exe = self.exe.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let ran = data::pg_input(&exe, None, &refs, input.as_deref());
+            let _ = tx.send(JobDone::Ran(ran, Then::Synced));
+        });
+        self.jobs.push(Job { what: what.into(), rx });
+    }
+
+    /// The backups found on this computer, to restore one.
+    fn choose_backup(&mut self) {
+        let found = crate::sync::backup::found(&self.home);
+        let mut options: Vec<(String, Act)> = found
+            .iter()
+            .take(8)
+            .map(|(p, m)| {
+                (
+                    format!(
+                        "{}  from {}  ·  {}, {}",
+                        crate::output::date_time(m.created),
+                        if m.host.is_empty() { "?" } else { &m.host },
+                        crate::output::count(m.projects() as i64, "project"),
+                        crate::output::count(m.files.len() as i64, "file")
+                    ),
+                    Act::RestoreFrom(p.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        options.push(("Another backup (its path)".into(), Act::RestoreFrom(String::new())));
+        options.push(("Cancel".into(), Act::Nothing));
+        let lines = if found.is_empty() {
+            vec!["No backup found in Downloads, Desktop, Documents or the cloud folders.".into()]
+        } else {
+            vec![format!(
+                "{} found on this computer, the newest first.",
+                crate::output::count(found.len() as i64, "backup")
+            )]
+        };
+        self.modal = Some(Modal::Choose { title: "Restore a backup".into(), lines, options, cur: 0 });
     }
 
     /// Signs in (when needed) and lists the repositories, in the
@@ -308,11 +518,15 @@ impl App {
                 self.go(Section::Sync);
                 self.set_cur(0);
                 if let Some((repo, prefix, branch)) = a.found {
-                    let mut args = vec!["git".to_string(), "connect".into(), "--repo".into(), repo.full_name.clone()];
+                    let mut target = vec!["--repo".to_string(), repo.full_name.clone()];
                     if !prefix.is_empty() {
-                        args.push(if branch == crate::sync::BRANCH { "--branch".into() } else { "--no-branch".into() });
+                        target.push(if branch == crate::sync::BRANCH {
+                            "--branch".into()
+                        } else {
+                            "--no-branch".into()
+                        });
                     }
-                    args.push("--yes".into());
+                    self.pending = Pending { moving: false, target, ..Pending::default() };
                     self.choose(
                         "Your Paragma memory is on GitHub already",
                         vec![
@@ -324,7 +538,7 @@ impl App {
                             "Joining brings its projects here and sends this computer's; both are kept.".into(),
                         ],
                         vec![
-                            ("Join it", Act::Pg { args, project: false, then: Then::Synced }),
+                            ("Join it", Act::PlaceOld(false)),
                             ("Choose another repository", Act::Repos { moving: false }),
                             ("Cancel", Act::Nothing),
                         ],
@@ -336,63 +550,21 @@ impl App {
 
     fn use_repo(&mut self, r: &crate::sync::github::Repo, moving: bool) {
         let name = r.full_name.clone();
-        let pg = |args: Vec<&str>| Act::Pg {
-            args: args.into_iter().map(str::to_string).collect(),
-            project: false,
-            then: Then::Synced,
-        };
-        let mut lines = vec![if r.private {
-            format!("{name} is private: only the people with access to it read the memory.")
-        } else {
-            format!("{name} is PUBLIC: anyone can read the memory there.")
-        }];
-        if moving {
-            lines.push("The memory is sent there, and this computer syncs with it from now on.".into());
-            self.choose(
-                &format!("Move the memory to {name}?"),
-                lines,
-                vec![
-                    ("Move it, keep the old copy", pg(vec!["git", "move", "--repo", &name, "--yes"])),
-                    (
-                        "Move it, take it out of the old one",
-                        pg(vec!["git", "move", "--repo", &name, "--remove-old", "--yes"]),
-                    ),
-                    ("Cancel", Act::Nothing),
-                ],
-            );
-        } else {
-            lines.push("A memory there already is joined with this one; else this one is sent.".into());
-            self.choose(
-                &format!("Connect to {name}?"),
-                lines,
-                vec![("Connect", pg(vec!["git", "connect", "--repo", &name, "--yes"])), ("Cancel", Act::Nothing)],
-            );
+        self.pending = Pending { moving, target: vec!["--repo".into(), name.clone()], ..Pending::default() };
+        if r.private {
+            return self.place_env();
         }
+        self.choose(
+            &format!("{name} is PUBLIC"),
+            vec!["Anyone can read the memory there. A private repository is better.".into()],
+            vec![("Use it anyway", Act::PlaceEnv(false)), ("Cancel", Act::Nothing)],
+        );
     }
 
     pub fn new_repo(&mut self, name: &str, moving: bool) {
         let name = if name.trim().is_empty() { "paragma-memory" } else { name.trim() };
-        let pg = |args: Vec<&str>| Act::Pg {
-            args: args.into_iter().map(str::to_string).collect(),
-            project: false,
-            then: Then::Synced,
-        };
-        if moving {
-            self.choose(
-                &format!("Move the memory to a new private repository, {name}?"),
-                vec!["The memory is sent there, and this computer syncs with it from now on.".into()],
-                vec![
-                    ("Move it, keep the old copy", pg(vec!["git", "move", "--new", name, "--yes"])),
-                    (
-                        "Move it, take it out of the old one",
-                        pg(vec!["git", "move", "--new", name, "--remove-old", "--yes"]),
-                    ),
-                    ("Cancel", Act::Nothing),
-                ],
-            );
-        } else {
-            self.act(pg(vec!["git", "connect", "--new", name, "--yes"]));
-        }
+        self.pending = Pending { moving, target: vec!["--new".into(), name.to_string()], ..Pending::default() };
+        self.place_env();
     }
 
     // ---------- Setup ----------
@@ -452,6 +624,82 @@ impl App {
                 } else {
                     self.connect_github(moving);
                 }
+            }
+            Act::Place { kind, moving } => self.place_kind(&kind, moving),
+            Act::PlaceEnv(env) => {
+                self.pending.env = env;
+                if self.pending.moving {
+                    self.choose(
+                        "And the old place?",
+                        vec![
+                            "Either way it is left only after the new one is checked.".into(),
+                            "Kept, it says where the memory went, so the other computers follow.".into(),
+                        ],
+                        vec![
+                            ("Keep a copy there (recommended)", Act::PlaceOld(false)),
+                            ("Take the memory out of it", Act::PlaceOld(true)),
+                        ],
+                    );
+                } else {
+                    self.place_go(false);
+                }
+            }
+            Act::PlaceOld(remove) => self.place_go(remove),
+            Act::BackupEnv(env) => {
+                let mut args = vec!["sync".to_string(), "backup".into(), self.pending.folder.clone()];
+                if env {
+                    args.push("--env".into());
+                }
+                self.act(Act::Pg { args, project: false, then: Then::Message("Backup".into()) });
+            }
+            Act::DailyEnv(env) => {
+                let mut args = vec![
+                    "sync".to_string(),
+                    "backup".into(),
+                    "--daily".into(),
+                    "on".into(),
+                    "--to".into(),
+                    self.pending.folder.clone(),
+                ];
+                if env {
+                    args.push("--env".into());
+                }
+                self.act(Act::Pg { args, project: false, then: Then::Status });
+            }
+            Act::RestoreFrom(p) if p.is_empty() => self.ask(Ask::RestorePath, "The backup's zip (its full path)", ""),
+            Act::RestoreFrom(p) => {
+                let what = crate::sync::backup::manifest(std::path::Path::new(&p));
+                match what {
+                    Err(e) => self.say(format!("{e:#}"), true),
+                    Ok(m) => self.choose(
+                        "Restore this backup?",
+                        vec![
+                            format!(
+                                "From {}, {}: {}, {}.",
+                                if m.host.is_empty() { "?" } else { &m.host },
+                                crate::output::date_time(m.created),
+                                crate::output::count(m.projects() as i64, "project"),
+                                crate::output::count(m.files.len() as i64, "file")
+                            ),
+                            "The memory is copied first; if anything fails it is put back as it was.".into(),
+                        ],
+                        vec![
+                            (
+                                "Join it with the memory (a note that differs kept beside)",
+                                Act::RestoreMode(p.clone(), false),
+                            ),
+                            ("Put it in the memory's place (what it does not have goes)", Act::RestoreMode(p, true)),
+                            ("Cancel", Act::Nothing),
+                        ],
+                    ),
+                }
+            }
+            Act::RestoreMode(p, replace) => {
+                let mut args = vec!["sync".to_string(), "restore".into(), p];
+                if replace {
+                    args.extend(["--replace".into(), "--yes".into()]);
+                }
+                self.act(Act::Pg { args, project: false, then: Then::Message("Restore".into()) });
             }
             Act::Insert(t) => {
                 if let Some(o) = self.open.as_mut() {
@@ -840,7 +1088,7 @@ impl App {
                 "new-note" => self.ask(Ask::NewNote, "New note (folder/name)", ""),
                 "new-folder" => self.ask(Ask::NewFolder, "New folder", ""),
                 "search" => self.search(""),
-                "sync" => self.act(pg(&["git", "sync"], false, Then::Status)),
+                "sync" => self.act(pg(&["sync", "now"], false, Then::Status)),
                 "update" => {
                     self.act(pg(&["setup", "--update"], false, Then::Message("Updated to this version".into())))
                 }

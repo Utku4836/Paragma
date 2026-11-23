@@ -416,7 +416,7 @@ fn pptx_parts(path: &Path) -> Result<Vec<Part>> {
     let mut zip = archive(path)?;
     let mut slides: Vec<(usize, String)> = (0..zip.len())
         .filter_map(|i| {
-            let name = zip.by_index(i).ok()?.name().to_string();
+            let name = zip.by_index(i).ok()?.name().ok()?.to_string();
             let n = name.strip_prefix("ppt/slides/slide")?.strip_suffix(".xml")?.parse::<usize>().ok()?;
             Some((n, name))
         })

@@ -67,6 +67,19 @@ pub enum Ask {
     NewRepo {
         moving: bool,
     },
+    /// The address of a place: a git repository's, a folder's path, a
+    /// WebDAV address.
+    Place {
+        kind: String,
+        moving: bool,
+    },
+    /// WebDAV: the user name, then the password (shown as dots).
+    DavUser,
+    DavPassword,
+    /// Where a backup goes; where the daily ones go; a backup's zip.
+    BackupFolder,
+    DailyFolder,
+    RestorePath,
 }
 
 /// What a yes is for.
@@ -110,6 +123,23 @@ pub enum Act {
         note: String,
         paths: Vec<String>,
     },
+    /// Connecting or moving to a kind of place: github, git, a cloud's id,
+    /// folder, webdav.
+    Place {
+        kind: String,
+        moving: bool,
+    },
+    /// The .env files go to the new place, or not; then the old place
+    /// emptied, or not (a transfer).
+    PlaceEnv(bool),
+    PlaceOld(bool),
+    /// A backup now with the .env files or without; the daily ones too.
+    BackupEnv(bool),
+    DailyEnv(bool),
+    /// A backup chosen to restore; then joined with the memory, or put in
+    /// its place.
+    RestoreFrom(String),
+    RestoreMode(String, bool),
     /// A note both computers changed: merged in the editor, this one kept,
     /// or the other one taken. The note and its copy (name.conflict.md).
     ResolveMerge(String, String),
@@ -264,21 +294,49 @@ impl HomeRow {
     }
 }
 
-/// A row of the Sync section.
+/// A row of the Sync section, by its parts: the status, where the memory
+/// goes, what goes with it, backups, notes changed on two computers.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SyncRow {
-    Connect,
+    Head(&'static str),
+    /// A line to read; red when something is wrong.
+    Info(String, bool),
     SyncNow,
+    Connect,
+    Transfer,
+    Disconnect,
     Env(bool),
     Files(bool),
     Limit(u64),
-    Transfer,
-    Disconnect,
+    BackupNow,
+    /// The daily backup: on or off, and its folder.
+    Daily(bool, String),
+    Restore,
     /// A note both computers changed: its copy.
     Conflict(String),
     /// The repositories to choose from: a new private one first.
     NewRepo,
     Repo(crate::sync::github::Repo),
+}
+
+impl SyncRow {
+    pub fn acts(&self) -> bool {
+        !matches!(self, SyncRow::Head(_) | SyncRow::Info(..))
+    }
+}
+
+/// A connection or a transfer being chosen, step by step: where (pg sync's
+/// words for it), whether the .env files go, whether the old place is
+/// emptied, a WebDAV user and password.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pending {
+    pub moving: bool,
+    pub target: Vec<String>,
+    pub env: bool,
+    pub user: String,
+    pub password: String,
+    /// A backup's folder, waiting for the .env answer.
+    pub folder: String,
 }
 
 /// What the Sync section shows: the settings, or the repositories.
@@ -364,6 +422,8 @@ pub struct App {
     /// The notes opened last in this project, the last first.
     pub recent: Vec<String>,
     pub sync_view: SyncView,
+    /// A connection, transfer or backup being chosen.
+    pub pending: Pending,
     pub jobs: Vec<Job>,
     /// The search index, opened once for the project searched.
     pub index: Option<(String, crate::index::Index)>,
@@ -425,6 +485,7 @@ impl App {
             cache: data::Cache::default(),
             recent: Vec::new(),
             sync_view: SyncView::Main,
+            pending: Pending::default(),
             jobs: Vec::new(),
             index: None,
             search_due: None,
@@ -539,6 +600,7 @@ impl App {
         match self.section {
             Section::Home => self.home_list.get(row).is_some_and(HomeRow::acts),
             Section::Setup => self.setup.get(row).is_some_and(SetupRow::acts),
+            Section::Sync => self.sync_rows().get(row).is_some_and(SyncRow::acts),
             _ => true,
         }
     }
@@ -1524,6 +1586,32 @@ impl App {
                 self.attach(&note, &paths);
             }
             Ask::NewRepo { moving } => self.new_repo(&text, moving),
+            Ask::Place { kind, moving } => self.place_address(&kind, &text, moving),
+            Ask::DavUser => {
+                self.pending.user = text;
+                self.ask(Ask::DavPassword, "Its password (an app password from its settings is best)", "");
+            }
+            Ask::DavPassword => {
+                self.pending.password = text;
+                self.place_env();
+            }
+            Ask::BackupFolder => {
+                self.pending.folder = text;
+                self.choose(
+                    "Put the .env files (keys) into the backup too?",
+                    vec!["Without them the backup holds no keys; with them, keep it somewhere safe.".into()],
+                    vec![("No (recommended)", Act::BackupEnv(false)), ("Yes, the keys go too", Act::BackupEnv(true))],
+                );
+            }
+            Ask::DailyFolder => {
+                self.pending.folder = text;
+                self.choose(
+                    "Put the .env files (keys) into the daily backups too?",
+                    vec!["Without them the backups hold no keys.".into()],
+                    vec![("No (recommended)", Act::DailyEnv(false)), ("Yes, the keys go too", Act::DailyEnv(true))],
+                );
+            }
+            Ask::RestorePath => self.act(Act::RestoreFrom(text.trim_matches('"').to_string())),
         }
     }
 
@@ -1580,7 +1668,7 @@ impl App {
                 self.quit = true;
             }
             Confirm::FilesOn => self.act(Act::Pg {
-                args: vec!["git".into(), "files".into(), "on".into()],
+                args: vec!["sync".into(), "files".into(), "on".into()],
                 project: false,
                 then: Then::Status,
             }),
@@ -1592,7 +1680,7 @@ impl App {
                 self.act(pg(&["mv", name, &to]));
             }
             Confirm::Disconnect => self.act(Act::Pg {
-                args: vec!["git".into(), "disconnect".into()],
+                args: vec!["sync".into(), "disconnect".into()],
                 project: false,
                 then: Then::Message("Sync".into()),
             }),

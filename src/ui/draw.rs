@@ -731,9 +731,9 @@ fn on_off(on: bool) -> Span<'static> {
 fn draw_sync(f: &mut Frame, app: &mut App, area: Rect) {
     let repos = matches!(app.sync_view, SyncView::Repos { .. });
     let title = match &app.sync_view {
-        SyncView::Repos { moving: true, .. } => "Sync  ›  Transfer: choose where the memory goes",
-        SyncView::Repos { .. } => "Sync  ›  Connect: choose a repository",
-        SyncView::Main => "Sync",
+        SyncView::Repos { moving: true, .. } => "Sync  ›  Move to GitHub: choose a repository",
+        SyncView::Repos { .. } => "Sync  ›  GitHub: choose a repository",
+        SyncView::Main => "Sync and backup",
     };
     let b = block(title, app.focus == Focus::Main);
     let inner = b.inner(area);
@@ -751,97 +751,80 @@ fn draw_sync(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled("▏", theme::accent()),
             Span::styled("     Esc back", theme::faint()),
         ]));
-    } else {
-        match crate::sync::Config::load(&app.home) {
-            Some(c) => {
-                let s = crate::sync::Status::load(&app.home);
-                head.push(Line::from(vec![
-                    Span::styled("repository  ", theme::faint()),
-                    Span::styled(c.place(), theme::text().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        if c.public { "  public" } else { "  private" },
-                        if c.public { theme::bad() } else { theme::ok() },
-                    ),
-                ]));
-                let now = crate::output::now();
-                head.push(Line::from(vec![
-                    Span::styled("last sync   ", theme::faint()),
-                    Span::styled(
-                        if s.synced > 0 {
-                            format!("{}: {}", crate::output::ago(s.synced, now), s.did)
-                        } else {
-                            "not yet".into()
-                        },
-                        theme::dim(),
-                    ),
-                    Span::styled(
-                        if app.unsent > 0 {
-                            format!("   {} {} to send", mark::UNSENT, app.unsent)
-                        } else {
-                            String::new()
-                        },
-                        theme::warn(),
-                    ),
-                ]));
-                if !s.error.is_empty() {
-                    head.push(Line::from(Span::styled(format!("last try failed: {}", s.error), theme::bad())));
-                }
-            }
-            None => {
-                head.push(Line::from(Span::styled(
-                    "Not connected: the memory is only on this computer.",
-                    theme::dim(),
-                )));
-                head.push(Line::from(Span::styled(
-                    "Connected, it is kept in a private GitHub repository: the same on every computer.",
-                    theme::faint(),
-                )));
-            }
-        }
+        head.push(Line::from(""));
     }
-    head.push(Line::from(""));
     let h = head.len() as u16;
     f.render_widget(Paragraph::new(head), Rect { height: h.min(inner.height), ..inner });
     let list = Rect { y: inner.y + h.min(inner.height), height: inner.height.saturating_sub(h), ..inner };
     let bold = theme::text().add_modifier(Modifier::BOLD);
+    let row = |name: &str, rest: Vec<Span<'static>>| -> Line<'static> {
+        let mut spans = vec![Span::styled(format!("  {name:<30}"), bold)];
+        spans.extend(rest);
+        Line::from(spans)
+    };
     let lines: Vec<Line<'static>> = app
         .sync_rows()
         .into_iter()
         .map(|r| match r {
-            SyncRow::Connect => Line::from(vec![
-                Span::styled(format!(" {} ", mark::SYNC), theme::tile(false)),
-                Span::styled("  Connect to GitHub", bold),
-                Span::styled("   signs in, finds your memory or makes a private repository", theme::faint()),
-            ]),
-            SyncRow::SyncNow => Line::from(vec![
-                Span::styled(format!("  {:<30}", "Sync now"), bold),
-                Span::styled("send what changed here, bring in the other computers'", theme::faint()),
-            ]),
-            SyncRow::Env(on) => Line::from(vec![
-                Span::styled(format!("  {:<30}", ".env files (API keys)"), bold),
-                on_off(on),
-                Span::styled("   never to a public repository", theme::faint()),
-            ]),
-            SyncRow::Files(on) => {
-                Line::from(vec![Span::styled(format!("  {:<30}", "Files kept with notes"), bold), on_off(on)])
+            SyncRow::Head(t) => Line::from(Span::styled(t, theme::heading())),
+            SyncRow::Info(t, bad) => {
+                Line::from(Span::styled(format!("  {t}"), if bad { theme::bad() } else { theme::dim() }))
             }
-            SyncRow::Limit(mb) => Line::from(vec![
-                Span::styled(format!("  {:<30}", "File size limit"), bold),
-                Span::styled(format!("{mb} MB a file"), theme::accent()),
-                Span::styled("   Enter: the next size", theme::faint()),
-            ]),
-            SyncRow::Transfer => Line::from(vec![
-                Span::styled(format!("  {:<30}", "Transfer"), bold),
-                Span::styled("move the memory to another repository", theme::faint()),
-            ]),
-            SyncRow::Disconnect => Line::from(vec![
-                Span::styled(format!("  {:<30}", "Disconnect"), bold),
-                Span::styled("stop syncing on this computer", theme::faint()),
-            ]),
+            SyncRow::SyncNow => {
+                row("Sync now", vec![Span::styled("send what changed here, bring in the others'", theme::faint())])
+            }
+            SyncRow::Connect => row(
+                "Connect",
+                vec![Span::styled(
+                    "GitHub, another git host, a cloud folder (OneDrive, Google Drive…), WebDAV",
+                    theme::faint(),
+                )],
+            ),
+            SyncRow::Transfer => row(
+                "Move to another place",
+                vec![Span::styled("any kind; copied first, checked, then the old place left", theme::faint())],
+            ),
+            SyncRow::Disconnect => {
+                row("Disconnect", vec![Span::styled("stop syncing on this computer", theme::faint())])
+            }
+            SyncRow::Env(on) => row(
+                ".env files (API keys)",
+                vec![on_off(on), Span::styled("   never to a public repository", theme::faint())],
+            ),
+            SyncRow::Files(on) => row("Files kept with notes", vec![on_off(on)]),
+            SyncRow::Limit(mb) => row(
+                "File size limit",
+                vec![
+                    Span::styled(format!("{mb} MB a file"), theme::accent()),
+                    Span::styled("   Enter: the next size", theme::faint()),
+                ],
+            ),
+            SyncRow::BackupNow => row(
+                "Back up now",
+                vec![Span::styled("the whole memory in one zip, in a folder you choose", theme::faint())],
+            ),
+            SyncRow::Daily(on, folder) => row(
+                "Every day",
+                vec![
+                    on_off(on),
+                    Span::styled(
+                        if on {
+                            format!("   into {folder}, the last 7 kept")
+                        } else {
+                            "   a backup a day, by itself".into()
+                        },
+                        theme::faint(),
+                    ),
+                ],
+            ),
+            SyncRow::Restore => row(
+                "Restore a backup",
+                vec![Span::styled("the backups on this computer, or a zip you name", theme::faint())],
+            ),
             SyncRow::Conflict(rel) => Line::from(vec![
                 Span::styled(format!("  {} ", mark::WARN), theme::bad()),
                 Span::styled(format!("{:<28}", data_name(&rel)), bold),
-                Span::styled("changed on two computers: Enter chooses what to keep", theme::bad()),
+                Span::styled("Enter chooses what to keep", theme::bad()),
             ]),
             SyncRow::NewRepo => Line::from(vec![
                 Span::styled("  + ", theme::accent().add_modifier(Modifier::BOLD)),
@@ -1209,7 +1192,8 @@ fn buttons(f: &mut Frame, app: &mut App, inner: Rect, labels: &[String], cur: us
 fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(m) = app.modal.clone() else { return };
     match m {
-        Modal::Input { title, text, .. } => {
+        Modal::Input { title, text, ask } => {
+            let text = if ask == super::app::Ask::DavPassword { "•".repeat(text.chars().count()) } else { text };
             let r = centered(area, 76, 5);
             f.render_widget(Clear, r);
             let b = block(&title, true);
