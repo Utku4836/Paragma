@@ -39,6 +39,9 @@ pub trait Store {
     /// Every file below the root.
     fn list(&self) -> Result<Vec<Listed>>;
     fn read(&self, rel: &str) -> Result<Vec<u8>>;
+    /// A file, or None when it is not there (any other failure is an
+    /// error: a server down is not a file missing).
+    fn read_opt(&self, rel: &str) -> Result<Option<Vec<u8>>>;
     /// Writes the file whole (never half), reads it back to check it, and
     /// says its stamp there now.
     fn write(&self, rel: &str, bytes: &[u8]) -> Result<String>;
@@ -84,6 +87,14 @@ impl Store for Folder {
 
     fn read(&self, rel: &str) -> Result<Vec<u8>> {
         std::fs::read(self.root.join(rel)).with_context(|| format!("read {rel} in {}", self.root.display()))
+    }
+
+    fn read_opt(&self, rel: &str) -> Result<Option<Vec<u8>>> {
+        match std::fs::read(self.root.join(rel)) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("read {rel} in {}", self.root.display())),
+        }
     }
 
     fn write(&self, rel: &str, bytes: &[u8]) -> Result<String> {
@@ -227,8 +238,13 @@ impl<'a> Mirror<'a> {
     // ---------- the marker: the memory is here, which one, moved ----------
 
     pub fn marker(&self) -> Option<Value> {
-        let b = self.store.read(MARKER).ok()?;
-        serde_json::from_slice(&b).ok()
+        self.marker_checked().ok().flatten()
+    }
+
+    /// The marker, None when it is not there; a place that cannot be read
+    /// is an error, not a memory gone.
+    pub fn marker_checked(&self) -> Result<Option<Value>> {
+        Ok(self.store.read_opt(MARKER)?.and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
     fn mark(&self, moved_to: Option<Value>) -> Result<()> {
@@ -289,7 +305,7 @@ impl<'a> Mirror<'a> {
         let aside: BTreeMap<String, Was> =
             base.iter().filter(|(k, _)| !self.config.goes(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         base.retain(|k, _| self.config.goes(k));
-        match self.marker() {
+        match self.marker_checked()? {
             Some(m) => {
                 if let Some(to) = m.get("moved_to").filter(|v| !v.is_null()) {
                     out.moved_to = Some(to.to_string());

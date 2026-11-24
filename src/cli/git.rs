@@ -310,6 +310,11 @@ fn projects(cx: &Context, skip: &[String], take: &[String]) -> Result<()> {
                 c.skip.push(s.clone());
             }
         }
+        for t in take {
+            if c.skip.contains(t) && !c.rejoin.contains(t) {
+                c.rejoin.push(t.clone());
+            }
+        }
         c.skip.retain(|s| !take.contains(s));
         c.skip.sort();
         c.save(&cx.home)?;
@@ -475,6 +480,11 @@ fn config_for(cx: &Context, t: &Target) -> Result<Config> {
         }
         Some("folder") => {
             let p = std::path::absolute(PathBuf::from(need_addr("folder")?))?;
+            // named to connect to: made when it is not there yet (a sync
+            // never makes it: a disk not plugged in is no new folder)
+            if !p.exists() {
+                sync::fsx::create_dir_all(&p)?;
+            }
             Ok(folder_config(&p, fresh("folder")))
         }
         Some(id @ ("onedrive" | "gdrive" | "google-drive" | "googledrive" | "dropbox" | "icloud")) => {
@@ -725,18 +735,17 @@ fn own_folder(cx: &Context, c: &Config) -> Result<()> {
         },
         _ => return Ok(()),
     };
-    if !matches!(source, Source::Local) || std::path::Path::new(&at).is_dir() {
-        if let Ok(l) = list(&source, &scratch, &at)
-            && l.holds == Holds::Other
-        {
-            return Err(fail(
-                USAGE,
-                format!(
-                    "{} holds other files: the memory needs a folder of its own (an empty one, or a new one in it)",
-                    c.place()
-                ),
-            ));
-        }
+    if (!matches!(source, Source::Local) || std::path::Path::new(&at).is_dir())
+        && let Ok(l) = list(&source, &scratch, &at)
+        && l.holds == Holds::Other
+    {
+        return Err(fail(
+            USAGE,
+            format!(
+                "{} holds other files: the memory needs a folder of its own (an empty one, or a new one in it)",
+                c.place()
+            ),
+        ));
     }
     Ok(())
 }

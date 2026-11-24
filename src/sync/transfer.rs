@@ -97,7 +97,7 @@ pub fn connect(home: &Home, c: &Config, there: There) -> Result<Vec<String>> {
         let outcome = if c.files() {
             let s = store_of(home, &c)?;
             let m = store::Mirror::new(home, &c, s.as_ref());
-            match m.marker() {
+            match m.marker_checked()? {
                 Some(mark) => {
                     let theirs = mark["id"].as_str().unwrap_or("").to_string();
                     let found = found_of(&ours, &theirs);

@@ -330,6 +330,7 @@ impl<'a> Mirror<'a> {
             self.mark(None)?;
         }
         self.settle_env()?;
+        self.rejoin()?;
         let seen = self.copy_in(true)?;
         out.sent = self.commit(&format!("Paragma: {host}"))?;
         if self.fetch()? {
@@ -362,6 +363,39 @@ impl<'a> Mirror<'a> {
         }
         self.push()?;
         Ok(out)
+    }
+
+    /// Projects sent again after staying on this computer: the clone took
+    /// in the other computers' changes to them meanwhile, this computer
+    /// kept its own. Each file both have, joined (a note's lines of both
+    /// kept; another file, this computer's); one only there, brought here.
+    fn rejoin(&self) -> Result<()> {
+        let c = self.config;
+        if c.rejoin.is_empty() {
+            return Ok(());
+        }
+        let ours = |rel: &str| c.rejoin.iter().any(|p| rel.split('/').next() == Some(p.as_str()));
+        let mut all: std::collections::BTreeSet<String> = self.local_files()?.into_iter().filter(|r| ours(r)).collect();
+        all.extend(self.clone_files()?.into_iter().filter(|r| ours(r) && kept(r, false, self.env.get())));
+        let (projects, root) = (self.home.projects_dir(), self.root());
+        for rel in all {
+            let here = std::fs::read(projects.join(&rel)).ok();
+            let there = std::fs::read(root.join(&rel)).ok();
+            let joined = match (&here, &there) {
+                (Some(h), Some(t)) if h != t => {
+                    let text = [".md", ".env", ".txt"].iter().any(|e| rel.ends_with(e));
+                    if text { union(h, t, &self.dir)? } else { h.clone() }
+                }
+                (None, Some(t)) => t.clone(),
+                _ => continue,
+            };
+            let project = rel.split('/').next().unwrap_or("");
+            let meta = projects.join(project).join(".pg");
+            crate::sync::fsx::create_dir_all(&meta)?;
+            let _lock = WriteLock::take(&meta)?;
+            write_atomic(&projects.join(&rel), &joined)?;
+        }
+        Ok(())
     }
 
     /// Merges the other computers' commits; the files both sides changed

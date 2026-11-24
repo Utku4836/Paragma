@@ -96,6 +96,9 @@ pub struct Config {
     pub skip: Vec<String>,
     /// Syncing paused on this computer: nothing goes or comes until resumed.
     pub paused: bool,
+    /// Projects that go again after staying here: joined at the next sync
+    /// (a git clone took in the other computers' changes meanwhile).
+    pub rejoin: Vec<String>,
 }
 
 /// How the last syncs went.
@@ -155,6 +158,10 @@ impl Config {
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .unwrap_or_default(),
             paused: v["paused"].as_bool().unwrap_or(false),
+            rejoin: v["rejoin"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
         })
     }
 
@@ -177,7 +184,7 @@ impl Config {
             "env": self.env, "env_at": self.env_at, "public": self.public, "account": self.account, "gh": self.gh,
             "connected": self.connected, "attachments": self.attachments, "attach_mb": self.attach_mb,
             "kind": self.kind, "cloud": self.cloud, "path": self.path, "id": self.id,
-            "skip": self.skip, "paused": self.paused,
+            "skip": self.skip, "paused": self.paused, "rejoin": self.rejoin,
         });
         crate::project::files::write_atomic(
             &dir(home).join("config.json"),
@@ -499,6 +506,13 @@ fn sync_locked(home: &crate::project::Home) -> Result<Status> {
     let result = sync_with(home, &config);
     match &result {
         Ok(outcome) => {
+            // the projects sent again are joined now
+            if !config.rejoin.is_empty()
+                && let Some(mut c) = Config::load(home)
+            {
+                c.rejoin.clear();
+                c.save(home)?;
+            }
             status.synced = status.tried;
             status.error.clear();
             status.did = outcome.said();
@@ -522,7 +536,7 @@ fn sync_locked(home: &crate::project::Home) -> Result<Status> {
                 }
             }
         }
-        Err(e) => status.error = crate::output::error_text(&e),
+        Err(e) => status.error = crate::output::error_text(e),
     }
     status.save(home)?;
     if !status.error.is_empty() {

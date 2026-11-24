@@ -189,6 +189,15 @@ impl Store for WebDav {
         Ok(a.body)
     }
 
+    fn read_opt(&self, rel: &str) -> Result<Option<Vec<u8>>> {
+        let a = self.call("GET", &self.at(rel), &[], None)?;
+        match a.code {
+            200 => Ok(Some(a.body)),
+            404 => Ok(None),
+            c => bail!("{} answered {c} to reading {rel}", self.place()),
+        }
+    }
+
     fn write(&self, rel: &str, bytes: &[u8]) -> Result<String> {
         let mut a = self.call("PUT", &self.at(rel), &[], Some(bytes))?;
         if a.code == 404 || a.code == 409 {
