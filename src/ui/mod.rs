@@ -8,6 +8,7 @@ pub mod app;
 pub mod data;
 pub mod draw;
 pub mod editor;
+pub mod folders;
 pub mod markdown;
 pub mod panels;
 pub mod theme;
@@ -59,7 +60,8 @@ pub fn run(home: crate::project::Home, project: Option<crate::project::Project>)
             term.draw(|f| draw::draw(f, &mut app))?;
             // every event waiting is taken before the next frame: keys held
             // down or a wheel turned fast do not queue up behind drawing
-            if event::poll(Duration::from_millis(250))? {
+            let wait = if app.jobs.is_empty() { 250 } else { 80 };
+            if event::poll(Duration::from_millis(wait))? {
                 loop {
                     match event::read()? {
                         // Windows sends a release too: a key counts once

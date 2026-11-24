@@ -36,7 +36,7 @@ Download `pg` for your platform from the [releases](https://github.com/Utku4836/
 
 </details>
 
-Your memory lives in `~/.paragma`, outside your repositories. Paragma works offline; the search model is built into `pg`. Only `pg git`, once you connect it, talks to GitHub.
+Your memory lives in `~/.paragma`, outside your repositories. Paragma works offline; the search model is built into `pg`. Only `pg sync`, once you connect it, talks to the place you chose.
 
 ## Why
 
@@ -138,7 +138,7 @@ In scripts: `pg setup codex --global`, `pg setup claude --dir .`, `pg setup all 
 - **A note editor with the usual keys**: copy, cut and paste with the system clipboard, undo, selection with Shift or the mouse, find, line numbers. Today's date (Ctrl+D), tables (Ctrl+T; Tab goes to the next cell and lines the columns up), to-dos (Ctrl+Enter), `[[` offers the notes to link to. Several notes open in tabs. When an agent changed the note meanwhile, saving asks: merge both, take theirs, or keep yours.
 - **Ctrl+K**: every command and note by a part of its name. **/** searches the memory as you type.
 - **Plan**, **Files** kept with notes, **Agents** (who is at work, the steps they took; tell them all something), **Activity** (what the agents and pg did).
-- **Sync**: sign in to GitHub, find your memory or choose a repository, the `.env` and file settings, **Transfer** to another repository. Notes not sent yet are marked; a note changed on two computers is merged in the editor or one side chosen.
+- **Sync and backup**: the place the memory is kept (GitHub, another git host, a cloud folder, WebDAV), what goes with it, moving it somewhere else (checked before the old place is left), a backup now or every day, and a backup restored. Notes not sent yet are marked; a note changed on two computers is merged in the editor or one side chosen.
 - **Setup**: which agents have Paragma's instructions, hooks and MCP server, each turned on or off, and **Update everything** to this version.
 
 What agents write shows on the screen as it happens.
@@ -187,17 +187,29 @@ pg run -- npm publish --token '$NPM_PUBLISH_TOKEN'
 
 `pg run` puts the value in place itself, on every platform, and prints `$NPM_PUBLISH_TOKEN` again wherever the value would appear in the output. Keys pasted into notes are masked and not kept. In a test with 50 keys and ten requests in plain words, the right key came first every time and was used through `pg run` without its value appearing in any output.
 
-### Backup and sync
+### Sync and backups
+
+The memory can be kept in one place, and every computer connected to it has the same memory. In `pg`, the **Sync** section does it all; on the command line, `pg sync`:
 
 ```bash
-pg git
+pg sync connect                     # GitHub: sign in, your memory found again, or --new (a private paragma-memory)
+pg sync connect git https://gitlab.com/me/notes.git     # any git host: GitLab, Gitea, Bitbucket, your own server
+pg sync connect onedrive            # a cloud folder on this computer: onedrive, gdrive, dropbox, icloud
+pg sync connect folder D:\Sync\Paragma                  # any folder another program keeps in sync
+pg sync connect webdav https://cloud.example.com/remote.php/dav/files/me/Paragma --user me   # Nextcloud, a NAS
 ```
 
-Opens a small screen: sign in to GitHub (with the GitHub CLI or the sign-in git already has, else in the browser with a code), then choose where the memory goes: a new private repository (`paragma-memory`, of your account or of one of its organizations), or one you have, in a `Paragma/` folder on its own branch or on its main branch. Choosing a public repository asks first. The `.env` files go only if you say so, and never to a public repository.
+In `pg`, connecting (or moving) opens a folder picker on the place: its folders, the way up, a new folder; a folder that holds other files gets a folder of its own for the memory, and in a git repository that holds other things the memory goes in the folder you choose, on a branch of its own or the main one. Before anything is sent, what goes is summed up (files, size, keys, files kept with notes) with whether the place can take it, and the cloud's own program is looked at: installed, running, signed in.
 
-From then on every change goes there by itself, a few seconds after it is made, in the background: the agent never waits for it. What other computers sent comes in the same way. On a new computer, `pg git` finds the memory in your repositories (your own and your organizations') and restores it, joined with whatever is already there. The indexes and the short-lived state in `.pg/` never go; they are rebuilt.
+From then on every change goes there by itself, a few seconds after it is made, in the background: the agent never waits for it. What other computers sent comes in the same way. A note changed on two computers keeps both: in a cloud folder or WebDAV, where the same lines changed, the other version is kept beside it as `name.conflict.md`, and `pg` (Sync) lets you merge them or choose one; in a git repository the lines of both versions are kept in the note. In a cloud folder, the copies OneDrive, Dropbox, Google Drive or iCloud make of such a file are taken in the same way, a file still being brought in waits for the next sync, and a folder that suddenly looks empty is never taken as everything deleted. The `.env` files go only if you say so, and never to a public repository; turned off, those sent are taken out of the place, and a sync never deletes a computer's own keys. The indexes and the short-lived state in `.pg/` never go; they are rebuilt.
 
-Run `pg git` again to see the account, the repository and the last sync, to change the `.env` setting, to move the memory to another repository (other computers follow by themselves) or to disconnect. Without a terminal: `pg git connect --new`, `pg git status`, `pg git sync`, `pg git env on|off`, `pg git move --repo owner/name`, `pg git disconnect`.
+**Moving the memory** to another place, of any kind (`pg sync move onedrive`, `pg sync move git <address>`, ...): the memory is copied first, moved, and then checked twice, the connection (a file written there and read back) and the content (every file there, byte for byte). Only when both pass is the old place left, with a note of where the memory went: the other computers follow by themselves. When a check fails, nothing changes. Each memory has an id, so a computer finds it again also where its cloud folder has another name.
+
+**A memory already there**: connecting to a place that holds one says what it is, an older copy of this memory (left when it was connected elsewhere) or another memory, and nothing changes until you choose: `--there update` makes the older copy the same as this one, `--there join` keeps both, `--there replace` puts this one in place of another, `--there take` makes this computer's memory that one, `pg sync remove-there <where>` takes an older copy out. What changes is zipped into Downloads first.
+
+**Backups**: `pg sync backup` puts the whole memory in one zip (in Downloads, or a folder you name), with a list of every file and its hash. `pg sync backups` lists the ones on this computer (Downloads, Desktop, Documents, the cloud folders); `pg sync restore <zip>` checks it, copies the memory first, then joins the backup with it (or puts it in its place with `--replace`); `--check` shows what it would do, nothing written. `pg sync backup --daily on --to <folder>` makes one a day, with the first command of the day, and keeps the last seven.
+
+`pg sync` alone says where the memory is, how the last sync went, and for a cloud folder whether its files are in the cloud yet; also `pg sync now`, `pg sync pause` / `resume`, `pg sync projects --skip <names>` (projects that stay on this computer), `pg sync history`, `pg sync env on|off`, `pg sync files on|off --limit <MB>`, `pg sync disconnect`. `pg git` works as before.
 
 ## How it works
 
@@ -208,7 +220,7 @@ Run `pg git` again to see the account, the repository and the last sync, to chan
 - **Libraries at their versions.** The libraries a project locks (Cargo.lock, node_modules, go.mod, a virtual environment) are read from the source already on the computer, when an agent asks: `pg find "serde_json Value get"` gives the real signature, doc, example, the feature it needs and deprecation at that version; a failed build that looked for a name a library does not have gets the right one from `pg run`; an upgrade is pointed out in the brief with what changed in what the code calls.
 - **Records that merge.** Writing a rule, decision or error that is already known updates the existing one instead of adding a copy; a decision that contradicts an earlier one is pointed out.
 - **A pure core.** What pg says is decided by a kernel that reads only facts (the event log, the runs, what was already said) and never a file or the clock: small experts each notice one thing (a conversation cut short, the commands that work, a note whose code is gone, notes that could be tidier), and attention chooses what fits the agent's context, never twice. Each kind of hint is weighted by how often agents acted on it; a note fades by its uses (ACT-R). Heavy looks over the whole memory run after `pg finish`, in the background.
-- **One binary.** `pg` is written in Rust: no runtime, no server, and no network unless you connect `pg git` (it uses git and curl). The indexes next to the notes can be deleted at any time and are rebuilt.
+- **One binary.** `pg` is written in Rust: no runtime, no server, and no network unless you connect `pg sync` (it uses git and curl). The indexes next to the notes can be deleted at any time and are rebuilt.
 
 ## How it is tested
 

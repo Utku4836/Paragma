@@ -67,6 +67,21 @@ pub enum Ask {
     NewRepo {
         moving: bool,
     },
+    /// The address of a place: a git repository's, a folder's path, a
+    /// WebDAV address.
+    Place {
+        kind: String,
+        moving: bool,
+    },
+    /// WebDAV: the user name, then the password (shown as dots).
+    DavUser,
+    DavPassword,
+    /// A new folder in the folder picker.
+    PickerFolder,
+    /// Where a backup goes; where the daily ones go; a backup's zip.
+    BackupFolder,
+    DailyFolder,
+    RestorePath,
 }
 
 /// What a yes is for.
@@ -110,11 +125,49 @@ pub enum Act {
         note: String,
         paths: Vec<String>,
     },
+    /// Connecting or moving to a kind of place: github, git, a cloud's id,
+    /// folder, webdav.
+    Place {
+        kind: String,
+        moving: bool,
+    },
+    /// The .env files go to the new place, or not; then the old place
+    /// emptied, or not (a transfer).
+    PlaceEnv(bool),
+    PlaceOld(bool),
+    /// A backup now with the .env files or without; the daily ones too.
+    BackupEnv(bool),
+    DailyEnv(bool),
+    /// A backup chosen to restore; then joined with the memory, or put in
+    /// its place.
+    RestoreFrom(String),
+    RestoreMode(String, bool),
     /// A note both computers changed: merged in the editor, this one kept,
     /// or the other one taken. The note and its copy (name.conflict.md).
     ResolveMerge(String, String),
     ResolveKeep(String),
     ResolveTake(String, String),
+    /// Something said in a window of its own: its title and lines.
+    Tell(String, Vec<String>),
+    /// The folder picker again (another folder chosen); a folder made in
+    /// it and chosen.
+    Picker(Box<super::folders::Picker>),
+    PickerMake(Box<super::folders::Picker>, String),
+    /// A GitHub repository chosen (a public one, after all): its folders.
+    PickRepo(crate::sync::github::Repo),
+    /// A shared git repository: the memory on its own branch, or not.
+    Branch(bool),
+    /// A memory found at the place chosen: join, update, replace, take.
+    Found(String),
+    /// An older copy of the memory at the place chosen taken out.
+    RemoveThere,
+    /// Checked and summed up: connect or move now (the old place emptied
+    /// or not); back up now (with the keys or not); restore now.
+    PlaceRun(bool),
+    BackupGo(bool),
+    RestoreGo(String, bool),
+    /// A project sent from this computer, or kept here only.
+    ToggleProject(String, bool),
 }
 
 /// What is done with a background pg command's answer.
@@ -181,6 +234,8 @@ pub enum Modal {
     Changed {
         theirs: String,
     },
+    /// Where the memory goes: folders gone through, one chosen.
+    Folders(Box<super::folders::Picker>),
     /// Lines to read, closed by any key.
     Message {
         title: String,
@@ -264,21 +319,59 @@ impl HomeRow {
     }
 }
 
-/// A row of the Sync section.
+/// A row of the Sync section, by its parts: the status, where the memory
+/// goes, what goes with it, backups, notes changed on two computers.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SyncRow {
-    Connect,
+    Head(&'static str),
+    /// A line to read; red when something is wrong.
+    Info(String, bool),
     SyncNow,
+    Connect,
+    Transfer,
+    Disconnect,
     Env(bool),
     Files(bool),
     Limit(u64),
-    Transfer,
-    Disconnect,
+    BackupNow,
+    /// The daily backup: on or off, and its folder.
+    Daily(bool, String),
+    Restore,
     /// A note both computers changed: its copy.
     Conflict(String),
+    /// Syncing paused here (the row resumes it), or not (it pauses).
+    Pause(bool),
+    /// Which projects go from this computer: how many stay here.
+    Projects(usize),
+    /// What sync did here: all of it.
+    History,
     /// The repositories to choose from: a new private one first.
     NewRepo,
     Repo(crate::sync::github::Repo),
+}
+
+impl SyncRow {
+    pub fn acts(&self) -> bool {
+        !matches!(self, SyncRow::Head(_) | SyncRow::Info(..))
+    }
+}
+
+/// A connection or a transfer being chosen, step by step: where (pg sync's
+/// words for it), whether the .env files go, whether the old place is
+/// emptied, a WebDAV user and password.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pending {
+    pub moving: bool,
+    pub target: Vec<String>,
+    pub env: bool,
+    pub user: String,
+    pub password: String,
+    /// A backup's folder, waiting for the .env answer.
+    pub folder: String,
+    /// What is done with a memory found at the place (pg sync --there).
+    pub there: String,
+    /// The folder picker, while a new folder's name is typed.
+    pub picker: Option<Box<super::folders::Picker>>,
 }
 
 /// What the Sync section shows: the settings, or the repositories.
@@ -299,12 +392,16 @@ pub enum Outside {
 pub struct Job {
     pub what: String,
     pub rx: std::sync::mpsc::Receiver<JobDone>,
+    /// When it started: how long it has been going is shown.
+    pub started: Instant,
 }
 
 pub enum JobDone {
     Ran(data::Ran, Then),
     /// The GitHub account, its repositories, and a memory found in one.
     Account(Result<Option<Accounted>, String>, bool),
+    /// A git repository read for the folder picker (None: empty).
+    Opened(Result<Option<(crate::sync::browse::Source, String)>, String>, super::folders::For),
 }
 
 pub struct Accounted {
@@ -364,6 +461,8 @@ pub struct App {
     /// The notes opened last in this project, the last first.
     pub recent: Vec<String>,
     pub sync_view: SyncView,
+    /// A connection, transfer or backup being chosen.
+    pub pending: Pending,
     pub jobs: Vec<Job>,
     /// The search index, opened once for the project searched.
     pub index: Option<(String, crate::index::Index)>,
@@ -378,6 +477,11 @@ pub struct App {
     pub home_list: Vec<HomeRow>,
     /// The other computer's copies of notes here (name.conflict.md).
     pub conflicts: Vec<String>,
+    /// Whether the memory's files are in the cloud (a cloud folder), looked
+    /// at in the background while Sync is shown: the line, all well.
+    pub cloud_line: Option<(String, bool)>,
+    pub cloud_rx: Option<std::sync::mpsc::Receiver<Option<(String, bool)>>>,
+    pub cloud_at: Option<Instant>,
     /// The notes linking to the note previewed, and those it links to.
     pub links_for: Option<(String, Vec<String>, Vec<String>)>,
 }
@@ -425,6 +529,7 @@ impl App {
             cache: data::Cache::default(),
             recent: Vec::new(),
             sync_view: SyncView::Main,
+            pending: Pending::default(),
             jobs: Vec::new(),
             index: None,
             search_due: None,
@@ -433,6 +538,9 @@ impl App {
             unsent: 0,
             home_list: Vec::new(),
             conflicts: Vec::new(),
+            cloud_line: None,
+            cloud_rx: None,
+            cloud_at: None,
             links_for: None,
         };
         app.projects = data::projects(&app.home);
@@ -539,6 +647,7 @@ impl App {
         match self.section {
             Section::Home => self.home_list.get(row).is_some_and(HomeRow::acts),
             Section::Setup => self.setup.get(row).is_some_and(SetupRow::acts),
+            Section::Sync => self.sync_rows().get(row).is_some_and(SyncRow::acts),
             _ => true,
         }
     }
@@ -1259,7 +1368,8 @@ impl App {
                 self.say(format!("saved {}", rel.trim_end_matches(".md")), false);
                 // the other computer's copy is merged in now: taken out
                 if let Some(copy) = resolving {
-                    let ran = data::pg(&self.exe, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
+                    let ran =
+                        data::pg(&self.exe, &self.home.root, Some(&p.name), &["rm", copy.trim_end_matches(".md")]);
                     self.say(
                         if ran.ok {
                             "saved; the other computer's copy is merged in and archived".to_string()
@@ -1341,6 +1451,11 @@ impl App {
         let Some(m) = self.modal.clone() else { return };
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match m {
+            Modal::Message { title, lines } if k.code == KeyCode::Char('c') => {
+                self.clipboard_set(format!("{title}\n{}", lines.join("\n")));
+                self.modal = None;
+                self.say("copied", false);
+            }
             Modal::Help | Modal::Message { .. } => self.modal = None,
             Modal::Input { ask, title, mut text } => match k.code {
                 KeyCode::Esc => self.modal = None,
@@ -1395,6 +1510,7 @@ impl App {
                 }
                 _ => {}
             },
+            Modal::Folders(p) => self.picker_key(*p, k),
             Modal::Changed { theirs } => match k.code {
                 KeyCode::Char('m') => {
                     self.modal = None;
@@ -1426,7 +1542,7 @@ impl App {
         let name = self.project_name();
         let run = |app: &mut App, args: Vec<String>| -> bool {
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            let ran = data::pg(&app.exe, name.as_deref(), &refs);
+            let ran = data::pg(&app.exe, &app.home.root, name.as_deref(), &refs);
             app.say(data::first(&ran.out), !ran.ok);
             app.reload();
             ran.ok
@@ -1524,6 +1640,38 @@ impl App {
                 self.attach(&note, &paths);
             }
             Ask::NewRepo { moving } => self.new_repo(&text, moving),
+            Ask::Place { kind, moving } => self.place_address(&kind, &text, moving),
+            Ask::DavUser => {
+                self.pending.user = text;
+                self.ask(Ask::DavPassword, "Its password (an app password from its settings is best)", "");
+            }
+            Ask::DavPassword => {
+                self.pending.password = text;
+                let url = self.pending.target.get(1).cloned().unwrap_or_default();
+                self.pick_dav(&url);
+            }
+            Ask::PickerFolder => {
+                if let Some(p) = self.pending.picker.take() {
+                    self.picker_made(*p, &text, false);
+                }
+            }
+            Ask::BackupFolder => {
+                self.pending.folder = text;
+                self.choose(
+                    "Put the .env files (keys) into the backup too?",
+                    vec!["Without them the backup holds no keys; with them, keep it somewhere safe.".into()],
+                    vec![("No (recommended)", Act::BackupEnv(false)), ("Yes, the keys go too", Act::BackupEnv(true))],
+                );
+            }
+            Ask::DailyFolder => {
+                self.pending.folder = text;
+                self.choose(
+                    "Put the .env files (keys) into the daily backups too?",
+                    vec!["Without them the backups hold no keys.".into()],
+                    vec![("No (recommended)", Act::DailyEnv(false)), ("Yes, the keys go too", Act::DailyEnv(true))],
+                );
+            }
+            Ask::RestorePath => self.act(Act::RestoreFrom(text.trim_matches('"').to_string())),
         }
     }
 
@@ -1537,7 +1685,7 @@ impl App {
         let mut said = Vec::new();
         let mut ok = true;
         for f in paths {
-            let ran = data::pg(&self.exe, name.as_deref(), &["write", note, "--file", f, "--attach"]);
+            let ran = data::pg(&self.exe, &self.home.root, name.as_deref(), &["write", note, "--file", f, "--attach"]);
             ok &= ran.ok;
             said.push(data::first(&ran.out));
         }
@@ -1580,7 +1728,7 @@ impl App {
                 self.quit = true;
             }
             Confirm::FilesOn => self.act(Act::Pg {
-                args: vec!["git".into(), "files".into(), "on".into()],
+                args: vec!["sync".into(), "files".into(), "on".into()],
                 project: false,
                 then: Then::Status,
             }),
@@ -1592,7 +1740,7 @@ impl App {
                 self.act(pg(&["mv", name, &to]));
             }
             Confirm::Disconnect => self.act(Act::Pg {
-                args: vec!["git".into(), "disconnect".into()],
+                args: vec!["sync".into(), "disconnect".into()],
                 project: false,
                 then: Then::Message("Sync".into()),
             }),
@@ -1685,6 +1833,11 @@ impl App {
                     Hit::ModalButton(i) => match self.modal.clone() {
                         Some(Modal::Choose { title, lines, options, .. }) => {
                             self.modal = Some(Modal::Choose { title, lines, options, cur: i });
+                            self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        }
+                        Some(Modal::Folders(mut p)) => {
+                            p.cur = i;
+                            self.modal = Some(Modal::Folders(p));
                             self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                         }
                         _ => {

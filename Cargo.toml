@@ -1,6 +1,6 @@
 [package]
 name = "paragma"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2024"
 description = "Agent-first memory: project notes as Markdown files, found by hybrid search"
 license = "MIT"
@@ -45,13 +45,13 @@ tree-sitter-typescript = "0.23.2"
 tree-sitter-wgsl-bevy = "0.1.4"
 tree-sitter-zig = "1.1.2"
 unicode-normalization = "0.1"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-ratatui = "0.29"
+zip = { version = "9.8", default-features = false, features = ["deflate"] }
+ratatui = "0.30"
 arboard = { version = "3", default-features = false }
 quick-xml = "0.37"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_CloudFilters", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
 
 [dev-dependencies]
 proptest = "1"

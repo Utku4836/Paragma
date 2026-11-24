@@ -1,5 +1,14 @@
-//! `pg git`: the memory backed up to a git repository (on GitHub) and kept
-//! the same on every computer connected to it.
+//! `pg sync` (also `pg git`): the memory kept in one place and the same on
+//! every computer connected to it. The place is a git repository (on
+//! GitHub, or any git host by its address), a cloud folder on this computer
+//! (OneDrive, Google Drive, Dropbox, iCloud: sync/cloud.rs, sync/store.rs)
+//! or a WebDAV server (sync/webdav.rs). Backups of the whole memory into one
+//! zip, and their restore, are in sync/backup.rs; moving the memory from one
+//! place to another, checked, in sync/transfer.rs.
+//!
+//! Each memory has an id, kept in a marker file in every place that holds
+//! it; a place it moved from keeps a note of where it went, so the other
+//! computers follow by themselves.
 //!
 //! What goes: every project folder under `<home>/projects/` with its notes,
 //! `.archive/` included; the `.env` files only when the user turned that on.
@@ -13,8 +22,18 @@
 //! memory starts a sync in the background (`trigger`); it waits a moment
 //! so a burst of writes becomes one commit, and never makes the agent wait.
 
+pub mod backup;
+pub mod browse;
+pub mod cloud;
+pub mod fsx;
 pub mod github;
+pub mod history;
+pub mod preflight;
+pub mod progress;
 pub mod repo;
+pub mod store;
+pub mod transfer;
+pub mod webdav;
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
@@ -42,8 +61,11 @@ pub const TOPIC: &str = "paragma-memory";
 pub const MARKER: &str = ".paragma-memory";
 
 /// Where the memory goes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Config {
+    /// "github", "git" (any host by its address), "folder" (a cloud
+    /// folder, or any folder), "webdav".
+    pub kind: String,
     /// owner/name on GitHub; empty for a plain git remote (tests).
     pub repo: String,
     /// What git pushes to: a clone URL, or a path.
@@ -63,6 +85,20 @@ pub struct Config {
     /// git signs in with the GitHub CLI (its path), not its own helper.
     pub gh: String,
     pub connected: i64,
+    /// A folder: its cloud ("onedrive", "gdrive", "dropbox", "icloud"; ""
+    /// for a folder of no cloud) and its path below the cloud's folder (the
+    /// whole path for no cloud). `remote` is where that is on this computer.
+    pub cloud: String,
+    pub path: String,
+    /// The memory's id: the same in every place holding it.
+    pub id: String,
+    /// Projects that stay on this computer: neither sent nor brought in.
+    pub skip: Vec<String>,
+    /// Syncing paused on this computer: nothing goes or comes until resumed.
+    pub paused: bool,
+    /// Projects that go again after staying here: joined at the next sync
+    /// (a git clone took in the other computers' changes meanwhile).
+    pub rejoin: Vec<String>,
 }
 
 /// How the last syncs went.
@@ -95,7 +131,16 @@ impl Config {
         if remote.is_empty() {
             return None;
         }
+        let kind = match s("kind") {
+            k if !k.is_empty() => k,
+            _ if !s("repo").is_empty() => "github".to_string(),
+            _ => "git".to_string(),
+        };
         Some(Config {
+            kind,
+            cloud: s("cloud"),
+            path: s("path"),
+            id: s("id"),
             repo: s("repo"),
             remote,
             branch: s("branch"),
@@ -108,7 +153,23 @@ impl Config {
             account: s("account"),
             gh: s("gh"),
             connected: v["connected"].as_i64().unwrap_or(0),
+            skip: v["skip"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+            paused: v["paused"].as_bool().unwrap_or(false),
+            rejoin: v["rejoin"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
         })
+    }
+
+    /// Whether a file of the projects goes with the memory from this
+    /// computer (its project is not one that stays here).
+    pub fn goes(&self, rel: &str) -> bool {
+        let project = rel.split('/').next().unwrap_or(rel);
+        !self.skip.iter().any(|s| s == project)
     }
 
     /// The config of the usual home, for a choice made before (the size
@@ -122,22 +183,149 @@ impl Config {
             "repo": self.repo, "remote": self.remote, "branch": self.branch, "prefix": self.prefix,
             "env": self.env, "env_at": self.env_at, "public": self.public, "account": self.account, "gh": self.gh,
             "connected": self.connected, "attachments": self.attachments, "attach_mb": self.attach_mb,
+            "kind": self.kind, "cloud": self.cloud, "path": self.path, "id": self.id,
+            "skip": self.skip, "paused": self.paused, "rejoin": self.rejoin,
         });
         crate::project::files::write_atomic(
             &dir(home).join("config.json"),
             serde_json::to_string_pretty(&v)?.as_bytes(),
-        )
+        )?;
+        // the memory's id outlives the connection: connected again later,
+        // an older copy of it is told from another memory
+        if !self.id.is_empty() {
+            crate::project::files::write_atomic(&dir(home).join("id"), self.id.as_bytes())?;
+        }
+        Ok(())
     }
 
-    /// Where, for people: "me/paragma-memory", "me/app (Paragma/, branch paragma)".
+    /// Where, for people: "me/paragma-memory", "me/app (Paragma/, branch
+    /// paragma)", "OneDrive: Paragma", "WebDAV cloud.example.com/…".
     pub fn place(&self) -> String {
+        match self.kind.as_str() {
+            "folder" if self.cloud.is_empty() => return self.remote.clone(),
+            "folder" => return format!("{}: {}", cloud::name(&self.cloud), self.path),
+            "webdav" => {
+                return format!("WebDAV {}", self.remote.split_once("://").map(|(_, r)| r).unwrap_or(&self.remote));
+            }
+            _ => {}
+        }
         let name = if self.repo.is_empty() { self.remote.clone() } else { self.repo.clone() };
         match (self.prefix.is_empty(), self.branch == BRANCH) {
             (true, _) => name,
-            (false, true) => format!("{name} ({FOLDER}/, branch {BRANCH})"),
-            (false, false) => format!("{name} ({FOLDER}/ on {})", self.branch),
+            (false, true) => format!("{name} ({}/, branch {BRANCH})", self.prefix),
+            (false, false) => format!("{name} ({}/ on {})", self.prefix, self.branch),
         }
     }
+}
+
+impl Config {
+    /// Kept in files (a folder, WebDAV), not in git.
+    pub fn files(&self) -> bool {
+        matches!(self.kind.as_str(), "folder" | "webdav")
+    }
+
+    /// Where the memory is, as the marker of a place it moved from says it.
+    pub fn place_json(&self) -> Value {
+        json!({
+            "kind": self.kind, "repo": self.repo, "remote": self.remote, "prefix": self.prefix,
+            "branch": self.branch, "cloud": self.cloud, "path": self.path, "account": self.account, "id": self.id,
+        })
+    }
+
+    /// This config moved to the place a marker names; None when it names
+    /// none.
+    pub fn moved_to(&self, to: &Value) -> Option<Config> {
+        let s = |k: &str| to[k].as_str().unwrap_or("").to_string();
+        let mut c = self.clone();
+        c.kind = match s("kind") {
+            k if !k.is_empty() => k,
+            _ if !s("repo").is_empty() => "github".into(),
+            _ => "git".into(),
+        };
+        c.repo = s("repo");
+        c.remote = s("remote");
+        c.prefix = s("prefix");
+        c.branch = s("branch");
+        c.cloud = s("cloud");
+        c.path = s("path");
+        if c.kind == "webdav" {
+            c.account = s("account");
+        }
+        if !s("id").is_empty() {
+            c.id = s("id");
+        }
+        (!c.remote.is_empty() || !c.path.is_empty()).then_some(c)
+    }
+}
+
+/// A new memory's id.
+/// This memory's id: the connected place's, else the one it had when it
+/// was last connected; empty when it never was.
+pub fn memory_id(home: &crate::project::Home) -> String {
+    Config::load(home)
+        .map(|c| c.id)
+        .filter(|i| !i.is_empty())
+        .or_else(|| std::fs::read_to_string(dir(home).join("id")).ok().map(|s| s.trim().to_string()))
+        .unwrap_or_default()
+}
+
+pub fn new_id() -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::time::SystemTime::now().hash(&mut h);
+    std::process::id().hash(&mut h);
+    repo::host().hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// The place a config names, as a store of files (a folder, WebDAV); the
+/// folder found on this computer (its cloud's folder here).
+pub fn store_of(home: &crate::project::Home, c: &Config) -> Result<Box<dyn store::Store>> {
+    match c.kind.as_str() {
+        "folder" => {
+            let root = cloud::resolve(&c.cloud, &c.path, &c.id).ok_or_else(|| {
+                if c.cloud.is_empty() {
+                    anyhow::anyhow!("the folder {} is not there", c.path)
+                } else {
+                    let state = cloud::state(&c.cloud);
+                    let hint =
+                        state.hint().unwrap_or_else(|| format!("{} holds no memory of this id", cloud::name(&c.cloud)));
+                    anyhow::anyhow!("{hint} (the memory is in its folder {})", c.path)
+                }
+            })?;
+            Ok(Box::new(store::Folder::new(root)))
+        }
+        "webdav" => {
+            let pw = webdav::password_of(home, &c.remote, &c.account).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "the password for {} is not on this computer: pg sync connect webdav {} --user {}",
+                    c.place(),
+                    c.remote,
+                    c.account
+                )
+            })?;
+            Ok(Box::new(webdav::WebDav::new(&c.remote, &c.account, &pw, dir(home).join("tmp"))))
+        }
+        k => anyhow::bail!("{k} is not a place of files"),
+    }
+}
+
+/// One sync with whatever place the config names.
+fn sync_with(home: &crate::project::Home, c: &Config) -> Result<repo::Outcome> {
+    if c.files() {
+        let s = store_of(home, c)?;
+        store::Mirror::new(home, c, s.as_ref()).sync()
+    } else {
+        repo::Mirror::new(home, c)?.sync()
+    }
+}
+
+/// Forgets what this computer knew of the last place (its clone, the base
+/// of the files): the next sync with a new place starts afresh.
+pub fn forget_place(home: &crate::project::Home) -> Result<()> {
+    let _ = std::fs::remove_file(dir(home).join("base.json"));
+    let _ = std::fs::remove_dir_all(dir(home).join("base"));
+    remove_clone(&checkout(home))
 }
 
 impl Status {
@@ -180,7 +368,7 @@ pub struct SyncLock {
 impl SyncLock {
     /// None when another sync holds it.
     pub fn try_take(home: &crate::project::Home) -> Result<Option<SyncLock>> {
-        std::fs::create_dir_all(dir(home))?;
+        crate::sync::fsx::create_dir_all(dir(home))?;
         let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir(home).join("lock"))?;
         match f.try_lock() {
             Ok(()) => Ok(Some(SyncLock { _file: f })),
@@ -222,6 +410,9 @@ pub fn trigger(home: &crate::project::Home) {
         return;
     }
     let _ = std::fs::write(dir(home).join("dirty"), now_ms().to_string());
+    if Config::load(home).is_some_and(|c| c.paused) {
+        return;
+    }
     // when one is running, it sees the new moment before it ends
     if let Ok(Some(lock)) = SyncLock::try_take(home) {
         drop(lock);
@@ -278,6 +469,9 @@ pub(crate) fn detach(c: &mut std::process::Command) -> Result<()> {
 /// The sync started by `trigger`: waits for a quiet moment, syncs, and
 /// again while memory changed meanwhile. Exits when another one runs.
 pub fn background(home: &crate::project::Home) -> Result<()> {
+    if Config::load(home).is_some_and(|c| c.paused) {
+        return Ok(());
+    }
     let Some(_lock) = SyncLock::try_take(home)? else { return Ok(()) };
     let started = std::time::Instant::now();
     loop {
@@ -305,37 +499,73 @@ pub fn sync_now(home: &crate::project::Home) -> Result<Status> {
 
 /// One sync, the lock held; its outcome is kept in status.json.
 fn sync_locked(home: &crate::project::Home) -> Result<Status> {
+    let _done = progress::Done(home);
     let Some(config) = Config::load(home) else { anyhow::bail!("not connected: pg git connect") };
     let mut status = Status::load(home);
     status.tried = crate::output::now();
-    let result = repo::Mirror::new(home, &config).and_then(|m| m.sync());
+    let result = sync_with(home, &config);
     match &result {
         Ok(outcome) => {
+            // the projects sent again are joined now
+            if !config.rejoin.is_empty()
+                && let Some(mut c) = Config::load(home)
+            {
+                c.rejoin.clear();
+                c.save(home)?;
+            }
             status.synced = status.tried;
             status.error.clear();
             status.did = outcome.said();
             status.conflicts = outcome.conflicts.clone();
             if let Some(to) = &outcome.moved_to {
-                follow_move(home, &config, to)?;
-                status.did = format!("the memory moved to {to}: following it");
+                let place = serde_json::from_str::<Value>(to)
+                    .ok()
+                    .and_then(|v| config.moved_to(&v))
+                    .map(|c| c.place())
+                    .unwrap_or_default();
+                match follow_move(home, &config, to) {
+                    Ok(()) => status.did = format!("the memory moved to {place}: followed it here"),
+                    Err(e) => {
+                        status.error = format!(
+                            "the memory moved to {place}; this computer could not follow: {}",
+                            crate::output::error_text(&e)
+                        );
+                        status.save(home)?;
+                        return Err(e);
+                    }
+                }
             }
         }
-        Err(e) => status.error = format!("{e:#}"),
+        Err(e) => status.error = crate::output::error_text(e),
     }
     status.save(home)?;
+    if !status.error.is_empty() {
+        history::add(home, &format!("sync failed: {}", status.error), false);
+    } else if status.did != repo::Outcome::default().said() {
+        history::add(home, &status.did, true);
+    }
     result.map(|_| status)
 }
 
-/// Another computer moved the memory: this one goes there too.
+/// Another computer moved the memory: this one goes there too, when it
+/// can reach the new place (its cloud's folder is here, the password is
+/// here); else it keeps working here and says what it needs.
 fn follow_move(home: &crate::project::Home, old: &Config, to: &str) -> Result<()> {
-    let mut new = old.clone();
-    if let Some((repo, remote, prefix, branch)) = repo::parse_moved(to) {
-        new.repo = repo;
-        new.remote = remote;
-        new.prefix = prefix;
-        new.branch = branch;
-        new.save(home)?;
-        let _ = std::fs::remove_dir_all(checkout(home));
+    let Ok(v) = serde_json::from_str::<Value>(to) else { return Ok(()) };
+    let Some(mut new) = old.moved_to(&v) else { return Ok(()) };
+    if new.files() {
+        // where it is on this computer
+        let s = store_of(home, &new).with_context(|| format!("the memory moved to {}", new.place()))?;
+        if new.kind == "folder" {
+            new.remote = s.place();
+        }
+    }
+    new.save(home)?;
+    forget_place(home)?;
+    if new.files() {
+        let s = store_of(home, &new)?;
+        store::Mirror::new(home, &new, s.as_ref()).restore()?;
+    } else {
         repo::Mirror::new(home, &new)?.sync()?;
     }
     Ok(())
@@ -345,10 +575,18 @@ fn follow_move(home: &crate::project::Home, old: &Config, to: &str) -> Result<()
 /// are, so does the repository; only pg's own clone and settings go.
 pub fn disconnect(home: &crate::project::Home) -> Result<()> {
     let _lock = SyncLock::take(home, std::time::Duration::from_secs(120))?;
+    if let Some(c) = Config::load(home)
+        && c.kind == "webdav"
+    {
+        webdav::forget_password(home, &c.remote, &c.account);
+    }
+    if let Some(c) = Config::load(home) {
+        history::add(home, &format!("disconnected from {}", c.place()), true);
+    }
     for f in ["config.json", "status.json", "dirty"] {
         let _ = std::fs::remove_file(dir(home).join(f));
     }
-    remove_clone(&checkout(home))
+    forget_place(home)
 }
 
 /// Removes pg's clone: read-only files in .git (packs on Windows) made

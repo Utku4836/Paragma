@@ -113,6 +113,49 @@ pub fn mark(what: &str) {
     }
 }
 
+/// An error and its causes for people, in English: the system's own
+/// messages come in the computer's language, so they are said by kind.
+pub fn error_text(e: &anyhow::Error) -> String {
+    e.chain()
+        .map(|c| match c.downcast_ref::<std::io::Error>() {
+            Some(io) => io_text(io),
+            None => c.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
+/// A system error in English, with its number.
+pub fn io_text(e: &std::io::Error) -> String {
+    use std::io::ErrorKind as K;
+    let Some(code) = e.raw_os_error() else { return e.to_string() };
+    let what = match e.kind() {
+        K::NotFound => "not found",
+        K::PermissionDenied => "not allowed (read-only, open in another program, or kept out by a sandbox)",
+        K::AlreadyExists => "already there",
+        K::StorageFull => "the disk is full",
+        K::ReadOnlyFilesystem => "the disk is read-only",
+        K::NotADirectory => "a part of the path is not a folder",
+        K::IsADirectory => "a folder, not a file",
+        K::DirectoryNotEmpty => "the folder is not empty",
+        K::InvalidFilename => "a name not allowed there (or too long)",
+        K::FileTooLarge => "too large",
+        K::ResourceBusy => "in use by another program",
+        K::TimedOut => "it took too long",
+        K::Interrupted => "interrupted",
+        K::ConnectionRefused => "the connection was refused",
+        K::ConnectionReset | K::ConnectionAborted => "the connection was broken",
+        K::NotConnected | K::NetworkUnreachable | K::HostUnreachable | K::NetworkDown => "no network",
+        K::OutOfMemory => "out of memory",
+        K::Unsupported => "not supported here",
+        K::CrossesDevices => "cannot move across disks",
+        // Windows: a file another program holds open
+        _ if cfg!(windows) && matches!(code, 32 | 33) => "in use by another program",
+        _ => "a system error",
+    };
+    format!("{what} (os error {code})")
+}
+
 #[cfg(all(test, paragma_local))]
 #[rustfmt::skip]
 #[path = "../unit/src/output.rs"]

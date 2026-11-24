@@ -20,13 +20,36 @@ pub struct Ran {
 }
 
 /// Runs a pg command (this same program) for a project.
-pub fn pg(exe: &Path, project: Option<&str>, args: &[&str]) -> Ran {
+pub fn pg(exe: &Path, home: &Path, project: Option<&str>, args: &[&str]) -> Ran {
+    pg_input(exe, home, project, args, None)
+}
+
+/// A pg command given a line on its input (a password, never on the
+/// command line).
+pub fn pg_input(exe: &Path, home: &Path, project: Option<&str>, args: &[&str], input: Option<&str>) -> Ran {
     let mut c = std::process::Command::new(exe);
+    // the memory shown here, whatever the environment says
+    c.env("PARAGMA_HOME", home);
     if let Some(p) = project {
         c.args(["--project", p]);
     }
-    c.args(args).env("PARAGMA_SESSION", "interface").stdin(std::process::Stdio::null());
-    match c.output() {
+    c.args(args).env("PARAGMA_SESSION", "interface");
+    let run = match input {
+        None => c.stdin(std::process::Stdio::null()).output(),
+        Some(text) => (|| {
+            use std::io::Write;
+            let mut child = c
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+            if let Some(mut i) = child.stdin.take() {
+                let _ = writeln!(i, "{text}");
+            }
+            child.wait_with_output()
+        })(),
+    };
+    match run {
         Ok(o) => Ran {
             ok: o.status.success(),
             out: format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))

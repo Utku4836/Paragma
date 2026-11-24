@@ -49,7 +49,7 @@ pub struct Mirror<'a> {
 }
 
 /// A file's bytes as one number: whether it changed.
-fn fingerprint(bytes: &[u8]) -> u64 {
+pub(crate) fn fingerprint(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
         h ^= *b as u64;
@@ -61,7 +61,13 @@ fn fingerprint(bytes: &[u8]) -> u64 {
 impl<'a> Mirror<'a> {
     /// The clone, made when it is not there yet (or is of another remote).
     pub fn new(home: &'a Home, config: &'a Config) -> Result<Mirror<'a>> {
-        let m = Mirror { home, config, dir: checkout(home), env: std::cell::Cell::new(config.env && !config.public) };
+        Mirror::at(home, config, checkout(home))
+    }
+
+    /// A clone in another folder (the place the memory leaves, while the
+    /// new one is pg's usual clone).
+    pub fn at(home: &'a Home, config: &'a Config, dir: PathBuf) -> Result<Mirror<'a>> {
+        let m = Mirror { home, config, dir, env: std::cell::Cell::new(config.env && !config.public) };
         let ours = m.dir.join(".git").is_dir()
             && m.git(&["config", "--get", "remote.origin.url"]).map(|u| u.trim() == config.remote).unwrap_or(false);
         if !ours {
@@ -78,7 +84,7 @@ impl<'a> Mirror<'a> {
     }
 
     fn setup(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
+        crate::sync::fsx::create_dir_all(&self.dir)?;
         let c = self.config;
         self.git(&["init", "-q"])?;
         for (k, v) in [
@@ -103,8 +109,8 @@ impl<'a> Mirror<'a> {
         }
         // both sides' lines are kept when two computers changed one note
         let info = self.dir.join(".git/info");
-        std::fs::create_dir_all(&info)?;
-        std::fs::write(info.join("attributes"), "*.md merge=union\n*.env merge=union\n")?;
+        crate::sync::fsx::create_dir_all(&info)?;
+        crate::sync::fsx::write(info.join("attributes"), "*.md merge=union\n*.env merge=union\n")?;
         if self.fetch()? {
             self.git(&["checkout", "-q", "-B", &c.branch, &format!("origin/{}", c.branch)])?;
         } else {
@@ -204,7 +210,7 @@ impl<'a> Mirror<'a> {
         let held = self.held();
         let mut out = Vec::new();
         walk(&self.home.projects_dir(), "", &mut out, &|rel, is_dir| {
-            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel))
+            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel)) && self.config.goes(rel)
         })?;
         Ok(out)
     }
@@ -227,7 +233,9 @@ impl<'a> Mirror<'a> {
         let mut out = Vec::new();
         let root = self.root();
         if root.is_dir() {
-            walk(&root, "", &mut out, &|rel, is_dir| rel != ".git" && rel != MARKER && kept(rel, is_dir, true))?;
+            walk(&root, "", &mut out, &|rel, is_dir| {
+                rel != ".git" && rel != MARKER && kept(rel, is_dir, true) && self.config.goes(rel)
+            })?;
         }
         Ok(out)
     }
@@ -238,22 +246,25 @@ impl<'a> Mirror<'a> {
         let projects = self.home.projects_dir();
         let root = self.root();
         let mut seen = HashMap::new();
-        for rel in self.local_files()? {
+        let local = self.local_files()?;
+        let total = local.len();
+        for (i, rel) in local.into_iter().enumerate() {
+            super::progress::set(self.home, "copying", i + 1, total);
             let Ok(bytes) = std::fs::read(projects.join(&rel)) else { continue };
             seen.insert(rel.clone(), fingerprint(&bytes));
             let to = root.join(&rel);
             if std::fs::read(&to).ok().as_deref() != Some(bytes.as_slice()) {
                 if let Some(d) = to.parent() {
-                    std::fs::create_dir_all(d)?;
+                    crate::sync::fsx::create_dir_all(d)?;
                 }
-                std::fs::write(&to, &bytes)?;
+                crate::sync::fsx::write(&to, &bytes)?;
             }
         }
         if remove {
             let held = self.held();
             for rel in self.clone_files()? {
                 if !seen.contains_key(&rel) && !held.contains(&rel) {
-                    std::fs::remove_file(root.join(&rel))?;
+                    crate::sync::fsx::remove_file(root.join(&rel))?;
                     remove_empty_dirs(&root, &rel);
                 }
             }
@@ -264,7 +275,9 @@ impl<'a> Mirror<'a> {
     /// Commits what is staged and changed; how many files.
     fn commit(&self, message: &str) -> Result<usize> {
         let path = if self.config.prefix.is_empty() { ".".to_string() } else { self.config.prefix.clone() };
-        self.git(&["add", "-A", "--", &path])?;
+        // forced: a .gitignore inside the memory (a project's own) never
+        // keeps one of its files out
+        self.git(&["add", "-A", "-f", "--", &path])?;
         let names = self.git(&["diff", "--cached", "--name-only", "--no-renames"])?;
         let n = names.lines().filter(|l| !l.ends_with(MARKER)).count();
         if names.trim().is_empty() {
@@ -276,17 +289,17 @@ impl<'a> Mirror<'a> {
 
     /// Writes the marker: the memory is here, and how.
     fn mark(&self, moved_to: Option<Value>) -> Result<()> {
-        let mut v = json!({ "paragma": 1, "env": self.env.get(), "env_at": self.config.env_at });
+        let mut v = json!({ "paragma": 1, "id": self.config.id, "env": self.env.get(), "env_at": self.config.env_at });
         if let Some(m) = moved_to {
             v["moved_to"] = m;
         }
         let root = self.root();
-        std::fs::create_dir_all(&root)?;
-        std::fs::write(root.join(MARKER), serde_json::to_string_pretty(&v)? + "\n")?;
+        crate::sync::fsx::create_dir_all(&root)?;
+        crate::sync::fsx::write(root.join(MARKER), serde_json::to_string_pretty(&v)? + "\n")?;
         Ok(())
     }
 
-    fn marker(&self) -> Option<Value> {
+    pub fn marker(&self) -> Option<Value> {
         serde_json::from_str(&std::fs::read_to_string(self.root().join(MARKER)).ok()?).ok()
     }
 
@@ -317,6 +330,7 @@ impl<'a> Mirror<'a> {
             self.mark(None)?;
         }
         self.settle_env()?;
+        self.rejoin()?;
         let seen = self.copy_in(true)?;
         out.sent = self.commit(&format!("Paragma: {host}"))?;
         if self.fetch()? {
@@ -351,6 +365,39 @@ impl<'a> Mirror<'a> {
         Ok(out)
     }
 
+    /// Projects sent again after staying on this computer: the clone took
+    /// in the other computers' changes to them meanwhile, this computer
+    /// kept its own. Each file both have, joined (a note's lines of both
+    /// kept; another file, this computer's); one only there, brought here.
+    fn rejoin(&self) -> Result<()> {
+        let c = self.config;
+        if c.rejoin.is_empty() {
+            return Ok(());
+        }
+        let ours = |rel: &str| c.rejoin.iter().any(|p| rel.split('/').next() == Some(p.as_str()));
+        let mut all: std::collections::BTreeSet<String> = self.local_files()?.into_iter().filter(|r| ours(r)).collect();
+        all.extend(self.clone_files()?.into_iter().filter(|r| ours(r) && kept(r, false, self.env.get())));
+        let (projects, root) = (self.home.projects_dir(), self.root());
+        for rel in all {
+            let here = std::fs::read(projects.join(&rel)).ok();
+            let there = std::fs::read(root.join(&rel)).ok();
+            let joined = match (&here, &there) {
+                (Some(h), Some(t)) if h != t => {
+                    let text = [".md", ".env", ".txt"].iter().any(|e| rel.ends_with(e));
+                    if text { union(h, t, &self.dir)? } else { h.clone() }
+                }
+                (None, Some(t)) => t.clone(),
+                _ => continue,
+            };
+            let project = rel.split('/').next().unwrap_or("");
+            let meta = projects.join(project).join(".pg");
+            crate::sync::fsx::create_dir_all(&meta)?;
+            let _lock = WriteLock::take(&meta)?;
+            write_atomic(&projects.join(&rel), &joined)?;
+        }
+        Ok(())
+    }
+
     /// Merges the other computers' commits; the files both sides changed
     /// that git could not join are kept as they are here, theirs beside.
     fn merge(&self, theirs: &str) -> Result<Vec<String>> {
@@ -366,12 +413,12 @@ impl<'a> Mirror<'a> {
         for path in both.lines().filter(|l| !l.is_empty()) {
             if let Ok(theirs) = self.git(&["show", &format!(":3:{path}")]) {
                 let side = conflict_name(path);
-                std::fs::write(self.dir.join(&side), theirs)?;
-                self.git(&["add", "--", &side])?;
+                crate::sync::fsx::write(self.dir.join(&side), theirs)?;
+                self.git(&["add", "-f", "--", &side])?;
                 kept.push(side);
             }
             let _ = self.git(&["checkout", "-q", "--ours", "--", path]);
-            self.git(&["add", "--", path])?;
+            self.git(&["add", "-f", "--", path])?;
         }
         self.git(&["commit", "-q", "--no-edit", "-m", "Paragma: merge"])?;
         Ok(kept)
@@ -390,7 +437,7 @@ impl<'a> Mirror<'a> {
                 let mut parts = list.split('\0').filter(|s| !s.is_empty());
                 while let (Some(st), Some(path)) = (parts.next(), parts.next()) {
                     let Some(rel) = path.strip_prefix(&root_path) else { continue };
-                    if rel == MARKER || !kept(rel, false, self.env.get()) {
+                    if rel == MARKER || !kept(rel, false, self.env.get()) || !self.config.goes(rel) {
                         continue;
                     }
                     changed.push((rel.to_string(), st.starts_with('D')));
@@ -421,7 +468,7 @@ impl<'a> Mirror<'a> {
                 }
                 if gone {
                     if here.exists() {
-                        std::fs::remove_file(&here)?;
+                        crate::sync::fsx::remove_gone(&here)?;
                         remove_empty_dirs(&projects, &rel);
                         n += 1;
                     }
@@ -437,6 +484,7 @@ impl<'a> Mirror<'a> {
     }
 
     fn push(&self) -> Result<()> {
+        super::progress::set(self.home, "sending to the repository", 0, 0);
         let Some(head) = self.head() else { return Ok(()) };
         let theirs = format!("origin/{}", self.config.branch);
         let known = self.git(&["rev-parse", "-q", "--verify", &theirs]).map(|s| s.trim().to_string()).ok();
@@ -484,19 +532,21 @@ impl<'a> Mirror<'a> {
             match std::fs::read(&there_path) {
                 Ok(there) if there == here => {}
                 Ok(there) => {
-                    std::fs::write(&there_path, union(&here, &there, &self.dir)?)?;
+                    crate::sync::fsx::write(&there_path, union(&here, &there, &self.dir)?)?;
                     joined += 1;
                 }
                 Err(_) => {
                     if let Some(d) = there_path.parent() {
-                        std::fs::create_dir_all(d)?;
+                        crate::sync::fsx::create_dir_all(d)?;
                     }
-                    std::fs::write(&there_path, &here)?;
+                    crate::sync::fsx::write(&there_path, &here)?;
                     joined += 1;
                 }
             }
         }
-        if joined > 0 {
+        // connected to on purpose: a note that the memory left is taken out
+        let noted = self.marker().is_some_and(|m| m.get("moved_to").is_some_and(|v| !v.is_null()));
+        if joined > 0 || noted {
             self.mark(None)?;
             out.sent = self.commit(&format!("Paragma: {} joined its memory", host()))?;
         }
@@ -519,6 +569,107 @@ impl<'a> Mirror<'a> {
         Ok(out)
     }
 
+    // ---------- a memory found there: replaced, taken, removed ----------
+
+    /// The clone made what the repository holds now.
+    fn as_there(&self) -> Result<()> {
+        if self.fetch()? {
+            let theirs = format!("origin/{}", self.config.branch);
+            self.git(&["checkout", "-q", "-B", &self.config.branch, &theirs])?;
+            self.git(&["reset", "-q", "--hard", &theirs])?;
+        }
+        Ok(())
+    }
+
+    /// The memory there, whole: each file's path and bytes.
+    pub fn read_all(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        self.as_there()?;
+        let root = self.root();
+        let mut out = Vec::new();
+        for rel in self.clone_files()? {
+            out.push((rel.clone(), crate::sync::fsx::read(root.join(&rel))?));
+        }
+        Ok(out)
+    }
+
+    /// The repository made what this computer's memory is (what was there
+    /// only taken out; it stays in the history), then synced as one.
+    pub fn replace(&self) -> Result<Outcome> {
+        self.as_there()?;
+        self.copy_in(true)?;
+        self.mark(None)?;
+        let sent = self.commit(&format!("Paragma: {} put its memory in place of this one", host()))?;
+        self.push()?;
+        Ok(Outcome { sent, ..Outcome::default() })
+    }
+
+    /// This computer's memory made what the repository holds.
+    pub fn take(&self) -> Result<Outcome> {
+        let files = self.read_all()?;
+        let got = take_files(self.home, &files, &self.local_files()?)?;
+        let mut out = self.restore()?;
+        out.got += got;
+        Ok(out)
+    }
+
+    /// The memory's files and its marker taken out of the repository (they
+    /// stay in its history).
+    pub fn remove_all(&self) -> Result<()> {
+        self.as_there()?;
+        let root = self.root();
+        for rel in self.clone_files()? {
+            crate::sync::fsx::remove_gone(root.join(&rel))?;
+            remove_empty_dirs(&root, &rel);
+        }
+        crate::sync::fsx::remove_gone(root.join(MARKER))?;
+        self.commit("Paragma: the memory taken out")?;
+        self.push()
+    }
+
+    /// The connection works: the repository's branch is what was pushed.
+    pub fn probe(&self) -> Result<()> {
+        let head = self.head().context("nothing was committed")?;
+        let out = self.git(&["ls-remote", "origin", &format!("refs/heads/{}", self.config.branch)])?;
+        let there = out.split_whitespace().next().unwrap_or("");
+        if there != head {
+            bail!("the repository's branch {} is not what was sent", self.config.branch);
+        }
+        Ok(())
+    }
+
+    /// Every file that goes is in the clone as sent, byte for byte: what
+    /// differs.
+    pub fn verify(&self) -> Result<Vec<String>> {
+        let projects = self.home.projects_dir();
+        let root = self.root();
+        let mut wrong = Vec::new();
+        // what git holds, not only what is in the clone's folder
+        let tracked: std::collections::HashSet<String> = self
+            .git(&["-c", "core.quotepath=off", "ls-files", "-z"])?
+            .split('\0')
+            .filter(|l| !l.is_empty())
+            .map(|l| match self.config.prefix.as_str() {
+                "" => l.to_string(),
+                p => l.strip_prefix(&format!("{p}/")).unwrap_or(l).to_string(),
+            })
+            .collect();
+        let local = self.local_files()?;
+        let total = local.len();
+        for (i, rel) in local.into_iter().enumerate() {
+            super::progress::set(self.home, "checking", i + 1, total);
+            // a file taken out here meanwhile is not one that went wrong
+            let Ok(here) = std::fs::read(projects.join(&rel)) else { continue };
+            if !tracked.contains(&rel) || std::fs::read(root.join(&rel)).ok().as_deref() != Some(here.as_slice()) {
+                wrong.push(rel);
+            }
+        }
+        // and the clone holds no change that was not sent
+        if !self.git(&["status", "--porcelain"])?.trim().is_empty() {
+            wrong.push("(the clone has changes not sent)".into());
+        }
+        Ok(wrong)
+    }
+
     /// Leaves a note in this repository that the memory moved, so other
     /// computers follow; with `remove`, the memory's files go from it (they
     /// stay in its history).
@@ -532,34 +683,25 @@ impl<'a> Mirror<'a> {
         });
         if remove {
             for rel in self.clone_files()? {
-                std::fs::remove_file(self.root().join(&rel))?;
+                crate::sync::fsx::remove_file(self.root().join(&rel))?;
                 remove_empty_dirs(&self.root(), &rel);
             }
         }
-        let place = json!({ "repo": to.repo, "remote": to.remote, "prefix": to.prefix, "branch": to.branch });
-        self.mark(Some(place))?;
+        self.mark(Some(to.place_json()))?;
         self.commit(&format!("Paragma: the memory moved to {}", to.place()))?;
         self.push()
     }
 }
 
-/// Reads where the memory moved, from a marker's `moved_to`.
-pub fn parse_moved(to: &str) -> Option<(String, String, String, String)> {
-    let v: Value = serde_json::from_str(to).ok()?;
-    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-    let remote = s("remote");
-    (!remote.is_empty()).then(|| (s("repo"), remote, s("prefix"), s("branch")))
-}
-
 /// Both versions of a note, lines of each kept (git's union merge, from an
 /// empty base).
-fn union(here: &[u8], there: &[u8], scratch: &Path) -> Result<Vec<u8>> {
+pub(crate) fn union(here: &[u8], there: &[u8], scratch: &Path) -> Result<Vec<u8>> {
     let dir = scratch.join(".git").join("paragma-join");
-    std::fs::create_dir_all(&dir)?;
+    crate::sync::fsx::create_dir_all(&dir)?;
     let (a, base, b) = (dir.join("here"), dir.join("base"), dir.join("there"));
-    std::fs::write(&a, here)?;
-    std::fs::write(&base, b"")?;
-    std::fs::write(&b, there)?;
+    crate::sync::fsx::write(&a, here)?;
+    crate::sync::fsx::write(&base, b"")?;
+    crate::sync::fsx::write(&b, there)?;
     let out = Command::new("git")
         .args(["merge-file", "-p", "--union"])
         .args([&a, &base, &b])
@@ -570,7 +712,7 @@ fn union(here: &[u8], there: &[u8], scratch: &Path) -> Result<Vec<u8>> {
 }
 
 /// The name a file's other version is kept under: notes.conflict.md.
-fn conflict_name(path: &str) -> String {
+pub(crate) fn conflict_name(path: &str) -> String {
     match path.rsplit_once('.') {
         Some((stem, ext)) if !stem.ends_with('/') && !stem.is_empty() => format!("{stem}.conflict.{ext}"),
         _ => format!("{path}.conflict"),
@@ -580,7 +722,7 @@ fn conflict_name(path: &str) -> String {
 /// What goes into the repository, by its path under projects/: not the
 /// indexes, state and lock (.pg/), not this computer's folder links, not
 /// files being written, the .env files only when chosen.
-fn kept(rel: &str, is_dir: bool, env: bool) -> bool {
+pub(crate) fn kept(rel: &str, is_dir: bool, env: bool) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     if is_dir {
         return name != ".pg" && name != ".git";
@@ -592,7 +734,7 @@ fn kept(rel: &str, is_dir: bool, env: bool) -> bool {
 }
 
 /// Files below `root`, by their path with '/', as `keep` allows.
-fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(&str, bool) -> bool) -> Result<()> {
+pub(crate) fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(&str, bool) -> bool) -> Result<()> {
     let dir = if rel.is_empty() { root.to_path_buf() } else { root.join(rel) };
     let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(()) };
     for e in entries.flatten() {
@@ -610,8 +752,41 @@ fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(&str, bool)
     Ok(())
 }
 
+/// This computer's memory made what `files` hold: each one written, and
+/// of `local` (the files that go from here) those not among them taken
+/// out. How many changed here.
+pub(crate) fn take_files(home: &Home, files: &[(String, Vec<u8>)], local: &[String]) -> Result<usize> {
+    let projects = home.projects_dir();
+    let names: std::collections::HashSet<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+    let mut n = 0;
+    for (rel, bytes) in files {
+        let here = projects.join(rel);
+        if std::fs::read(&here).ok().as_deref() == Some(bytes.as_slice()) {
+            continue;
+        }
+        let project = rel.split('/').next().unwrap_or("");
+        let _lock = if project.starts_with('.') || !rel.contains('/') {
+            None
+        } else {
+            let meta = projects.join(project).join(".pg");
+            crate::sync::fsx::create_dir_all(&meta)?;
+            Some(WriteLock::take(&meta)?)
+        };
+        write_atomic(&here, bytes)?;
+        n += 1;
+    }
+    for rel in local {
+        if !names.contains(rel.as_str()) {
+            crate::sync::fsx::remove_gone(projects.join(rel))?;
+            remove_empty_dirs(&projects, rel);
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// Removes the folders of `rel` that became empty, up to `root`.
-fn remove_empty_dirs(root: &Path, rel: &str) {
+pub(crate) fn remove_empty_dirs(root: &Path, rel: &str) {
     let mut p = PathBuf::from(rel);
     while p.pop() && !p.as_os_str().is_empty() {
         let d = root.join(&p);
@@ -619,14 +794,27 @@ fn remove_empty_dirs(root: &Path, rel: &str) {
         // a project left with nothing but its indexes goes with them
         if only_pg && p.components().count() == 1 && d.join(".pg").exists() {
             let _ = std::fs::remove_dir_all(&d);
-        } else if std::fs::remove_dir(&d).is_err() {
+        } else if std::fs::remove_dir(&d).is_err() && !remove_read_only_dir(&d) {
             break;
         }
     }
 }
 
+/// An empty folder a cloud program marked read-only (OneDrive marks its
+/// folders so): the mark taken off, then the folder removed.
+fn remove_read_only_dir(d: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(d) else { return false };
+    let mut perms = meta.permissions();
+    if !perms.readonly() || std::fs::read_dir(d).map(|mut es| es.next().is_some()).unwrap_or(true) {
+        return false;
+    }
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(d, perms).is_ok() && std::fs::remove_dir(d).is_ok()
+}
+
 /// This computer's name, for commit messages.
-fn host() -> String {
+pub(crate) fn host() -> String {
     for k in ["COMPUTERNAME", "HOSTNAME"] {
         if let Ok(h) = std::env::var(k)
             && !h.trim().is_empty()

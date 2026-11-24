@@ -194,3 +194,33 @@ mod sys {
 #[rustfmt::skip]
 #[path = "../unit/src/terminal.rs"]
 mod tests;
+
+/// A line typed without showing it (a password): Enter ends it, Esc or
+/// Ctrl+C gives up.
+pub fn read_hidden() -> anyhow::Result<String> {
+    use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use ratatui::crossterm::terminal;
+    terminal::enable_raw_mode()?;
+    let mut out = String::new();
+    let result = loop {
+        match event::read() {
+            Ok(Event::Key(k)) if k.kind != KeyEventKind::Release => match k.code {
+                KeyCode::Enter => break Ok(out),
+                KeyCode::Esc => break Err(anyhow::anyhow!("no password given")),
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    break Err(anyhow::anyhow!("no password given"));
+                }
+                KeyCode::Backspace => {
+                    out.pop();
+                }
+                KeyCode::Char(c) => out.push(c),
+                _ => {}
+            },
+            Ok(Event::Paste(t)) => out.push_str(t.trim_end_matches(['\r', '\n'])),
+            Ok(_) => {}
+            Err(e) => break Err(e.into()),
+        }
+    };
+    let _ = terminal::disable_raw_mode();
+    result
+}

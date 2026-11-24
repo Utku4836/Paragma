@@ -72,7 +72,7 @@ Together:
 
 For people:
   setup   Connect Paragma to your coding agents
-  git     Keep the memory on GitHub, the same on every computer
+  sync    Keep the memory on GitHub, a git host, a cloud folder or WebDAV; backups
   link    The folders a project's code is in
   doctor  Check the project's notes, code and indexes (--experts: what pg said and did)
   skill   Paragma's instructions for agents
@@ -150,7 +150,11 @@ enum Command {
     Setup(setup::Args),
     /// Paragma's instructions for agents: the core, or a skill (coding, projects, knowledge)
     Skill(skill::Args),
-    /// Back the memory up to GitHub and keep it the same on every computer
+    /// Keep the memory in one place, the same on every computer (GitHub, any git host, a cloud folder, WebDAV);
+    /// backups of the whole memory, and their restore
+    Sync(git::Args),
+    /// pg sync, with the GitHub screen when alone in a terminal
+    #[command(hide = true)]
     Git(git::Args),
     /// Paragma as an MCP server over stdio, for clients without hooks: claude mcp add paragma -- pg mcp
     Mcp(mcp::Args),
@@ -167,6 +171,11 @@ struct Parsed {
     project: Option<String>,
     budget: usize,
     command: Command,
+}
+
+/// A kind of sync place, for people (the interface's Sync).
+pub fn sync_kind_name(kind: &str) -> &'static str {
+    git::kind_name(kind)
 }
 
 /// What pg did by itself, said for people (the interface's activity).
@@ -222,21 +231,23 @@ pub fn run() -> ExitCode {
             }
             None if crate::db::denied(&e) => {
                 eprintln!(
-                    "pg: {e:#}
+                    "pg: {}
 {}",
+                    crate::output::error_text(&e),
                     not_let_in(&Home::locate())
                 );
                 ExitCode::from(7)
             }
             None if crate::db::broken(&e) => {
                 eprintln!(
-                    "pg: {e:#}
-a file of pg's own is damaged: pg doctor finds it and makes it again"
+                    "pg: {}
+a file of pg's own is damaged: pg doctor finds it and makes it again",
+                    crate::output::error_text(&e)
                 );
                 ExitCode::from(7)
             }
             None => {
-                eprintln!("pg: {e:#}");
+                eprintln!("pg: {}", crate::output::error_text(&e));
                 ExitCode::from(7)
             }
         },
@@ -261,6 +272,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         if std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
             let home = Home::locate();
             crate::upgrade::run(&home);
+            crate::sync::backup::daily_check(&home);
             let cx = context(cli.project.as_deref(), cli.budget)?;
             return crate::ui::run(home, cx.project);
         }
@@ -271,6 +283,8 @@ fn dispatch(cli: Cli) -> Result<()> {
     let cli = Parsed { project: cli.project, budget: cli.budget, command };
     let home = Home::locate();
     crate::upgrade::run(&home);
+    // the daily backup, when it is on and none was made today
+    crate::sync::backup::daily_check(&home);
     crate::code::files::keep_listings_in(home.projects_dir().join(".pg").join("listings"));
     crate::output::mark("upgrade checked");
     if let Command::Hook(a) = cli.command {
@@ -324,7 +338,8 @@ fn run_command(cx: &Context, command: Command) -> Result<()> {
         Command::Doctor(a) => doctor::run(cx, a),
         Command::Setup(a) => setup::run(cx, a),
         Command::Skill(a) => skill::run(cx, a),
-        Command::Git(a) => git::run(cx, a),
+        Command::Git(a) => git::run(cx, a, true),
+        Command::Sync(a) => git::run(cx, a, false),
         Command::Hook(_) => unreachable!("answered above"),
     }
 }
