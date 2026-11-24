@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 const TYPED: Duration = Duration::from_millis(140);
 /// How often the files and pg's state are looked at for changes.
 const WATCH: Duration = Duration::from_millis(1500);
+/// How often whether the files are in the cloud is looked at again.
+const CLOUD_LOOK: Duration = Duration::from_secs(15);
 
 impl App {
     // ---------- Home ----------
@@ -198,6 +200,9 @@ impl App {
                     format!("{}: {}", crate::cli::sync_kind_name(&c.kind), c.place()),
                     c.kind == "github" && c.public,
                 ));
+                if let (false, Some((line, ok))) = (c.cloud.is_empty(), &self.cloud_line) {
+                    out.push(SyncRow::Info(line.clone(), !ok));
+                }
                 out.push(SyncRow::Info(
                     if s.synced > 0 {
                         format!("last sync {}: {}", crate::output::ago(s.synced, now), s.did)
@@ -345,8 +350,12 @@ impl App {
         let place = |kind: &str| Act::Place { kind: kind.into(), moving };
         let mut options: Vec<(String, Act)> = vec![("GitHub".into(), place("github"))];
         options.push(("Another git host (GitLab, Gitea, Bitbucket, your server)".into(), place("git")));
-        for c in crate::sync::cloud::found() {
-            options.push((format!("{}  (its folder on this computer)", c.name), place(c.id)));
+        for c in crate::sync::cloud::states().into_iter().filter(|c| c.installed) {
+            let label = format!("{}  ({})", c.name, c.said());
+            match c.hint() {
+                None => options.push((label, place(c.id))),
+                Some(h) => options.push((label, Act::Tell(c.name.to_string(), vec![h]))),
+            }
         }
         options.push(("A folder (any other synced folder, a disk)".into(), place("folder")));
         options.push(("WebDAV (Nextcloud, ownCloud, a NAS)".into(), place("webdav")));
@@ -501,7 +510,7 @@ impl App {
                 let found = if moving { None } else { a.find_memory(&repos)? };
                 Ok(Some(Accounted { login: a.login.clone(), repos, found }))
             })();
-            let _ = tx.send(JobDone::Account(got.map_err(|e| format!("{e:#}")), moving));
+            let _ = tx.send(JobDone::Account(got.map_err(|e| crate::output::error_text(&e)), moving));
         });
         self.jobs.push(Job { what: "reading your GitHub repositories…".into(), rx, started: Instant::now() });
     }
@@ -641,6 +650,7 @@ impl App {
                 }
             }
             Act::Place { kind, moving } => self.place_kind(&kind, moving),
+            Act::Tell(title, lines) => self.choose(&title, lines, vec![("OK", Act::Nothing)]),
             Act::PlaceEnv(env) => {
                 self.pending.env = env;
                 if self.pending.moving {
@@ -685,7 +695,7 @@ impl App {
             Act::RestoreFrom(p) => {
                 let what = crate::sync::backup::manifest(std::path::Path::new(&p));
                 match what {
-                    Err(e) => self.say(format!("{e:#}"), true),
+                    Err(e) => self.say(crate::output::error_text(&e), true),
                     Ok(m) => self.choose(
                         "Restore this backup?",
                         vec![
@@ -802,6 +812,7 @@ impl App {
     /// typed, and what changed outside (agents, a sync).
     pub fn tick(&mut self) {
         self.poll_jobs();
+        self.watch_cloud();
         if self.search_due.is_some_and(|t| t.elapsed() >= TYPED) {
             self.search_due = None;
             self.run_search();
@@ -816,6 +827,35 @@ impl App {
             }
             self.watch_outside();
         }
+    }
+
+    /// While Sync is shown for a cloud folder: whether the files are in
+    /// the cloud, looked at again every little while, in the background.
+    fn watch_cloud(&mut self) {
+        if let Some(rx) = &self.cloud_rx {
+            match rx.try_recv() {
+                Ok(line) => {
+                    self.cloud_line = line;
+                    self.cloud_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(_) => self.cloud_rx = None,
+            }
+            return;
+        }
+        if self.section != Section::Sync || self.cloud_at.is_some_and(|t| t.elapsed() < CLOUD_LOOK) {
+            return;
+        }
+        self.cloud_at = Some(Instant::now());
+        let Some(c) = crate::sync::Config::load(&self.home).filter(|c| !c.cloud.is_empty()) else {
+            self.cloud_line = None;
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::sync::cloud::upload_line(&c.cloud, &c.path, &c.id));
+        });
+        self.cloud_rx = Some(rx);
     }
 
     pub fn poll_jobs(&mut self) {
@@ -964,14 +1004,14 @@ impl App {
         if self.index.as_ref().is_none_or(|(n, _)| *n != p.name) {
             match crate::index::Index::open(&p) {
                 Ok(i) => self.index = Some((p.name.clone(), i)),
-                Err(e) => return self.set_found(Vec::new(), format!("the index: {e:#}")),
+                Err(e) => return self.set_found(Vec::new(), format!("the index: {}", crate::output::error_text(&e))),
             }
         }
         let Some((_, index)) = self.index.as_mut() else { return };
         let _ = index.sync(&p);
         let hits = match crate::search::find(index, &text) {
             Ok(h) => h,
-            Err(e) => return self.set_found(Vec::new(), format!("{e:#}")),
+            Err(e) => return self.set_found(Vec::new(), crate::output::error_text(&e)),
         };
         let top = hits.first().map(|h| h.score).unwrap_or(0.0);
         let mut found: Vec<Found> = Vec::new();

@@ -145,6 +145,8 @@ pub enum Act {
     ResolveMerge(String, String),
     ResolveKeep(String),
     ResolveTake(String, String),
+    /// Something said in a window of its own: its title and lines.
+    Tell(String, Vec<String>),
 }
 
 /// What is done with a background pg command's answer.
@@ -440,6 +442,11 @@ pub struct App {
     pub home_list: Vec<HomeRow>,
     /// The other computer's copies of notes here (name.conflict.md).
     pub conflicts: Vec<String>,
+    /// Whether the memory's files are in the cloud (a cloud folder), looked
+    /// at in the background while Sync is shown: the line, all well.
+    pub cloud_line: Option<(String, bool)>,
+    pub cloud_rx: Option<std::sync::mpsc::Receiver<Option<(String, bool)>>>,
+    pub cloud_at: Option<Instant>,
     /// The notes linking to the note previewed, and those it links to.
     pub links_for: Option<(String, Vec<String>, Vec<String>)>,
 }
@@ -496,6 +503,9 @@ impl App {
             unsent: 0,
             home_list: Vec::new(),
             conflicts: Vec::new(),
+            cloud_line: None,
+            cloud_rx: None,
+            cloud_at: None,
             links_for: None,
         };
         app.projects = data::projects(&app.home);

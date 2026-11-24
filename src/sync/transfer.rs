@@ -213,9 +213,10 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Re
             if remove_old { "; the memory's files left it" } else { "" }
         )),
         Err(e) => out.push(format!(
-            "the memory is in {}, but {} could not be told ({e:#}): connect the other computers to the new place by hand",
+            "the memory is in {}, but {} could not be told ({}): connect the other computers to the new place by hand",
             now.place(),
-            old.place()
+            old.place(),
+            crate::output::error_text(&e)
         )),
     }
     if remove_old && old.kind == "github" && old.env && old.public {
@@ -279,7 +280,7 @@ fn restore_files(home: &Home, files: &[(String, Vec<u8>)]) -> Result<()> {
     repo::walk(&projects, "", &mut now, &|rel, is_dir| repo::kept(rel, is_dir, true))?;
     for rel in now {
         if !names.contains(rel.as_str()) {
-            std::fs::remove_file(projects.join(&rel))?;
+            crate::sync::fsx::remove_file(projects.join(&rel))?;
             repo::remove_empty_dirs(&projects, &rel);
         }
     }

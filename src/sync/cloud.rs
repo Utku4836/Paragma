@@ -44,6 +44,324 @@ pub fn found() -> Vec<Cloud> {
     CLOUDS.iter().filter_map(|(id, name)| root(id).map(|root| Cloud { id, name, root })).collect()
 }
 
+/// What this computer has of a cloud: its program, whether it runs, the
+/// account signed in to it, and its folder here.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct State {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub root: Option<PathBuf>,
+    pub installed: bool,
+    pub running: bool,
+    /// None where it cannot be told.
+    pub signed_in: Option<bool>,
+    /// The account, partly hidden (ab***@example.com); empty when not known.
+    pub account: String,
+    /// A folder named by PARAGMA_CLOUDS stands for it.
+    pub named: bool,
+}
+
+impl State {
+    /// Its folder can be used: what is put there goes to the cloud.
+    pub fn ready(&self) -> bool {
+        self.root.is_some() && self.signed_in != Some(false)
+    }
+
+    /// For people: "signed in as ab***@example.com, running".
+    pub fn said(&self) -> String {
+        if self.named {
+            return if self.root.is_some() { "a folder standing for it".into() } else { "not here".into() };
+        }
+        if !self.installed {
+            return "not installed".into();
+        }
+        if self.signed_in == Some(false) {
+            return "installed, no account signed in".into();
+        }
+        let who = match (self.signed_in, self.account.is_empty()) {
+            (Some(true), false) => format!("signed in as {}", self.account),
+            (Some(true), true) => "signed in".to_string(),
+            _ => "installed".to_string(),
+        };
+        let runs = if self.running { "running" } else { "not running" };
+        format!("{who}, {runs}")
+    }
+
+    /// What to do before it can be used; None when it can be.
+    pub fn hint(&self) -> Option<String> {
+        let n = self.name;
+        if self.ready() {
+            return None;
+        }
+        Some(if self.named {
+            format!("{n}'s folder named in PARAGMA_CLOUDS is not there")
+        } else if !self.installed {
+            format!("{n} is not installed on this computer: install it and sign in, or connect a folder")
+        } else if self.signed_in == Some(false) {
+            format!(
+                "{n} is installed, but no account is signed in: what is put in its folder would stay on this computer. Sign in to {n} first"
+            )
+        } else {
+            format!("{n} is not running (its folder is there only while it runs): start {n}")
+        })
+    }
+}
+
+/// The state of every cloud on this computer.
+pub fn states() -> Vec<State> {
+    if let Some(n) = named() {
+        return CLOUDS
+            .iter()
+            .map(|(id, name)| {
+                let root = n.iter().find(|(k, _)| k == id).map(|(_, p)| p.clone()).filter(|p| p.is_dir());
+                let here = root.is_some();
+                State {
+                    id,
+                    name,
+                    root,
+                    installed: here,
+                    running: here,
+                    signed_in: Some(here),
+                    named: true,
+                    ..State::default()
+                }
+            })
+            .collect();
+    }
+    let procs = processes();
+    CLOUDS.iter().map(|(id, name)| state_of(id, name, &procs)).collect()
+}
+
+/// The state of one cloud.
+pub fn state(id: &str) -> State {
+    states().into_iter().find(|s| s.id == id).unwrap_or_default()
+}
+
+fn state_of(id: &'static str, name: &'static str, procs: &[String]) -> State {
+    let root = root(id);
+    let mut s = State { id, name, root: root.clone(), ..State::default() };
+    let runs = |exe: &str| procs.iter().any(|p| p.eq_ignore_ascii_case(exe));
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from).unwrap_or_default();
+    if cfg!(windows) {
+        let (local, pf, pf86) = (env("LOCALAPPDATA"), env("ProgramFiles"), env("ProgramFiles(x86)"));
+        match id {
+            "onedrive" => {
+                s.installed = [local.join("Microsoft"), pf.clone(), pf86.clone()].iter().any(|d| {
+                    d.join("Microsoft OneDrive").join("OneDrive.exe").is_file()
+                        || d.join("OneDrive").join("OneDrive.exe").is_file()
+                });
+                s.running = runs("OneDrive.exe");
+                let accounts = onedrive_accounts();
+                s.signed_in = Some(!accounts.is_empty());
+                s.account = accounts
+                    .iter()
+                    .find(|(f, _)| root.as_ref() == Some(f))
+                    .or(accounts.first())
+                    .map(|(_, e)| mask(e))
+                    .unwrap_or_default();
+            }
+            "gdrive" => {
+                s.installed = pf.join("Google").join("Drive File Stream").is_dir();
+                s.running = runs("GoogleDriveFS.exe");
+                s.signed_in = Some(
+                    reg(r"HKCU\Software\Google\DriveFS")
+                        .iter()
+                        .any(|(_, k, v)| k == "CurrentAccountToken" && !v.is_empty()),
+                );
+            }
+            "dropbox" => {
+                s.installed = [local, pf, pf86].iter().any(|d| d.join("Dropbox").is_dir());
+                s.running = runs("Dropbox.exe");
+                s.signed_in = Some(dropbox().is_some());
+            }
+            _ => {
+                s.running = runs("iCloudDrive.exe") || runs("iCloudServices.exe");
+                s.signed_in = Some(root.is_some());
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        let storage: Vec<String> = std::fs::read_dir(home().join("Library").join("CloudStorage"))
+            .map(|es| es.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        let signed = |prefix: &str| storage.iter().find(|n| n.starts_with(prefix)).cloned();
+        let app = |a: &str| Path::new("/Applications").join(a).is_dir();
+        match id {
+            "onedrive" => {
+                s.installed = app("OneDrive.app");
+                s.running = runs("OneDrive");
+                s.signed_in = Some(signed("OneDrive").is_some());
+            }
+            "gdrive" => {
+                s.installed = app("Google Drive.app");
+                s.running = runs("Google Drive");
+                let found = signed("GoogleDrive-");
+                s.account = found.as_deref().and_then(|n| n.strip_prefix("GoogleDrive-")).map(mask).unwrap_or_default();
+                s.signed_in = Some(found.is_some());
+            }
+            "dropbox" => {
+                s.installed = app("Dropbox.app");
+                s.running = runs("Dropbox");
+                s.signed_in = Some(dropbox().is_some() || signed("Dropbox").is_some());
+            }
+            _ => {
+                s.installed = true;
+                s.running = true;
+                s.signed_in = Some(root.is_some());
+            }
+        }
+    } else {
+        s.running = runs(id);
+    }
+    // a folder of it found here tells it is here
+    s.installed |= root.is_some();
+    s
+}
+
+/// The programs running here, by their file's name.
+fn processes() -> Vec<String> {
+    let out = if cfg!(windows) {
+        std::process::Command::new("tasklist").args(["/FO", "CSV", "/NH"]).output()
+    } else {
+        std::process::Command::new("ps").args(["-A", "-o", "comm="]).output()
+    };
+    let Ok(out) = out else { return Vec::new() };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if cfg!(windows) {
+                l.strip_prefix('"').and_then(|r| r.split('"').next()).map(str::to_string)
+            } else {
+                l.rsplit('/').next().map(str::to_string)
+            }
+        })
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+/// A Windows registry key and those below it: (key, name, value).
+fn reg(key: &str) -> Vec<(String, String, String)> {
+    let Ok(out) = std::process::Command::new("reg").args(["query", key, "/s"]).output() else { return Vec::new() };
+    let mut at = String::new();
+    let mut found = Vec::new();
+    for l in String::from_utf8_lossy(&out.stdout).lines() {
+        if l.starts_with("HKEY_") {
+            at = l.trim().to_string();
+        } else if let Some(rest) = l.strip_prefix("    ") {
+            let parts: Vec<&str> = rest.split("    ").collect();
+            if parts.len() >= 2 {
+                found.push((at.clone(), parts[0].to_string(), parts.get(2).copied().unwrap_or("").to_string()));
+            }
+        }
+    }
+    found
+}
+
+/// OneDrive's accounts signed in here: their folder and e-mail.
+fn onedrive_accounts() -> Vec<(PathBuf, String)> {
+    let values = reg(r"HKCU\Software\Microsoft\OneDrive\Accounts");
+    let mut keys: Vec<&String> = values.iter().map(|(k, _, _)| k).collect();
+    keys.dedup();
+    keys.into_iter()
+        .filter_map(|k| {
+            let get = |n: &str| values.iter().find(|(kk, nn, _)| kk == k && nn == n).map(|(_, _, v)| v.clone());
+            let folder = PathBuf::from(get("UserFolder")?);
+            folder.is_dir().then(|| (folder, get("UserEmail").unwrap_or_default()))
+        })
+        .collect()
+}
+
+/// An account partly hidden: ab***@example.com.
+pub fn mask(account: &str) -> String {
+    let (user, domain) = account.split_once('@').unwrap_or((account, ""));
+    let shown: String = user.chars().take(2).collect();
+    if domain.is_empty() { format!("{shown}***") } else { format!("{shown}***@{domain}") }
+}
+
+/// Whether a file in a cloud's folder is in the cloud: Windows keeps that
+/// for the programs that use its cloud files (OneDrive, Dropbox, iCloud);
+/// a file not sent yet is no cloud file at all. None where it cannot be
+/// told (another system).
+#[cfg(windows)]
+pub fn in_cloud(p: &Path) -> Option<bool> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::CloudFilters::{
+        CF_PLACEHOLDER_STATE_IN_SYNC, CF_PLACEHOLDER_STATE_INVALID, CF_PLACEHOLDER_STATE_PLACEHOLDER,
+        CfGetPlaceholderStateFromFileInfo,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_TAG_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FileAttributeTagInfo, GetFileInformationByHandleEx,
+    };
+    // its attributes only: nothing brought down, nothing held
+    let f = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .open(p)
+        .ok()?;
+    let mut info = FILE_ATTRIBUTE_TAG_INFO { FileAttributes: 0, ReparseTag: 0 };
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            f.as_raw_handle(),
+            FileAttributeTagInfo,
+            (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+            std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let state = unsafe {
+        CfGetPlaceholderStateFromFileInfo((&info as *const FILE_ATTRIBUTE_TAG_INFO).cast(), FileAttributeTagInfo)
+    };
+    if state == CF_PLACEHOLDER_STATE_INVALID {
+        return None;
+    }
+    Some(state & CF_PLACEHOLDER_STATE_PLACEHOLDER != 0 && state & CF_PLACEHOLDER_STATE_IN_SYNC != 0)
+}
+
+#[cfg(not(windows))]
+pub fn in_cloud(_p: &Path) -> Option<bool> {
+    None
+}
+
+/// Whether the memory's files in a cloud's folder are in the cloud, for
+/// people, and whether all is well; what to do first when the cloud cannot
+/// take them; None where it cannot be told (another system, Google
+/// Drive's own drive).
+pub fn upload_line(cloud: &str, path: &str, id: &str) -> Option<(String, bool)> {
+    let st = state(cloud);
+    if let Some(h) = st.hint() {
+        return Some((h, false));
+    }
+    if st.named || cloud == "gdrive" {
+        return None;
+    }
+    let root = resolve(cloud, path, id)?;
+    let mut files = Vec::new();
+    super::repo::walk(&root, "", &mut files, &|rel, _| {
+        let n = rel.rsplit('/').next().unwrap_or(rel);
+        !n.starts_with(".~pg-") && !n.starts_with(".paragma-probe")
+    })
+    .ok()?;
+    let mut waiting = 0;
+    for f in &files {
+        if !in_cloud(&root.join(f))? {
+            waiting += 1;
+        }
+    }
+    let all = crate::output::count(files.len() as i64, "file");
+    let name = st.name;
+    Some(if waiting == 0 {
+        (format!("{name}: all {all} in the cloud"), true)
+    } else if st.running {
+        (format!("{name}: {waiting} of {all} not in the cloud yet ({name} is sending them)"), true)
+    } else {
+        (format!("{name}: {waiting} of {all} not in the cloud yet: start {name} to send them"), false)
+    })
+}
+
 /// The folder a cloud keeps its files in here.
 pub fn root(id: &str) -> Option<PathBuf> {
     if let Some(n) = named() {

@@ -231,21 +231,23 @@ pub fn run() -> ExitCode {
             }
             None if crate::db::denied(&e) => {
                 eprintln!(
-                    "pg: {e:#}
+                    "pg: {}
 {}",
+                    crate::output::error_text(&e),
                     not_let_in(&Home::locate())
                 );
                 ExitCode::from(7)
             }
             None if crate::db::broken(&e) => {
                 eprintln!(
-                    "pg: {e:#}
-a file of pg's own is damaged: pg doctor finds it and makes it again"
+                    "pg: {}
+a file of pg's own is damaged: pg doctor finds it and makes it again",
+                    crate::output::error_text(&e)
                 );
                 ExitCode::from(7)
             }
             None => {
-                eprintln!("pg: {e:#}");
+                eprintln!("pg: {}", crate::output::error_text(&e));
                 ExitCode::from(7)
             }
         },

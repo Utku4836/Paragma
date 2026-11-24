@@ -91,7 +91,7 @@ pub fn update(home: &Home) -> Vec<Done> {
         let outcome = match skills::install(&file) {
             Ok(skills::Written::Unchanged) => Outcome::Unchanged,
             Ok(skills::Written::Written { kept }) => Outcome::Written { kept },
-            Err(e) => Outcome::Failed(format!("{e:#}")),
+            Err(e) => Outcome::Failed(crate::output::error_text(&e)),
         };
         out.push(Done { what: "instructions", place: agents::short(&file), outcome });
     }
@@ -111,7 +111,7 @@ pub fn update(home: &Home) -> Vec<Done> {
         let outcome = match hooks::install(&agent, &file, &exe) {
             Ok(hooks::Change::Unchanged) => Outcome::Unchanged,
             Ok(hooks::Change::Written) => Outcome::Written { kept: 0 },
-            Err(e) => Outcome::Failed(format!("{e:#}")),
+            Err(e) => Outcome::Failed(crate::output::error_text(&e)),
         };
         out.push(Done { what: "hooks", place: agents::short(&file), outcome });
     }
@@ -126,7 +126,7 @@ pub fn update(home: &Home) -> Vec<Done> {
         } else {
             match mcp::install(&c, &exe) {
                 Ok(_) => Outcome::Written { kept: 0 },
-                Err(e) => Outcome::Failed(format!("{e:#}")),
+                Err(e) => Outcome::Failed(crate::output::error_text(&e)),
             }
         };
         out.push(Done { what: "MCP server", place: c.name.to_string(), outcome });

@@ -89,7 +89,7 @@ impl Store for Folder {
     fn write(&self, rel: &str, bytes: &[u8]) -> Result<String> {
         let to = self.root.join(rel);
         let dir = to.parent().context("a file's folder")?;
-        std::fs::create_dir_all(dir)?;
+        crate::sync::fsx::create_dir_all(dir)?;
         let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let tmp = dir.join(format!("{TEMP}{}-{name}", std::process::id()));
         std::fs::write(&tmp, bytes).with_context(|| format!("write {rel} in {}", self.root.display()))?;
@@ -100,7 +100,7 @@ impl Store for Folder {
         if std::fs::read(&to).ok().as_deref() != Some(bytes) {
             bail!("{rel} in {} reads back other than written", self.root.display());
         }
-        Ok(stamp(&std::fs::metadata(&to)?))
+        Ok(stamp(&crate::sync::fsx::metadata(&to)?))
     }
 
     fn remove(&self, rel: &str) -> Result<()> {
@@ -354,7 +354,7 @@ impl<'a> Mirror<'a> {
             let _lock = if project.starts_with('.') || project.is_empty() || !files.iter().all(|f| f.contains('/')) {
                 None
             } else {
-                std::fs::create_dir_all(projects.join(&project).join(".pg"))?;
+                crate::sync::fsx::create_dir_all(projects.join(&project).join(".pg"))?;
                 Some(WriteLock::take(&projects.join(&project).join(".pg"))?)
             };
             for rel in files {
@@ -422,7 +422,7 @@ impl<'a> Mirror<'a> {
                 }
                 None => {
                     if local.is_some() {
-                        std::fs::remove_file(projects.join(rel))?;
+                        crate::sync::fsx::remove_gone(projects.join(rel))?;
                         remove_empty_dirs(projects, rel);
                         out.got += 1;
                     }
@@ -488,11 +488,11 @@ impl<'a> Mirror<'a> {
         let scratch = super::dir(self.home);
         let Some(base) = self.base_text(rel) else { return union(here, there, &scratch).map(Some) };
         let dir = scratch.join("join");
-        std::fs::create_dir_all(&dir)?;
+        crate::sync::fsx::create_dir_all(&dir)?;
         let (a, o, b) = (dir.join("here"), dir.join("base"), dir.join("there"));
-        std::fs::write(&a, here)?;
-        std::fs::write(&o, &base)?;
-        std::fs::write(&b, there)?;
+        crate::sync::fsx::write(&a, here)?;
+        crate::sync::fsx::write(&o, &base)?;
+        crate::sync::fsx::write(&b, there)?;
         let run = std::process::Command::new("git")
             .args(["merge-file", "-p"])
             .args([&a, &o, &b])
@@ -507,6 +507,10 @@ impl<'a> Mirror<'a> {
     pub fn restore(&self) -> Result<Outcome> {
         let _ = std::fs::remove_file(self.manifest_path());
         let _ = std::fs::remove_dir_all(&self.base_dir);
+        // connected to on purpose: a note that the memory left is taken out
+        if self.marker().is_some_and(|m| m.get("moved_to").is_some_and(|v| !v.is_null())) {
+            self.mark(None)?;
+        }
         self.sync()
     }
 
@@ -542,7 +546,8 @@ impl<'a> Mirror<'a> {
         let mut wrong = Vec::new();
         let there: std::collections::HashSet<String> = self.store.list()?.into_iter().map(|l| l.rel).collect();
         for rel in self.local_files()? {
-            let here = std::fs::read(projects.join(&rel))?;
+            // a file taken out here meanwhile is not one that went wrong
+            let Ok(here) = std::fs::read(projects.join(&rel)) else { continue };
             if !there.contains(&rel) || self.store.read(&rel).ok().as_deref() != Some(here.as_slice()) {
                 wrong.push(rel);
             }

@@ -24,6 +24,7 @@
 
 pub mod backup;
 pub mod cloud;
+pub mod fsx;
 pub mod github;
 pub mod repo;
 pub mod store;
@@ -242,11 +243,10 @@ pub fn store_of(home: &crate::project::Home, c: &Config) -> Result<Box<dyn store
                 if c.cloud.is_empty() {
                     anyhow::anyhow!("the folder {} is not there", c.path)
                 } else {
-                    anyhow::anyhow!(
-                        "{} was not found on this computer (the memory is in its folder {}): install it and sign in, or pg sync connect folder <its folder here>",
-                        cloud::name(&c.cloud),
-                        c.path
-                    )
+                    let state = cloud::state(&c.cloud);
+                    let hint =
+                        state.hint().unwrap_or_else(|| format!("{} holds no memory of this id", cloud::name(&c.cloud)));
+                    anyhow::anyhow!("{hint} (the memory is in its folder {})", c.path)
                 }
             })?;
             Ok(Box::new(store::Folder::new(root)))
@@ -324,7 +324,7 @@ pub struct SyncLock {
 impl SyncLock {
     /// None when another sync holds it.
     pub fn try_take(home: &crate::project::Home) -> Result<Option<SyncLock>> {
-        std::fs::create_dir_all(dir(home))?;
+        crate::sync::fsx::create_dir_all(dir(home))?;
         let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir(home).join("lock"))?;
         match f.try_lock() {
             Ok(()) => Ok(Some(SyncLock { _file: f })),
@@ -468,14 +468,17 @@ fn sync_locked(home: &crate::project::Home) -> Result<Status> {
                 match follow_move(home, &config, to) {
                     Ok(()) => status.did = format!("the memory moved to {place}: followed it here"),
                     Err(e) => {
-                        status.error = format!("the memory moved to {place}; this computer could not follow: {e:#}");
+                        status.error = format!(
+                            "the memory moved to {place}; this computer could not follow: {}",
+                            crate::output::error_text(&e)
+                        );
                         status.save(home)?;
                         return Err(e);
                     }
                 }
             }
         }
-        Err(e) => status.error = format!("{e:#}"),
+        Err(e) => status.error = crate::output::error_text(&e),
     }
     status.save(home)?;
     result.map(|_| status)

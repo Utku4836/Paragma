@@ -259,7 +259,7 @@ fn apply(home: &Home, entries: &[(String, Vec<u8>)], mode: Mode, env: bool) -> R
         // the backup holds them)
         for rel in files(home, env)? {
             if !names.contains(rel.as_str()) {
-                std::fs::remove_file(projects.join(&rel))?;
+                crate::sync::fsx::remove_file(projects.join(&rel))?;
                 remove_empty_dirs(&projects, &rel);
                 r.removed += 1;
             }
@@ -408,7 +408,7 @@ pub fn daily_check(home: &Home) {
 /// Today's backup, once (other pg started meanwhile find it done), and the
 /// oldest daily ones beyond `keep` removed.
 pub fn daily_now(home: &Home) -> Result<Option<PathBuf>> {
-    std::fs::create_dir_all(&home.root)?;
+    crate::sync::fsx::create_dir_all(&home.root)?;
     let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(home.root.join("backup.lock"))?;
     if f.try_lock().is_err() {
         return Ok(None);
@@ -423,7 +423,7 @@ pub fn daily_now(home: &Home) -> Result<Option<PathBuf>> {
     write(home, &path, d.env)?;
     d.last = now;
     d.save(home)?;
-    let mut old: Vec<PathBuf> = std::fs::read_dir(&folder)?
+    let mut old: Vec<PathBuf> = crate::sync::fsx::read_dir(&folder)?
         .flatten()
         .map(|e| e.path())
         .filter(|p| {

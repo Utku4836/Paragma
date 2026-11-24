@@ -40,7 +40,7 @@ impl WebDav {
 
     /// One request; the body sent from a file, the answer read from one.
     fn call(&self, method: &str, url: &str, headers: &[&str], body: Option<&[u8]>) -> Result<Answer> {
-        std::fs::create_dir_all(&self.scratch)?;
+        crate::sync::fsx::create_dir_all(&self.scratch)?;
         let n = format!("{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')', ' '], "");
         let out = self.scratch.join(format!("dav-out-{n}"));
         let input = self.scratch.join(format!("dav-in-{n}"));
@@ -56,7 +56,7 @@ impl WebDav {
             config.push_str(&format!("header = \"{}\"\n", q(h)));
         }
         if let Some(b) = body {
-            std::fs::write(&input, b)?;
+            crate::sync::fsx::write(&input, b)?;
             config.push_str(&format!("data-binary = \"@{}\"\n", q(&input.to_string_lossy())));
         }
         let mut child = Command::new("curl")

@@ -489,7 +489,7 @@ impl Page<'_> {
                 self.working("syncing…")?;
                 let lines = match sync::sync_now(&self.cx.home) {
                     Ok(s) => vec![format!("{} {}", self.style.ok("✓ synced:"), s.did)],
-                    Err(e) => vec![self.style.bad(&format!("✗ {e:#}"))],
+                    Err(e) => vec![self.style.bad(&format!("✗ {}", crate::output::error_text(&e)))],
                 };
                 self.done(lines);
             }
@@ -690,14 +690,14 @@ impl Page<'_> {
         let c = match self.target() {
             Ok(c) => c,
             Err(e) => {
-                self.done(vec![self.style.bad(&format!("✗ {e:#}"))]);
+                self.done(vec![self.style.bad(&format!("✗ {}", crate::output::error_text(&e)))]);
                 return Ok(());
             }
         };
         self.working(&format!("connecting to {}…", c.place()))?;
         let lines = match super::git::start(self.cx, &c, true) {
             Ok(l) => l.into_iter().map(|l| l.replacen("ok ", &format!("{} ", self.style.ok("✓")), 1)).collect(),
-            Err(e) => vec![self.style.bad(&format!("✗ {e:#}"))],
+            Err(e) => vec![self.style.bad(&format!("✗ {}", crate::output::error_text(&e)))],
         };
         self.done(lines);
         Ok(())
@@ -708,14 +708,14 @@ impl Page<'_> {
         let new = match self.target() {
             Ok(c) => c,
             Err(e) => {
-                self.done(vec![self.style.bad(&format!("✗ {e:#}"))]);
+                self.done(vec![self.style.bad(&format!("✗ {}", crate::output::error_text(&e)))]);
                 return Ok(());
             }
         };
         self.working(&format!("moving the memory to {}…", new.place()))?;
         let lines = match super::git::move_memory(self.cx, &old, &new, remove_old) {
             Ok(l) => l.into_iter().map(|l| l.replacen("ok ", &format!("{} ", self.style.ok("✓")), 1)).collect(),
-            Err(e) => vec![self.style.bad(&format!("✗ {e:#}"))],
+            Err(e) => vec![self.style.bad(&format!("✗ {}", crate::output::error_text(&e)))],
         };
         self.moving = false;
         self.done(lines);

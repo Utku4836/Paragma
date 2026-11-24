@@ -233,6 +233,9 @@ pub fn status(cx: &Context) -> Result<()> {
             "not connected: the memory is only on this computer. Keep it on GitHub, another git host, a cloud folder or WebDAV: pg sync connect --help"
         );
         daily_line(&daily);
+        for st in cloud::states().iter().filter(|st| st.installed) {
+            println!("{}: {}", st.name, st.said());
+        }
         return Ok(());
     };
     let s = Status::load(&cx.home);
@@ -243,6 +246,13 @@ pub fn status(cx: &Context) -> Result<()> {
         _ => "",
     };
     println!("ok {}: {}{vis}{who}", kind_name(&c.kind), c.place());
+    if !c.cloud.is_empty() {
+        let st = cloud::state(&c.cloud);
+        println!("{}: {}", st.name, st.said());
+        if let Some((line, _)) = cloud::upload_line(&c.cloud, &c.path, &c.id) {
+            println!("{line}");
+        }
+    }
     println!(".env files: {}", if c.env { "sent (pg sync env off)" } else { "not sent (pg sync env on)" });
     for line in status_lines(&s) {
         println!("{line}");
@@ -349,15 +359,11 @@ fn config_for(cx: &Context, t: &Target) -> Result<Config> {
         }
         Some(id @ ("onedrive" | "gdrive" | "google-drive" | "googledrive" | "dropbox" | "icloud")) => {
             let id = if id.contains("google") { "gdrive" } else { id };
-            let root = cloud::root(id).ok_or_else(|| {
-                fail(
-                    USAGE,
-                    format!(
-                        "{} was not found on this computer: install it and sign in, or pg sync connect folder <path>",
-                        cloud::name(id)
-                    ),
-                )
-            })?;
+            let state = cloud::state(id);
+            if let Some(hint) = state.hint() {
+                return Err(fail(USAGE, hint));
+            }
+            let root = state.root.context("the cloud's folder")?;
             // the memory already there, else a Paragma folder
             let p = match &t.folder {
                 Some(f) => root.join(f),
