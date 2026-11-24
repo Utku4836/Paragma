@@ -14,6 +14,8 @@
 //! pg sync connect folder D:\Sync\Paragma                any folder
 //! pg sync connect webdav https://cloud.example.com/remote.php/dav/files/me/Paragma --user me
 //! pg sync move <where>             the memory moves, checked (--remove-old: out of the old place too)
+//!   --there join|update|replace|take   a memory found there: joined, made this one, or this one made it
+//! pg sync remove-there <where>     a memory in a place taken out (zipped first), nothing connected
 //! pg sync now | disconnect
 //! pg sync env on|off               whether the .env files go too
 //! pg sync files on|off --limit MB  whether the files kept with notes go too
@@ -25,6 +27,7 @@
 
 use super::{Context, USAGE, fail};
 use crate::sync::github::{Account, Repo};
+use crate::sync::transfer::There;
 use crate::sync::{self, BRANCH, Config, FOLDER, NEW_REPO, Status, backup, cloud};
 use anyhow::{Context as _, Result};
 use std::path::PathBuf;
@@ -67,6 +70,8 @@ enum What {
         #[arg(long)]
         remove_old: bool,
     },
+    /// Take a memory out of a place (an older copy left there): zipped into Downloads first; nothing is connected
+    RemoveThere(Target),
     /// Stop syncing on this computer (the projects and the place stay)
     Disconnect,
     /// The whole memory in one zip: in a folder (default: Downloads), or one a day (--daily on --to <folder>)
@@ -120,7 +125,7 @@ pub struct Target {
     /// ... or on the repository's main branch, in a Paragma/ folder
     #[arg(long)]
     no_branch: bool,
-    /// In a cloud: the memory's folder in it (default: the memory found there, else Paragma)
+    /// In a cloud or a git repository: the memory's folder in it (default: the memory found there, else Paragma)
     #[arg(long, value_name = "NAME")]
     folder: Option<String>,
     /// WebDAV: the user name
@@ -135,6 +140,10 @@ pub struct Target {
     /// Yes to the questions: a public repository, joining a memory found there
     #[arg(long)]
     yes: bool,
+    /// A memory found there: join (both kept), update or replace (it becomes this one), take (this computer's
+    /// becomes it); what changes is zipped into Downloads first
+    #[arg(long, value_name = "join|update|replace|take")]
+    there: Option<String>,
     /// A plain git remote instead of GitHub (a path or URL)
     #[arg(long, hide = true)]
     remote: Option<String>,
@@ -167,6 +176,13 @@ pub fn run(cx: &Context, a: Args, screen: bool) -> Result<()> {
         Some(What::Env { setting }) => env(cx, &setting),
         Some(What::Files { setting, limit }) => files(cx, setting.as_deref(), limit),
         Some(What::Move { target, remove_old }) => move_to(cx, &target, remove_old),
+        Some(What::RemoveThere(t)) => {
+            let c = config_for(cx, &t)?;
+            for l in sync::transfer::remove_there(&cx.home, &c)? {
+                println!("{l}");
+            }
+            Ok(())
+        }
         Some(What::Disconnect) => {
             let c = need(cx)?;
             sync::disconnect(&cx.home)?;
@@ -351,7 +367,7 @@ fn config_for(cx: &Context, t: &Target) -> Result<Config> {
         Some("git") => {
             let url = need_addr("git")?;
             let (prefix, branch) = git_layout(&url, t)?;
-            Ok(Config { remote: url, prefix, branch, ..fresh("git") })
+            Ok(Config { remote: url, prefix: in_folder(t, prefix), branch, ..fresh("git") })
         }
         Some("folder") => {
             let p = std::path::absolute(PathBuf::from(need_addr("folder")?))?;
@@ -520,7 +536,16 @@ fn github_config(t: &Target) -> Result<Config> {
     } else {
         (FOLDER.to_string(), BRANCH.to_string())
     };
-    Ok(config_of(&account, &repo, prefix, branch, t.env.then_some(true), None))
+    Ok(config_of(&account, &repo, in_folder(t, prefix), branch, t.env.then_some(true), None))
+}
+
+/// In a git repository, the folder of the memory: --folder, else the one
+/// its layout gives.
+fn in_folder(t: &Target, prefix: String) -> String {
+    match &t.folder {
+        Some(f) => f.replace('\\', "/").trim_matches('/').to_string(),
+        None => prefix,
+    }
 }
 
 /// `env`: what the user chose now; None takes the memory's setting (off
@@ -576,31 +601,44 @@ fn public_ok(c: &Config, t: &Target) -> Result<()> {
 fn connect(cx: &Context, t: &Target) -> Result<()> {
     let c = config_for(cx, t)?;
     public_ok(&c, t)?;
-    for l in start(cx, &c, t.yes)? {
+    for l in sync::transfer::connect(&cx.home, &c, there_of(t)?)? {
         println!("{l}");
     }
     Ok(())
 }
 
+/// What is done with a memory found at the place: --there, else joined
+/// with --yes, else asked.
+fn there_of(t: &Target) -> Result<There> {
+    match &t.there {
+        Some(w) => {
+            There::parse(&w.to_ascii_lowercase()).ok_or_else(|| fail(USAGE, "--there join, update, replace or take"))
+        }
+        None if t.yes => Ok(There::Join),
+        None => Ok(There::Ask),
+    }
+}
+
 /// Connects to `c` (sync/transfer.rs): a memory already there is joined
 /// with this one (when `join`), else this one is sent.
 pub fn start(cx: &Context, c: &Config, join: bool) -> Result<Vec<String>> {
-    sync::transfer::connect(&cx.home, c, join)
+    sync::transfer::connect(&cx.home, c, if join { There::Join } else { There::Ask })
 }
 
 fn move_to(cx: &Context, t: &Target, remove_old: bool) -> Result<()> {
     let old = need(cx)?;
     let new = config_for(cx, t)?;
     public_ok(&new, t)?;
-    for l in move_memory(cx, &old, &new, remove_old)? {
+    for l in sync::transfer::transfer(&cx.home, &old, &new, remove_old, there_of(t)?)? {
         println!("{l}");
     }
     Ok(())
 }
 
-/// Moves the memory from `old` to `new`, checked (sync/transfer.rs).
+/// Moves the memory from `old` to `new`, checked (sync/transfer.rs); a
+/// memory found there is joined.
 pub fn move_memory(cx: &Context, old: &Config, new: &Config, remove_old: bool) -> Result<Vec<String>> {
-    sync::transfer::transfer(&cx.home, old, new, remove_old)
+    sync::transfer::transfer(&cx.home, old, new, remove_old, There::Join)
 }
 
 fn downloads() -> PathBuf {

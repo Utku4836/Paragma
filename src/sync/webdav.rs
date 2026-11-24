@@ -124,6 +124,26 @@ impl WebDav {
         Ok(())
     }
 
+    /// The folders and the files right under `rel`, by their names.
+    pub fn entries(&self, rel: &str) -> Result<(Vec<String>, Vec<String>)> {
+        let (mut dirs, mut files) = (Vec::new(), Vec::new());
+        let at = rel.trim_matches('/');
+        for (path, is_dir, _) in self.propfind(at, "1")? {
+            let name = match path.strip_prefix(at).map(|r| r.trim_start_matches('/')) {
+                Some(n) if !n.is_empty() && !n.contains('/') => n.to_string(),
+                _ => continue,
+            };
+            if is_dir { dirs.push(name) } else { files.push(name) }
+        }
+        dirs.sort_by_key(|s| s.to_lowercase());
+        Ok((dirs, files))
+    }
+
+    /// A folder made at `rel` (and those above it).
+    pub fn make_folder(&self, rel: &str) -> Result<()> {
+        self.make_dirs(&format!("{}/x", rel.trim_matches('/')))
+    }
+
     /// Checks the address and the sign-in: the folder made when missing.
     pub fn check(&self) -> Result<()> {
         let a = self.call("PROPFIND", &self.at(""), &["Depth: 0"], None)?;

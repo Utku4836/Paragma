@@ -4,6 +4,11 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+pub fn read(p: impl AsRef<Path>) -> Result<Vec<u8>> {
+    let p = p.as_ref();
+    std::fs::read(p).with_context(|| format!("read {}", p.display()))
+}
+
 pub fn write(p: impl AsRef<Path>, bytes: impl AsRef<[u8]>) -> Result<()> {
     let p = p.as_ref();
     std::fs::write(p, bytes).with_context(|| format!("write {}", p.display()))

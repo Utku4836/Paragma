@@ -382,27 +382,25 @@ impl App {
                 "The repository's address (https://gitlab.com/me/notes.git; an empty private one is best)",
                 "",
             ),
-            "folder" => self.ask(Ask::Place { kind: "folder".into(), moving }, "The folder (its full path)", ""),
+            "folder" => self.pick_local("folder"),
             "webdav" => self.ask(
                 Ask::Place { kind: "webdav".into(), moving },
                 "The WebDAV address of the memory's folder (Nextcloud: …/remote.php/dav/files/<you>/Paragma)",
                 "https://",
             ),
-            cloud => {
-                self.pending.target = vec![cloud.to_string()];
-                self.place_env();
-            }
+            cloud => self.pick_local(cloud),
         }
     }
 
     /// An address typed for a place.
     pub fn place_address(&mut self, kind: &str, text: &str, moving: bool) {
         self.pending.moving = moving;
-        self.pending.target = vec![kind.to_string(), text.trim().trim_matches('"').to_string()];
-        if kind == "webdav" {
-            self.ask(Ask::DavUser, "Your user name there", "");
-        } else {
-            self.place_env();
+        let address = text.trim().trim_matches('"').trim_end_matches('/').to_string();
+        self.pending.target = vec![kind.to_string(), address.clone()];
+        match kind {
+            "webdav" => self.ask(Ask::DavUser, "Your user name there", ""),
+            "git" => self.pick_git(super::folders::For::Git(address.clone()), address, String::new()),
+            _ => self.place_env(),
         }
     }
 
@@ -428,6 +426,9 @@ impl App {
         }
         if p.moving && remove_old {
             args.push("--remove-old".into());
+        }
+        if !p.there.is_empty() {
+            args.extend(["--there".into(), p.there.clone()]);
         }
         args.push("--yes".into());
         let input = if p.target.first().map(String::as_str) == Some("webdav") {
@@ -575,12 +576,12 @@ impl App {
         let name = r.full_name.clone();
         self.pending = Pending { moving, target: vec!["--repo".into(), name.clone()], ..Pending::default() };
         if r.private {
-            return self.place_env();
+            return self.pick_repo(r);
         }
         self.choose(
             &format!("{name} is PUBLIC"),
             vec!["Anyone can read the memory there. A private repository is better.".into()],
-            vec![("Use it anyway", Act::PlaceEnv(false)), ("Cancel", Act::Nothing)],
+            vec![("Use it anyway", Act::PickRepo(r.clone())), ("Cancel", Act::Nothing)],
         );
     }
 
@@ -651,6 +652,32 @@ impl App {
             }
             Act::Place { kind, moving } => self.place_kind(&kind, moving),
             Act::Tell(title, lines) => self.choose(&title, lines, vec![("OK", Act::Nothing)]),
+            Act::Picker(p) => self.modal = Some(Modal::Folders(p)),
+            Act::PickRepo(r) => self.pick_repo(&r),
+            Act::PickerMake(p, name) => self.picker_made(*p, &name, true),
+            Act::Branch(own) => {
+                if !own {
+                    self.pending.target.push("--no-branch".into());
+                }
+                self.place_env();
+            }
+            Act::Found(there) => {
+                self.pending.there = there;
+                self.place_env();
+            }
+            Act::RemoveThere => {
+                let p = self.pending.clone();
+                let mut args = vec!["sync".to_string(), "remove-there".into()];
+                args.extend(p.target.iter().cloned());
+                let input = if p.target.first().map(String::as_str) == Some("webdav") {
+                    args.extend(["--user".into(), p.user.clone(), "--password-stdin".into()]);
+                    Some(p.password.clone())
+                } else {
+                    None
+                };
+                self.pending.password.clear();
+                self.run_pg(args, input, "taking the older copy out (zipped first)…");
+            }
             Act::PlaceEnv(env) => {
                 self.pending.env = env;
                 if self.pending.moving {
@@ -888,6 +915,7 @@ impl App {
                     self.reload();
                 }
                 JobDone::Account(got, moving) => self.accounted(got, moving),
+                JobDone::Opened(got, what) => self.git_opened(got, what),
             }
         }
     }

@@ -23,6 +23,7 @@
 //! so a burst of writes becomes one commit, and never makes the agent wait.
 
 pub mod backup;
+pub mod browse;
 pub mod cloud;
 pub mod fsx;
 pub mod github;
@@ -161,7 +162,13 @@ impl Config {
         crate::project::files::write_atomic(
             &dir(home).join("config.json"),
             serde_json::to_string_pretty(&v)?.as_bytes(),
-        )
+        )?;
+        // the memory's id outlives the connection: connected again later,
+        // an older copy of it is told from another memory
+        if !self.id.is_empty() {
+            crate::project::files::write_atomic(&dir(home).join("id"), self.id.as_bytes())?;
+        }
+        Ok(())
     }
 
     /// Where, for people: "me/paragma-memory", "me/app (Paragma/, branch
@@ -178,8 +185,8 @@ impl Config {
         let name = if self.repo.is_empty() { self.remote.clone() } else { self.repo.clone() };
         match (self.prefix.is_empty(), self.branch == BRANCH) {
             (true, _) => name,
-            (false, true) => format!("{name} ({FOLDER}/, branch {BRANCH})"),
-            (false, false) => format!("{name} ({FOLDER}/ on {})", self.branch),
+            (false, true) => format!("{name} ({}/, branch {BRANCH})", self.prefix),
+            (false, false) => format!("{name} ({}/ on {})", self.prefix, self.branch),
         }
     }
 }
@@ -225,6 +232,16 @@ impl Config {
 }
 
 /// A new memory's id.
+/// This memory's id: the connected place's, else the one it had when it
+/// was last connected; empty when it never was.
+pub fn memory_id(home: &crate::project::Home) -> String {
+    Config::load(home)
+        .map(|c| c.id)
+        .filter(|i| !i.is_empty())
+        .or_else(|| std::fs::read_to_string(dir(home).join("id")).ok().map(|s| s.trim().to_string()))
+        .unwrap_or_default()
+}
+
 pub fn new_id() -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();

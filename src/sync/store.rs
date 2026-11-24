@@ -514,6 +514,76 @@ impl<'a> Mirror<'a> {
         self.sync()
     }
 
+    // ---------- a memory found there: replaced, taken, removed ----------
+
+    /// The memory's files there (not its marker, not pg's own).
+    fn there_files(&self) -> Result<Vec<String>> {
+        Ok(self
+            .store
+            .list()?
+            .into_iter()
+            .map(|l| l.rel)
+            .filter(|r| {
+                r != MARKER
+                    && !r.starts_with(".paragma-probe")
+                    && kept(r, false, true)
+                    && !r.split('/').any(|p| p == ".pg" || p == ".git")
+            })
+            .collect())
+    }
+
+    /// The memory there, whole: each file's path and bytes.
+    pub fn read_all(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        let mut out = Vec::new();
+        for rel in self.there_files()? {
+            let bytes = self.store.read(&rel)?;
+            out.push((rel, bytes));
+        }
+        Ok(out)
+    }
+
+    /// There made what this computer's memory is (what was there only
+    /// taken out), then synced as one.
+    pub fn replace(&self) -> Result<Outcome> {
+        let projects = self.home.projects_dir();
+        let here: BTreeSet<String> = self.local_files()?.into_iter().collect();
+        let held = self.held();
+        for rel in self.there_files()? {
+            if !here.contains(&rel) && !held.contains(&rel) {
+                self.store.remove(&rel)?;
+            }
+        }
+        let mut sent = 0;
+        for rel in &here {
+            let Ok(bytes) = std::fs::read(projects.join(rel)) else { continue };
+            if self.store.read(rel).ok().as_deref() != Some(bytes.as_slice()) {
+                self.store.write(rel, &bytes)?;
+                sent += 1;
+            }
+        }
+        self.mark(None)?;
+        let mut out = self.restore()?;
+        out.sent += sent;
+        Ok(out)
+    }
+
+    /// This computer's memory made what is there.
+    pub fn take(&self) -> Result<Outcome> {
+        let files = self.read_all()?;
+        let got = super::repo::take_files(self.home, &files, &self.local_files()?)?;
+        let mut out = self.restore()?;
+        out.got += got;
+        Ok(out)
+    }
+
+    /// The memory's files and its marker taken out of there.
+    pub fn remove_all(&self) -> Result<()> {
+        for rel in self.there_files()? {
+            self.store.remove(&rel)?;
+        }
+        self.store.remove(MARKER)
+    }
+
     /// Leaves a note there that the memory moved, so other computers
     /// follow; with `remove`, the memory's files go from it.
     pub fn moved(&self, to: Value, remove: bool) -> Result<()> {

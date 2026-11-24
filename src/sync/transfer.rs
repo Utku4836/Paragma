@@ -17,15 +17,75 @@ use super::{Config, Status, backup, dir, forget_place, repo, store, store_of};
 use crate::project::Home;
 use anyhow::{Context, Result, bail};
 
-/// Connects to `c`: a memory already there is joined with this one (when
-/// `join`), else this one is sent. The memory's id is the one there, else
-/// the one it had, else a new one. What happened, for people.
-pub fn connect(home: &Home, c: &Config, join: bool) -> Result<Vec<String>> {
+/// What is done when the place already holds a memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum There {
+    /// Said, nothing done: the person chooses (when this computer has a
+    /// memory; an empty one takes what is there).
+    Ask,
+    /// Both joined: a note both have keeps both sides' lines.
+    Join,
+    /// There made what this computer's memory is: an older copy of it
+    /// brought up to date, or another memory put aside. Zipped first.
+    Replace,
+    /// This computer's memory made what is there. Zipped first.
+    Take,
+}
+
+impl There {
+    pub fn parse(word: &str) -> Option<There> {
+        Some(match word {
+            "join" => There::Join,
+            "replace" | "update" => There::Replace,
+            "take" => There::Take,
+            _ => return None,
+        })
+    }
+}
+
+/// What a place already holds, for this computer's memory: an older copy
+/// of it (the same id), or another memory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    ThisOne,
+    Another,
+}
+
+/// Whether the memory found (its id) is this computer's (`ours`).
+pub fn found_of(ours: &str, theirs: &str) -> Found {
+    if !ours.is_empty() && theirs == ours { Found::ThisOne } else { Found::Another }
+}
+
+/// Said when a memory is there and nobody chose what to do.
+fn choose_first(place: &str, found: &Found) -> String {
+    match found {
+        Found::ThisOne => format!(
+            "{place} holds an older copy of this memory: --there update makes it the same as this one, --there join joins them, pg sync remove-there takes it out (what changes is zipped first). To move the memory within one place, use pg sync move"
+        ),
+        Found::Another => format!(
+            "{place} already holds another Paragma memory: --there join keeps both, --there replace puts this one in its place, --there take makes this computer's memory that one (what changes is zipped first). To move the memory within one place, use pg sync move"
+        ),
+    }
+}
+
+/// Where the zips made before replacing go: the Downloads folder.
+fn zips() -> std::path::PathBuf {
+    std::env::home_dir().unwrap_or_default().join("Downloads")
+}
+
+/// Connects to `c`: a memory already there is handled as `there` says,
+/// else this one is sent. The memory's id is the one there (joined,
+/// taken), else the one it had, else a new one. What happened, for people.
+pub fn connect(home: &Home, c: &Config, there: There) -> Result<Vec<String>> {
     let _lock = super::SyncLock::take(home, std::time::Duration::from_secs(120))?;
     let had = Config::load(home);
+    // this memory's id, before anything is connected (`c` may carry the
+    // id of the memory at the place, to find its folder)
+    let ours = super::memory_id(home);
+    let mine = if ours.is_empty() { super::new_id() } else { ours.clone() };
     let mut c = c.clone();
     if c.id.is_empty() {
-        c.id = had.as_ref().map(|h| h.id.clone()).filter(|i| !i.is_empty()).unwrap_or_else(super::new_id);
+        c.id = mine.clone();
     }
     if had.as_ref().is_none_or(|h| h.remote != c.remote || h.kind != c.kind) {
         forget_place(home)?;
@@ -38,21 +98,21 @@ pub fn connect(home: &Home, c: &Config, join: bool) -> Result<Vec<String>> {
             let m = store::Mirror::new(home, &c, s.as_ref());
             match m.marker() {
                 Some(mark) => {
-                    if !join && !home.projects().is_empty() {
-                        bail!("{} already holds a Paragma memory: to join it with this one add --yes", c.place());
+                    let theirs = mark["id"].as_str().unwrap_or("").to_string();
+                    let found = found_of(&ours, &theirs);
+                    if there == There::Ask && !home.projects().is_empty() {
+                        return Err(crate::cli::fail(crate::cli::USAGE, choose_first(&c.place(), &found)));
                     }
-                    // the memory there is this one from now on
-                    if let Some(id) = mark["id"].as_str().filter(|i| !i.is_empty()) {
-                        c.id = id.to_string();
-                        c.save(home)?;
-                    }
+                    c.id = id_after(there, &mine, &theirs);
+                    c.save(home)?;
                     let m = store::Mirror::new(home, &c, s.as_ref());
-                    let o = m.restore()?;
-                    out.push(format!(
-                        "a memory was there: joined with this one ({} from there, {} from here)",
-                        o.got, o.sent
-                    ));
-                    o
+                    let ops = Ops {
+                        read_all: &|| m.read_all(),
+                        replace: &|| m.replace(),
+                        take: &|| m.take(),
+                        join: &|| m.restore(),
+                    };
+                    handle(home, &theirs, there, &found, &mut out, ops)?
                 }
                 None => {
                     let o = m.sync()?;
@@ -66,22 +126,22 @@ pub fn connect(home: &Home, c: &Config, join: bool) -> Result<Vec<String>> {
                 bail!("{} holds a Paragma memory at its root: connect to it as it is", c.place());
             }
             if m.has_memory() {
-                if !join && !home.projects().is_empty() {
-                    bail!("{} already holds a Paragma memory: to join it with this one add --yes", c.place());
+                let mark = m.marker().unwrap_or_default();
+                let theirs = mark["id"].as_str().unwrap_or("").to_string();
+                let found = found_of(&ours, &theirs);
+                if there == There::Ask && !home.projects().is_empty() {
+                    return Err(crate::cli::fail(crate::cli::USAGE, choose_first(&c.place(), &found)));
                 }
-                if let Some(id) =
-                    m.marker().and_then(|v| v["id"].as_str().map(str::to_string)).filter(|i| !i.is_empty())
-                {
-                    c.id = id;
-                    c.save(home)?;
-                }
+                c.id = id_after(there, &mine, &theirs);
+                c.save(home)?;
                 let m = repo::Mirror::new(home, &c)?;
-                let o = m.restore()?;
-                out.push(format!(
-                    "a memory was there: joined with this one ({} from there, {} from here)",
-                    o.got, o.sent
-                ));
-                o
+                let ops = Ops {
+                    read_all: &|| m.read_all(),
+                    replace: &|| m.replace(),
+                    take: &|| m.take(),
+                    join: &|| m.restore(),
+                };
+                handle(home, &theirs, there, &found, &mut out, ops)?
             } else {
                 let o = m.sync()?;
                 out.push(format!("sent {}", files(o.sent)));
@@ -110,9 +170,99 @@ pub fn connect(home: &Home, c: &Config, join: bool) -> Result<Vec<String>> {
                 let _ = std::fs::remove_file(dir(home).join("config.json"));
             }
         }
+        // and the memory's id as it was
+        let _ = match ours.is_empty() {
+            true => std::fs::remove_file(dir(home).join("id")),
+            false => std::fs::write(dir(home).join("id"), &ours),
+        };
         let _ = forget_place(home);
     }
     result
+}
+
+/// What can be done with a memory found at a place.
+struct Ops<'a> {
+    read_all: &'a dyn Fn() -> Result<Vec<(String, Vec<u8>)>>,
+    replace: &'a dyn Fn() -> Result<repo::Outcome>,
+    take: &'a dyn Fn() -> Result<repo::Outcome>,
+    join: &'a dyn Fn() -> Result<repo::Outcome>,
+}
+
+/// The memory's id once a memory found at a place is handled: this one's
+/// when it is put there, else the one there (joined, taken).
+fn id_after(there: There, mine: &str, theirs: &str) -> String {
+    if there == There::Replace || theirs.is_empty() { mine.to_string() } else { theirs.to_string() }
+}
+
+/// A memory found there (`theirs`, its id), handled as `there` says: what
+/// changes zipped first into Downloads, then joined, replaced or taken.
+fn handle(
+    home: &Home,
+    theirs: &str,
+    there: There,
+    found: &Found,
+    out: &mut Vec<String>,
+    ops: Ops,
+) -> Result<repo::Outcome> {
+    let what = if *found == Found::ThisOne { "an older copy of this memory" } else { "a memory" };
+    let now = crate::output::now();
+    Ok(match there {
+        There::Replace => {
+            let zip = zips().join(backup::name("paragma-backup-there-", now));
+            backup::write_files(&zip, theirs, (ops.read_all)()?).context("zip what was there before replacing it")?;
+            out.push(format!("ok zipped what was there first: {}", zip.display()));
+            let o = (ops.replace)()?;
+            out.push(format!("{what} was there: made the same as this one ({} sent)", files(o.sent)));
+            o
+        }
+        There::Take => {
+            let zip = zips().join(backup::name("paragma-backup-here-", now));
+            backup::write(home, &zip, true).context("zip this computer's memory before replacing it")?;
+            out.push(format!("ok zipped this computer's memory first: {}", zip.display()));
+            let o = (ops.take)()?;
+            out.push(format!("{what} was there: this computer's memory made the same ({} changed here)", files(o.got)));
+            o
+        }
+        There::Join | There::Ask => {
+            let o = (ops.join)()?;
+            out.push(format!("{what} was there: joined with this one ({} from there, {} from here)", o.got, o.sent));
+            o
+        }
+    })
+}
+
+/// The memory in `c` taken out (zipped first into Downloads); nothing is
+/// connected. What happened, for people.
+pub fn remove_there(home: &Home, c: &Config) -> Result<Vec<String>> {
+    let _lock = super::SyncLock::take(home, std::time::Duration::from_secs(120))?;
+    let zip = zips().join(backup::name("paragma-backup-there-", crate::output::now()));
+    let mut out = Vec::new();
+    if c.files() {
+        let s = store_of(home, c)?;
+        let m = store::Mirror::new(home, c, s.as_ref());
+        if m.marker().is_none() {
+            bail!("{} holds no Paragma memory", c.place());
+        }
+        backup::write_files(&zip, &c.id, m.read_all()?).context("zip what is there before taking it out")?;
+        out.push(format!("ok zipped it first: {}", zip.display()));
+        m.remove_all()?;
+    } else {
+        let dir = dir(home).join("old-checkout");
+        let _ = super::remove_clone(&dir);
+        let r = (|| -> Result<()> {
+            let m = repo::Mirror::at(home, c, dir.clone())?;
+            if !m.has_memory() {
+                bail!("{} holds no Paragma memory", c.place());
+            }
+            backup::write_files(&zip, &c.id, m.read_all()?).context("zip what is there before taking it out")?;
+            out.push(format!("ok zipped it first: {}", zip.display()));
+            m.remove_all()
+        })();
+        let _ = super::remove_clone(&dir);
+        r?;
+    }
+    out.push(format!("ok the memory in {} is taken out; nothing was connected", c.place()));
+    Ok(out)
 }
 
 fn files(n: usize) -> String {
@@ -154,7 +304,7 @@ pub fn check(home: &Home, c: &Config) -> Result<()> {
 }
 
 /// Moves the memory from `old` to `new`, checked, as the module says.
-pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Result<Vec<String>> {
+pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool, there: There) -> Result<Vec<String>> {
     if old.kind == new.kind && old.remote == new.remote && old.prefix == new.prefix && old.branch == new.branch {
         bail!("the memory is already in {}", old.place());
     }
@@ -171,7 +321,7 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool) -> Re
     }
     // what this computer knows of the old place, kept for going back
     let kept = keep_base(home);
-    let moved = connect(home, &new, true).and_then(|lines| {
+    let moved = connect(home, &new, there).and_then(|lines| {
         // 3. the checks
         let now = Config::load(home).context("the new place's settings")?;
         check(home, &now)?;

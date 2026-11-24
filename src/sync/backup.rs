@@ -64,6 +64,23 @@ fn files(home: &Home, env: bool) -> Result<Vec<String>> {
 /// Writes the whole memory into `path` (a .zip), whole or not at all.
 pub fn write(home: &Home, path: &Path, env: bool) -> Result<Manifest> {
     let projects = home.projects_dir();
+    let id = super::Config::load(home).map(|c| c.id).unwrap_or_default();
+    let rels = files(home, env)?;
+    zip_files(
+        path,
+        &id,
+        env,
+        rels.into_iter().filter_map(|rel| std::fs::read(projects.join(&rel)).ok().map(|b| (rel, b))),
+    )
+}
+
+/// Writes a memory read from a place into `path` (a .zip): each file's
+/// path under projects/ and bytes.
+pub fn write_files(path: &Path, id: &str, files: Vec<(String, Vec<u8>)>) -> Result<Manifest> {
+    zip_files(path, id, true, files.into_iter())
+}
+
+fn zip_files(path: &Path, id: &str, env: bool, files: impl Iterator<Item = (String, Vec<u8>)>) -> Result<Manifest> {
     let mut list = Vec::new();
     let dir = path.parent().context("a folder for the backup")?;
     std::fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
@@ -72,8 +89,7 @@ pub fn write(home: &Home, path: &Path, env: bool) -> Result<Manifest> {
         let f = std::fs::File::create(&tmp).with_context(|| format!("write {}", tmp.display()))?;
         let mut z = zip::ZipWriter::new(std::io::BufWriter::new(f));
         let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        for rel in files(home, env)? {
-            let Ok(bytes) = std::fs::read(projects.join(&rel)) else { continue };
+        for (rel, bytes) in files {
             z.start_file(format!("projects/{rel}"), opts.large_file(bytes.len() as u64 >= u32::MAX as u64))?;
             z.write_all(&bytes)?;
             list.push((rel, bytes.len() as u64, hash(&bytes)));
@@ -82,7 +98,7 @@ pub fn write(home: &Home, path: &Path, env: bool) -> Result<Manifest> {
             version: env!("CARGO_PKG_VERSION").to_string(),
             created: crate::output::now(),
             host: super::repo::host(),
-            id: super::Config::load(home).map(|c| c.id).unwrap_or_default(),
+            id: id.to_string(),
             env,
             files: list,
         };

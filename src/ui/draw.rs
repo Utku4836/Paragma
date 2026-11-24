@@ -1282,6 +1282,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
                 app.hits.push((rr, Hit::ModalButton(i)));
             }
         }
+        Modal::Folders(p) => folders(f, app, area, &p),
         Modal::Changed { .. } => {
             let r = centered(area, 80, 8);
             f.render_widget(Clear, r);
@@ -1438,6 +1439,70 @@ fn finder(
     }
     let y = inner.y + inner.height - 1;
     f.render_widget(Paragraph::new(Span::styled(format!(" {note}"), theme::faint())), Rect { y, height: 1, ..inner });
+}
+
+/// The folder picker: where it is and what that holds, then the ways on:
+/// here, a new folder, up, and the folders in it.
+fn folders(f: &mut Frame, app: &mut App, area: Rect, p: &super::folders::Picker) {
+    use super::folders::Row;
+    use crate::sync::browse::Holds;
+    let rows = p.rows();
+    let h = (rows.len() as u16 + 6).max(10).min(area.height.saturating_sub(4).max(3));
+    let r = centered(area, 100, h);
+    f.render_widget(Clear, r);
+    let title = if app.pending.moving {
+        "Move the memory to: choose its folder"
+    } else {
+        "Keep the memory in: choose its folder"
+    };
+    let b = block(title, true);
+    let inner = b.inner(r);
+    f.render_widget(b, r);
+    if inner.height < 4 {
+        return;
+    }
+    let state = if !p.error.is_empty() {
+        theme::bad()
+    } else {
+        match p.holds {
+            Holds::Nothing => theme::ok(),
+            Holds::Memory(_) => theme::accent(),
+            Holds::Other => theme::warn(),
+        }
+    };
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!(" {}", fit(&p.shown(), inner.width as usize - 2)),
+                theme::text().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(format!(" {}", fit(&p.said(), inner.width as usize - 2)), state)),
+        ]),
+        Rect { height: 2, ..inner },
+    );
+    let list = Rect { y: inner.y + 3, height: inner.height.saturating_sub(4), ..inner };
+    let top = p.cur.saturating_sub(list.height.saturating_sub(1) as usize);
+    for (i, row) in rows.iter().enumerate().skip(top).take(list.height as usize) {
+        let rr = Rect { y: list.y + (i - top) as u16, height: 1, ..list };
+        let (icon, label, style) = match row {
+            Row::Here => (mark::BAR, "Put the memory here".to_string(), theme::accent().add_modifier(Modifier::BOLD)),
+            Row::New => ("+", "A new folder here".to_string(), theme::text()),
+            Row::Up => ("..", "Up".to_string(), theme::dim()),
+            Row::Dir(d) => (mark::FOLDER, d.clone(), theme::text()),
+        };
+        let line = format!(" {icon} {}", fit(&label, list.width as usize - 4));
+        let style = if i == p.cur { theme::chosen() } else { style };
+        f.render_widget(Paragraph::new(Span::styled(line, style)), rr);
+        app.hits.push((rr, Hit::ModalButton(i)));
+    }
+    let y = inner.y + inner.height - 1;
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            " ↑↓ choose · Enter open or choose · ← up · n a new folder · Esc cancel",
+            theme::faint(),
+        )),
+        Rect { y, height: 1, ..inner },
+    );
 }
 
 /// A text cut to a width, with "…".

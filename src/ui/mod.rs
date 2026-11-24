@@ -8,6 +8,7 @@ pub mod app;
 pub mod data;
 pub mod draw;
 pub mod editor;
+pub mod folders;
 pub mod markdown;
 pub mod panels;
 pub mod theme;

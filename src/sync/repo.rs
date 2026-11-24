@@ -529,6 +529,63 @@ impl<'a> Mirror<'a> {
         Ok(out)
     }
 
+    // ---------- a memory found there: replaced, taken, removed ----------
+
+    /// The clone made what the repository holds now.
+    fn as_there(&self) -> Result<()> {
+        if self.fetch()? {
+            let theirs = format!("origin/{}", self.config.branch);
+            self.git(&["checkout", "-q", "-B", &self.config.branch, &theirs])?;
+            self.git(&["reset", "-q", "--hard", &theirs])?;
+        }
+        Ok(())
+    }
+
+    /// The memory there, whole: each file's path and bytes.
+    pub fn read_all(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        self.as_there()?;
+        let root = self.root();
+        let mut out = Vec::new();
+        for rel in self.clone_files()? {
+            out.push((rel.clone(), crate::sync::fsx::read(root.join(&rel))?));
+        }
+        Ok(out)
+    }
+
+    /// The repository made what this computer's memory is (what was there
+    /// only taken out; it stays in the history), then synced as one.
+    pub fn replace(&self) -> Result<Outcome> {
+        self.as_there()?;
+        self.copy_in(true)?;
+        self.mark(None)?;
+        let sent = self.commit(&format!("Paragma: {} put its memory in place of this one", host()))?;
+        self.push()?;
+        Ok(Outcome { sent, ..Outcome::default() })
+    }
+
+    /// This computer's memory made what the repository holds.
+    pub fn take(&self) -> Result<Outcome> {
+        let files = self.read_all()?;
+        let got = take_files(self.home, &files, &self.local_files()?)?;
+        let mut out = self.restore()?;
+        out.got += got;
+        Ok(out)
+    }
+
+    /// The memory's files and its marker taken out of the repository (they
+    /// stay in its history).
+    pub fn remove_all(&self) -> Result<()> {
+        self.as_there()?;
+        let root = self.root();
+        for rel in self.clone_files()? {
+            crate::sync::fsx::remove_gone(root.join(&rel))?;
+            remove_empty_dirs(&root, &rel);
+        }
+        crate::sync::fsx::remove_gone(root.join(MARKER))?;
+        self.commit("Paragma: the memory taken out")?;
+        self.push()
+    }
+
     /// The connection works: the repository's branch is what was pushed.
     pub fn probe(&self) -> Result<()> {
         let head = self.head().context("nothing was committed")?;
@@ -650,6 +707,39 @@ pub(crate) fn walk(root: &Path, rel: &str, out: &mut Vec<String>, keep: &dyn Fn(
         }
     }
     Ok(())
+}
+
+/// This computer's memory made what `files` hold: each one written, and
+/// of `local` (the files that go from here) those not among them taken
+/// out. How many changed here.
+pub(crate) fn take_files(home: &Home, files: &[(String, Vec<u8>)], local: &[String]) -> Result<usize> {
+    let projects = home.projects_dir();
+    let names: std::collections::HashSet<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+    let mut n = 0;
+    for (rel, bytes) in files {
+        let here = projects.join(rel);
+        if std::fs::read(&here).ok().as_deref() == Some(bytes.as_slice()) {
+            continue;
+        }
+        let project = rel.split('/').next().unwrap_or("");
+        let _lock = if project.starts_with('.') || !rel.contains('/') {
+            None
+        } else {
+            let meta = projects.join(project).join(".pg");
+            crate::sync::fsx::create_dir_all(&meta)?;
+            Some(WriteLock::take(&meta)?)
+        };
+        write_atomic(&here, bytes)?;
+        n += 1;
+    }
+    for rel in local {
+        if !names.contains(rel.as_str()) {
+            crate::sync::fsx::remove_gone(projects.join(rel))?;
+            remove_empty_dirs(&projects, rel);
+            n += 1;
+        }
+    }
+    Ok(n)
 }
 
 /// Removes the folders of `rel` that became empty, up to `root`.

@@ -76,6 +76,8 @@ pub enum Ask {
     /// WebDAV: the user name, then the password (shown as dots).
     DavUser,
     DavPassword,
+    /// A new folder in the folder picker.
+    PickerFolder,
     /// Where a backup goes; where the daily ones go; a backup's zip.
     BackupFolder,
     DailyFolder,
@@ -147,6 +149,18 @@ pub enum Act {
     ResolveTake(String, String),
     /// Something said in a window of its own: its title and lines.
     Tell(String, Vec<String>),
+    /// The folder picker again (another folder chosen); a folder made in
+    /// it and chosen.
+    Picker(Box<super::folders::Picker>),
+    PickerMake(Box<super::folders::Picker>, String),
+    /// A GitHub repository chosen (a public one, after all): its folders.
+    PickRepo(crate::sync::github::Repo),
+    /// A shared git repository: the memory on its own branch, or not.
+    Branch(bool),
+    /// A memory found at the place chosen: join, update, replace, take.
+    Found(String),
+    /// An older copy of the memory at the place chosen taken out.
+    RemoveThere,
 }
 
 /// What is done with a background pg command's answer.
@@ -213,6 +227,8 @@ pub enum Modal {
     Changed {
         theirs: String,
     },
+    /// Where the memory goes: folders gone through, one chosen.
+    Folders(Box<super::folders::Picker>),
     /// Lines to read, closed by any key.
     Message {
         title: String,
@@ -339,6 +355,10 @@ pub struct Pending {
     pub password: String,
     /// A backup's folder, waiting for the .env answer.
     pub folder: String,
+    /// What is done with a memory found at the place (pg sync --there).
+    pub there: String,
+    /// The folder picker, while a new folder's name is typed.
+    pub picker: Option<Box<super::folders::Picker>>,
 }
 
 /// What the Sync section shows: the settings, or the repositories.
@@ -367,6 +387,8 @@ pub enum JobDone {
     Ran(data::Ran, Then),
     /// The GitHub account, its repositories, and a memory found in one.
     Account(Result<Option<Accounted>, String>, bool),
+    /// A git repository read for the folder picker (None: empty).
+    Opened(Result<Option<(crate::sync::browse::Source, String)>, String>, super::folders::For),
 }
 
 pub struct Accounted {
@@ -1470,6 +1492,7 @@ impl App {
                 }
                 _ => {}
             },
+            Modal::Folders(p) => self.picker_key(*p, k),
             Modal::Changed { theirs } => match k.code {
                 KeyCode::Char('m') => {
                     self.modal = None;
@@ -1606,7 +1629,13 @@ impl App {
             }
             Ask::DavPassword => {
                 self.pending.password = text;
-                self.place_env();
+                let url = self.pending.target.get(1).cloned().unwrap_or_default();
+                self.pick_dav(&url);
+            }
+            Ask::PickerFolder => {
+                if let Some(p) = self.pending.picker.take() {
+                    self.picker_made(*p, &text, false);
+                }
             }
             Ask::BackupFolder => {
                 self.pending.folder = text;
@@ -1786,6 +1815,11 @@ impl App {
                     Hit::ModalButton(i) => match self.modal.clone() {
                         Some(Modal::Choose { title, lines, options, .. }) => {
                             self.modal = Some(Modal::Choose { title, lines, options, cur: i });
+                            self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                        }
+                        Some(Modal::Folders(mut p)) => {
+                            p.cur = i;
+                            self.modal = Some(Modal::Folders(p));
                             self.modal_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                         }
                         _ => {
