@@ -794,10 +794,23 @@ pub(crate) fn remove_empty_dirs(root: &Path, rel: &str) {
         // a project left with nothing but its indexes goes with them
         if only_pg && p.components().count() == 1 && d.join(".pg").exists() {
             let _ = std::fs::remove_dir_all(&d);
-        } else if std::fs::remove_dir(&d).is_err() {
+        } else if std::fs::remove_dir(&d).is_err() && !remove_read_only_dir(&d) {
             break;
         }
     }
+}
+
+/// An empty folder a cloud program marked read-only (OneDrive marks its
+/// folders so): the mark taken off, then the folder removed.
+fn remove_read_only_dir(d: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(d) else { return false };
+    let mut perms = meta.permissions();
+    if !perms.readonly() || std::fs::read_dir(d).map(|mut es| es.next().is_some()).unwrap_or(true) {
+        return false;
+    }
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(d, perms).is_ok() && std::fs::remove_dir(d).is_ok()
 }
 
 /// This computer's name, for commit messages.

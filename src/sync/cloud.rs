@@ -294,6 +294,20 @@ pub fn in_cloud(p: &Path) -> Option<bool> {
         FILE_ATTRIBUTE_TAG_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         FileAttributeTagInfo, GetFileInformationByHandleEx,
     };
+    // Windows shows a program cloud files as plain files unless it asks to
+    // see them as they are: asked on this thread while it looks
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn RtlSetThreadPlaceholderCompatibilityMode(mode: i8) -> i8;
+    }
+    const PHCM_EXPOSE_PLACEHOLDERS: i8 = 2;
+    struct Back(i8);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            unsafe { RtlSetThreadPlaceholderCompatibilityMode(self.0) };
+        }
+    }
+    let _back = Back(unsafe { RtlSetThreadPlaceholderCompatibilityMode(PHCM_EXPOSE_PLACEHOLDERS) });
     // its attributes only: nothing brought down, nothing held
     let f = std::fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
@@ -401,9 +415,47 @@ fn google_drive() -> Option<PathBuf> {
     if !cfg!(windows) {
         return None;
     }
-    (b'D'..=b'Z')
+    let drive = (b'D'..=b'Z')
         .map(|l| PathBuf::from(format!("{}:\\", l as char)))
-        .find(|r| r.join(".shortcut-targets-by-id").is_dir())
+        .find(|r| r.join(".shortcut-targets-by-id").is_dir())?;
+    Some(my_drive(&drive).unwrap_or(drive))
+}
+
+/// In Google Drive's drive, the folder of the user's own files (My Drive,
+/// named in the computer's language; nothing can be put beside it): the
+/// only folder there, else the one Google's program gives its first icon
+/// (Shared drives has the next one), as each folder's desktop.ini says.
+pub fn my_drive(drive: &Path) -> Option<PathBuf> {
+    let dirs: Vec<PathBuf> = std::fs::read_dir(drive)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| !e.file_name().to_string_lossy().starts_with(['.', '$']))
+        .map(|e| e.path())
+        .collect();
+    if dirs.len() == 1 {
+        return dirs.into_iter().next();
+    }
+    dirs.into_iter()
+        .filter_map(|d| icon(&d.join("desktop.ini")).map(|n| (n, d)))
+        .min_by_key(|(n, _)| *n)
+        .map(|(_, d)| d)
+}
+
+/// The icon number a folder's desktop.ini gives (IconResource=<file>,<n>);
+/// the file is UTF-16 or UTF-8.
+fn icon(ini: &Path) -> Option<u32> {
+    let b = std::fs::read(ini).ok()?;
+    // UTF-16 with its mark, or without (Google's: a zero after the first letter)
+    let text = if b.starts_with(&[0xFF, 0xFE]) || b.get(1) == Some(&0) {
+        let from = if b.starts_with(&[0xFF, 0xFE]) { 2 } else { 0 };
+        let units: Vec<u16> = b[from..].as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(&b).into_owned()
+    };
+    let line = text.lines().find(|l| l.trim_start().to_ascii_lowercase().starts_with("iconresource="))?;
+    line.rsplit(',').next()?.trim().parse().ok()
 }
 
 /// Dropbox says where its folder is in its info.json.

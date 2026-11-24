@@ -562,7 +562,9 @@ fn git_layout(url: &str, t: &Target) -> Result<(String, String)> {
     if text.trim().is_empty() {
         return Ok((String::new(), default));
     }
-    if text.contains(&format!("refs/heads/{BRANCH}")) {
+    // the memory's own branch there already: used, unless the main branch
+    // was asked for
+    if text.contains(&format!("refs/heads/{BRANCH}")) && !t.no_branch {
         return Ok((FOLDER.to_string(), BRANCH.to_string()));
     }
     // a memory's own repository: the marker at its root
