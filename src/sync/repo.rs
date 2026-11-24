@@ -210,7 +210,7 @@ impl<'a> Mirror<'a> {
         let held = self.held();
         let mut out = Vec::new();
         walk(&self.home.projects_dir(), "", &mut out, &|rel, is_dir| {
-            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel))
+            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel)) && self.config.goes(rel)
         })?;
         Ok(out)
     }
@@ -233,7 +233,9 @@ impl<'a> Mirror<'a> {
         let mut out = Vec::new();
         let root = self.root();
         if root.is_dir() {
-            walk(&root, "", &mut out, &|rel, is_dir| rel != ".git" && rel != MARKER && kept(rel, is_dir, true))?;
+            walk(&root, "", &mut out, &|rel, is_dir| {
+                rel != ".git" && rel != MARKER && kept(rel, is_dir, true) && self.config.goes(rel)
+            })?;
         }
         Ok(out)
     }
@@ -244,7 +246,10 @@ impl<'a> Mirror<'a> {
         let projects = self.home.projects_dir();
         let root = self.root();
         let mut seen = HashMap::new();
-        for rel in self.local_files()? {
+        let local = self.local_files()?;
+        let total = local.len();
+        for (i, rel) in local.into_iter().enumerate() {
+            super::progress::set(self.home, "copying", i + 1, total);
             let Ok(bytes) = std::fs::read(projects.join(&rel)) else { continue };
             seen.insert(rel.clone(), fingerprint(&bytes));
             let to = root.join(&rel);
@@ -398,7 +403,7 @@ impl<'a> Mirror<'a> {
                 let mut parts = list.split('\0').filter(|s| !s.is_empty());
                 while let (Some(st), Some(path)) = (parts.next(), parts.next()) {
                     let Some(rel) = path.strip_prefix(&root_path) else { continue };
-                    if rel == MARKER || !kept(rel, false, self.env.get()) {
+                    if rel == MARKER || !kept(rel, false, self.env.get()) || !self.config.goes(rel) {
                         continue;
                     }
                     changed.push((rel.to_string(), st.starts_with('D')));
@@ -445,6 +450,7 @@ impl<'a> Mirror<'a> {
     }
 
     fn push(&self) -> Result<()> {
+        super::progress::set(self.home, "sending to the repository", 0, 0);
         let Some(head) = self.head() else { return Ok(()) };
         let theirs = format!("origin/{}", self.config.branch);
         let known = self.git(&["rev-parse", "-q", "--verify", &theirs]).map(|s| s.trim().to_string()).ok();
@@ -606,14 +612,17 @@ impl<'a> Mirror<'a> {
         // what git holds, not only what is in the clone's folder
         let tracked: std::collections::HashSet<String> = self
             .git(&["-c", "core.quotepath=off", "ls-files", "-z"])?
-            .split(' ')
+            .split('\0')
             .filter(|l| !l.is_empty())
             .map(|l| match self.config.prefix.as_str() {
                 "" => l.to_string(),
                 p => l.strip_prefix(&format!("{p}/")).unwrap_or(l).to_string(),
             })
             .collect();
-        for rel in self.local_files()? {
+        let local = self.local_files()?;
+        let total = local.len();
+        for (i, rel) in local.into_iter().enumerate() {
+            super::progress::set(self.home, "checking", i + 1, total);
             // a file taken out here meanwhile is not one that went wrong
             let Ok(here) = std::fs::read(projects.join(&rel)) else { continue };
             if !tracked.contains(&rel) || std::fs::read(root.join(&rel)).ok().as_deref() != Some(here.as_slice()) {

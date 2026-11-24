@@ -77,6 +77,7 @@ fn zips() -> std::path::PathBuf {
 /// else this one is sent. The memory's id is the one there (joined,
 /// taken), else the one it had, else a new one. What happened, for people.
 pub fn connect(home: &Home, c: &Config, there: There) -> Result<Vec<String>> {
+    let _done = super::progress::Done(home);
     let _lock = super::SyncLock::take(home, std::time::Duration::from_secs(120))?;
     let had = Config::load(home);
     // this memory's id, before anything is connected (`c` may carry the
@@ -160,6 +161,7 @@ pub fn connect(home: &Home, c: &Config, there: There) -> Result<Vec<String>> {
             out.push("files kept with notes: not sent (pg sync files on)".into());
         }
         out.push("from now on every change here goes there by itself, and what other computers send comes here".into());
+        super::history::add(home, &format!("connected to {}", c.place()), true);
         Ok(out)
     })();
     if result.is_err() {
@@ -262,6 +264,7 @@ pub fn remove_there(home: &Home, c: &Config) -> Result<Vec<String>> {
         r?;
     }
     out.push(format!("ok the memory in {} is taken out; nothing was connected", c.place()));
+    super::history::add(home, &format!("took the memory out of {} (zipped first)", c.place()), true);
     Ok(out)
 }
 
@@ -308,8 +311,10 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool, there
     if old.kind == new.kind && old.remote == new.remote && old.prefix == new.prefix && old.branch == new.branch {
         bail!("the memory is already in {}", old.place());
     }
+    let _done = super::progress::Done(home);
     let mut out = Vec::new();
     // 1. the copy
+    super::progress::set(home, "copying the memory first", 0, 0);
     let safety = dir(home).join(backup::name("before-transfer-", crate::output::now()));
     backup::write(home, &safety, true).context("copy the memory before moving it")?;
     out.push("ok copied the memory first".to_string());
@@ -339,6 +344,11 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool, there
                 restore_files(home, &files)?;
                 Ok(())
             });
+            super::history::add(
+                home,
+                &format!("moving to {} failed: {}", new.place(), crate::output::error_text(&e)),
+                false,
+            );
             return match back {
                 Ok(()) => {
                     let _ = std::fs::remove_file(&safety);
@@ -353,6 +363,7 @@ pub fn transfer(home: &Home, old: &Config, new: &Config, remove_old: bool, there
     drop_kept(&kept);
     out.extend(lines);
     out.push(format!("ok checked: the connection works and every file is in {} as here", now.place()));
+    super::history::add(home, &format!("moved from {} to {}, checked", old.place(), now.place()), true);
     // 4. the note in the old place, the copy deleted
     let noted = leave_note(home, old, &now, remove_old);
     let _ = std::fs::remove_file(&safety);

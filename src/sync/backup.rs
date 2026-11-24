@@ -251,6 +251,35 @@ pub fn restore(home: &Home, path: &Path, mode: Mode) -> Result<Restored> {
     }
 }
 
+/// What restoring a backup would do, nothing written: the files it adds or
+/// puts back, those that differ (merged: kept beside; replaced: put back),
+/// how many are the same, and those it takes out (replaced).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Preview {
+    pub added: Vec<String>,
+    pub differ: Vec<String>,
+    pub same: usize,
+    pub removed: Vec<String>,
+}
+
+pub fn preview(home: &Home, path: &Path, mode: Mode) -> Result<Preview> {
+    let (m, entries) = read_checked(path)?;
+    let projects = home.projects_dir();
+    let mut p = Preview::default();
+    let names: std::collections::HashSet<&str> = entries.iter().map(|(r, _)| r.as_str()).collect();
+    for (rel, bytes) in &entries {
+        match std::fs::read(projects.join(rel)) {
+            Ok(here) if here == *bytes => p.same += 1,
+            Ok(_) => p.differ.push(rel.clone()),
+            Err(_) => p.added.push(rel.clone()),
+        }
+    }
+    if mode == Mode::Replace {
+        p.removed = files(home, m.env)?.into_iter().filter(|r| !names.contains(r.as_str())).collect();
+    }
+    Ok(p)
+}
+
 fn apply(home: &Home, entries: &[(String, Vec<u8>)], mode: Mode, env: bool) -> Result<Restored> {
     let projects = home.projects_dir();
     let mut r = Restored::default();

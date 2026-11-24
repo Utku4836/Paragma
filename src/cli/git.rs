@@ -17,6 +17,9 @@
 //!   --there join|update|replace|take   a memory found there: joined, made this one, or this one made it
 //! pg sync remove-there <where>     a memory in a place taken out (zipped first), nothing connected
 //! pg sync now | disconnect
+//! pg sync pause | resume           nothing goes or comes meanwhile (this computer)
+//! pg sync projects [--skip a,b] [--take a]   which projects go from this computer
+//! pg sync history [--all]          what sync did here
 //! pg sync env on|off               whether the .env files go too
 //! pg sync files on|off --limit MB  whether the files kept with notes go too
 //! pg sync backup [<folder>]        the whole memory in one zip (default: Downloads)
@@ -74,6 +77,25 @@ enum What {
     RemoveThere(Target),
     /// Stop syncing on this computer (the projects and the place stay)
     Disconnect,
+    /// Pause syncing on this computer: nothing goes or comes until resumed
+    Pause,
+    /// Sync again after a pause (what changed meanwhile goes now)
+    Resume,
+    /// Which projects go from this computer: alone, the list; --skip keeps some here only, --take sends them again
+    Projects {
+        /// Projects that stay on this computer (neither sent nor brought in)
+        #[arg(long, value_delimiter = ',', value_name = "NAMES")]
+        skip: Vec<String>,
+        /// Projects that go again
+        #[arg(long, value_delimiter = ',', value_name = "NAMES")]
+        take: Vec<String>,
+    },
+    /// What sync did on this computer, newest first
+    History {
+        /// All that is kept, not the last 20
+        #[arg(long)]
+        all: bool,
+    },
     /// The whole memory in one zip: in a folder (default: Downloads), or one a day (--daily on --to <folder>)
     Backup {
         /// Where the zip goes
@@ -105,6 +127,9 @@ enum What {
         /// Yes to replacing
         #[arg(long)]
         yes: bool,
+        /// What it would do, nothing written
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -167,7 +192,9 @@ pub fn run(cx: &Context, a: Args, screen: bool) -> Result<()> {
         Some(What::Connect(t)) => connect(cx, &t),
         Some(What::Sync { background: true }) => sync::background(&cx.home),
         Some(What::Sync { background: false }) => {
-            need(cx)?;
+            if need(cx)?.paused {
+                return Err(fail(USAGE, "syncing is paused on this computer: pg sync resume"));
+            }
             let s = sync::sync_now(&cx.home)?;
             println!("ok synced: {}", s.did);
             conflicts(&s);
@@ -183,6 +210,36 @@ pub fn run(cx: &Context, a: Args, screen: bool) -> Result<()> {
             }
             Ok(())
         }
+        Some(What::Pause) => {
+            let mut c = need(cx)?;
+            c.paused = true;
+            c.save(&cx.home)?;
+            sync::history::add(&cx.home, "paused", true);
+            println!("ok paused: nothing goes or comes on this computer until pg sync resume");
+            Ok(())
+        }
+        Some(What::Resume) => {
+            let mut c = need(cx)?;
+            c.paused = false;
+            c.save(&cx.home)?;
+            sync::history::add(&cx.home, "resumed", true);
+            sync::trigger(&cx.home);
+            println!("ok resumed: what changed meanwhile goes now");
+            Ok(())
+        }
+        Some(What::Projects { skip, take }) => projects(cx, &skip, &take),
+        Some(What::History { all }) => {
+            let n = if all { usize::MAX } else { 20 };
+            let now = crate::output::now();
+            let h = sync::history::last(&cx.home, n);
+            if h.is_empty() {
+                println!("nothing yet");
+            }
+            for e in h {
+                println!("{} {}: {}", if e.ok { "ok" } else { "!!" }, crate::output::ago(e.at, now), e.what);
+            }
+            Ok(())
+        }
         Some(What::Disconnect) => {
             let c = need(cx)?;
             sync::disconnect(&cx.home)?;
@@ -193,7 +250,7 @@ pub fn run(cx: &Context, a: Args, screen: bool) -> Result<()> {
             backup_cmd(cx, folder, env, daily.as_deref(), to, keep, daily_now)
         }
         Some(What::Backups) => backups(cx),
-        Some(What::Restore { zip, replace, yes }) => restore(cx, zip, replace, yes),
+        Some(What::Restore { zip, replace, yes, check }) => restore(cx, zip, replace, yes, check),
     }
 }
 
@@ -238,6 +295,42 @@ fn files(cx: &Context, setting: Option<&str>, limit: Option<u64>) -> Result<()> 
     Ok(())
 }
 
+/// pg sync projects: which go from this computer, and the change asked.
+fn projects(cx: &Context, skip: &[String], take: &[String]) -> Result<()> {
+    let mut c = need(cx)?;
+    let all: Vec<String> = cx.home.projects().into_iter().map(|p| p.name).collect();
+    for name in skip.iter().chain(take) {
+        if !all.contains(name) && !c.skip.contains(name) {
+            return Err(fail(USAGE, format!("no project {name} here")));
+        }
+    }
+    if !skip.is_empty() || !take.is_empty() {
+        for s in skip {
+            if !c.skip.contains(s) {
+                c.skip.push(s.clone());
+            }
+        }
+        c.skip.retain(|s| !take.contains(s));
+        c.skip.sort();
+        c.save(&cx.home)?;
+        sync::history::add(
+            &cx.home,
+            &format!(
+                "projects staying here: {}",
+                if c.skip.is_empty() { "none".to_string() } else { c.skip.join(", ") }
+            ),
+            true,
+        );
+        if !take.is_empty() {
+            sync::trigger(&cx.home);
+        }
+    }
+    for name in &all {
+        println!("{} {name}", if c.goes(name) { "goes      " } else { "stays here" });
+    }
+    Ok(())
+}
+
 fn need(cx: &Context) -> Result<Config> {
     Config::load(&cx.home).ok_or_else(|| fail(USAGE, "not connected: pg sync connect"))
 }
@@ -262,6 +355,12 @@ pub fn status(cx: &Context) -> Result<()> {
         _ => "",
     };
     println!("ok {}: {}{vis}{who}", kind_name(&c.kind), c.place());
+    if c.paused {
+        println!("paused: nothing goes or comes on this computer (pg sync resume)");
+    }
+    if !c.skip.is_empty() {
+        println!("staying on this computer: {} (pg sync projects)", c.skip.join(", "));
+    }
     if !c.cloud.is_empty() {
         let st = cloud::state(&c.cloud);
         println!("{}: {}", st.name, st.said());
@@ -331,7 +430,12 @@ fn env(cx: &Context, setting: &str) -> Result<()> {
     c.env = on;
     c.env_at = crate::output::now();
     c.save(&cx.home)?;
-    println!("ok .env files: {}", if on { "sent from the next sync" } else { "not sent from the next sync" });
+    let off = if c.kind == "github" || c.kind == "git" {
+        "not sent from the next sync; those sent are taken out of the place (its history keeps them), and stay on every computer"
+    } else {
+        "not sent from the next sync; those sent are taken out of the place, and stay on every computer"
+    };
+    println!("ok .env files: {}", if on { "sent from the next sync" } else { off });
     if !on && !c.files() {
         println!("those already sent stay in the repository's history");
     }
@@ -601,8 +705,38 @@ fn public_ok(c: &Config, t: &Target) -> Result<()> {
 fn connect(cx: &Context, t: &Target) -> Result<()> {
     let c = config_for(cx, t)?;
     public_ok(&c, t)?;
+    own_folder(cx, &c)?;
     for l in sync::transfer::connect(&cx.home, &c, there_of(t)?)? {
         println!("{l}");
+    }
+    Ok(())
+}
+
+/// A folder (or a WebDAV folder) that holds other files is no place for
+/// the memory: they would become notes.
+fn own_folder(cx: &Context, c: &Config) -> Result<()> {
+    use sync::browse::{Holds, Source, list};
+    let scratch = sync::dir(&cx.home).join("browse");
+    let (source, at) = match c.kind.as_str() {
+        "folder" => (Source::Local, c.remote.clone()),
+        "webdav" => match sync::webdav::password_of(&cx.home, &c.remote, &c.account) {
+            Some(password) => (Source::Dav { url: c.remote.clone(), user: c.account.clone(), password }, String::new()),
+            None => return Ok(()),
+        },
+        _ => return Ok(()),
+    };
+    if !matches!(source, Source::Local) || std::path::Path::new(&at).is_dir() {
+        if let Ok(l) = list(&source, &scratch, &at)
+            && l.holds == Holds::Other
+        {
+            return Err(fail(
+                USAGE,
+                format!(
+                    "{} holds other files: the memory needs a folder of its own (an empty one, or a new one in it)",
+                    c.place()
+                ),
+            ));
+        }
     }
     Ok(())
 }
@@ -629,6 +763,7 @@ fn move_to(cx: &Context, t: &Target, remove_old: bool) -> Result<()> {
     let old = need(cx)?;
     let new = config_for(cx, t)?;
     public_ok(&new, t)?;
+    own_folder(cx, &new)?;
     for l in sync::transfer::transfer(&cx.home, &old, &new, remove_old, there_of(t)?)? {
         println!("{l}");
     }
@@ -728,7 +863,7 @@ fn backups(cx: &Context) -> Result<()> {
     Ok(())
 }
 
-fn restore(cx: &Context, zip: Option<PathBuf>, replace: bool, yes: bool) -> Result<()> {
+fn restore(cx: &Context, zip: Option<PathBuf>, replace: bool, yes: bool, check: bool) -> Result<()> {
     let zip = match zip {
         Some(z) => z,
         None => backup::found(&cx.home)
@@ -737,14 +872,43 @@ fn restore(cx: &Context, zip: Option<PathBuf>, replace: bool, yes: bool) -> Resu
             .map(|(p, _)| p)
             .ok_or_else(|| fail(USAGE, "no backup found: pg sync restore <zip>"))?,
     };
+    let mode = if replace { backup::Mode::Replace } else { backup::Mode::Merge };
+    if check {
+        let p = backup::preview(&cx.home, &zip, mode)?;
+        let some = |v: &[String]| {
+            let shown: Vec<&str> = v.iter().take(5).map(String::as_str).collect();
+            if v.is_empty() {
+                String::new()
+            } else {
+                format!(": {}{}", shown.join(", "), if v.len() > 5 { ", …" } else { "" })
+            }
+        };
+        println!(
+            "restoring {} would, {}:",
+            zip.display(),
+            if replace { "in place of the memory" } else { "joined with the memory" }
+        );
+        println!("  {} new or back{}", crate::output::count(p.added.len() as i64, "file"), some(&p.added));
+        let differ = if replace {
+            "put back as the backup has them"
+        } else {
+            "kept beside as name.conflict (the memory's stay)"
+        };
+        println!("  {} that differ, {differ}{}", p.differ.len(), some(&p.differ));
+        println!("  {} the same", p.same);
+        if replace {
+            println!("  {} taken out (the backup has not them){}", p.removed.len(), some(&p.removed));
+        }
+        return Ok(());
+    }
     if replace && !yes {
         return Err(fail(
             USAGE,
             "replacing makes the memory what the backup holds: what it does not have goes (a copy is kept until it is done). To go on add --yes",
         ));
     }
-    let mode = if replace { backup::Mode::Replace } else { backup::Mode::Merge };
     let r = backup::restore(&cx.home, &zip, mode)?;
+    sync::history::add(&cx.home, &format!("restored {}", zip.display()), true);
     println!(
         "ok restored {}: {} written, {} as they were{}{}",
         zip.display(),

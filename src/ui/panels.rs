@@ -220,7 +220,11 @@ impl App {
                 if !s.error.is_empty() {
                     out.push(SyncRow::Info(s.error.clone(), true));
                 }
+                if c.paused {
+                    out.push(SyncRow::Info("Paused: nothing goes or comes on this computer.".into(), true));
+                }
                 out.push(SyncRow::SyncNow);
+                out.push(SyncRow::Pause(c.paused));
             }
         }
         out.push(SyncRow::Head("Where"));
@@ -236,12 +240,22 @@ impl App {
             out.push(SyncRow::Env(c.env));
             out.push(SyncRow::Files(c.attachments));
             out.push(SyncRow::Limit(c.attach_mb));
+            out.push(SyncRow::Projects(c.skip.len()));
         }
         out.push(SyncRow::Head("Backup"));
         out.push(SyncRow::BackupNow);
         let d = crate::sync::backup::Daily::load(&self.home);
         out.push(SyncRow::Daily(d.on, d.folder.clone()));
         out.push(SyncRow::Restore);
+        let done = crate::sync::history::last(&self.home, 3);
+        if !done.is_empty() {
+            out.push(SyncRow::Head("History"));
+            let now = crate::output::now();
+            for e in done {
+                out.push(SyncRow::Info(format!("{}: {}", crate::output::ago(e.at, now), e.what), !e.ok));
+            }
+            out.push(SyncRow::History);
+        }
         if !self.conflicts.is_empty() {
             out.push(SyncRow::Head("Changed on two computers"));
             out.extend(self.conflicts.iter().cloned().map(SyncRow::Conflict));
@@ -279,6 +293,16 @@ impl App {
             SyncRow::Connect => self.choose_place(false),
             SyncRow::Transfer => self.choose_place(true),
             SyncRow::SyncNow => self.act(pg(&["sync", "now"], Then::Status)),
+            SyncRow::Pause(paused) => self.act(pg(&["sync", if paused { "resume" } else { "pause" }], Then::Status)),
+            SyncRow::Projects(_) => self.choose_projects(),
+            SyncRow::History => {
+                let now = crate::output::now();
+                let lines: Vec<String> = crate::sync::history::last(&self.home, 40)
+                    .into_iter()
+                    .map(|e| format!("{} {}: {}", if e.ok { " " } else { "!" }, crate::output::ago(e.at, now), e.what))
+                    .collect();
+                self.modal = Some(Modal::Message { title: "What sync did on this computer".into(), lines });
+            }
             SyncRow::Env(on) => self.act(pg(&["sync", "env", if on { "off" } else { "on" }], Then::Status)),
             SyncRow::Files(true) => self.act(pg(&["sync", "files", "off"], Then::Status)),
             SyncRow::Files(false) => {
@@ -416,8 +440,47 @@ impl App {
         );
     }
 
-    /// The last step: pg sync connect or move, in the background.
+    /// Before connecting or moving: what goes, and whether the place can
+    /// take it; then connected (or moved) now, or not.
     fn place_go(&mut self, remove_old: bool) {
+        let p = self.pending.clone();
+        let now = crate::sync::Config::load(&self.home);
+        let (files_on, limit, skip) = now.as_ref().map(|c| (c.attachments, c.attach_mb, c.skip.clone())).unwrap_or((
+            false,
+            crate::sync::ATTACH_MB,
+            Vec::new(),
+        ));
+        let (mut lines, bytes) = crate::sync::preflight::memory(&self.home, p.env, files_on, limit, &skip);
+        if p.target.first().map(String::as_str) == Some("folder")
+            && let Some(dir) = p.target.get(1)
+        {
+            let dir = std::path::Path::new(dir);
+            lines.extend(crate::sync::preflight::folder(dir, bytes));
+            if let (cloud, _) = crate::sync::cloud::portable(dir)
+                && !cloud.is_empty()
+            {
+                let st = crate::sync::cloud::state(&cloud);
+                lines.push((format!("{}: {}", st.name, st.said()), st.ready()));
+            }
+        }
+        let ok = lines.iter().all(|(_, ok)| *ok);
+        let mut said: Vec<String> =
+            lines.into_iter().map(|(l, ok)| format!("{} {l}", if ok { "✓" } else { "✗" })).collect();
+        said.push(if p.moving {
+            "Then checked: the connection and every file; only then is the old place left.".into()
+        } else {
+            "Then checked: every file sent is read back.".into()
+        });
+        let go = if p.moving { "Move it now" } else { "Connect now" };
+        let mut options = vec![(go, Act::PlaceRun(remove_old)), ("Cancel", Act::Nothing)];
+        if !ok {
+            options.reverse();
+        }
+        self.choose(if ok { "Ready" } else { "Not ready: look at the lines marked ✗" }, said, options);
+    }
+
+    /// The last step: pg sync connect or move, in the background.
+    fn place_run(&mut self, remove_old: bool) {
         let p = self.pending.clone();
         let mut args = vec!["sync".to_string(), if p.moving { "move" } else { "connect" }.to_string()];
         args.extend(p.target.iter().cloned());
@@ -465,6 +528,35 @@ impl App {
             let _ = tx.send(JobDone::Ran(ran, Then::Synced));
         });
         self.jobs.push(Job { what: what.into(), rx, started: Instant::now() });
+    }
+
+    /// Which projects go from this computer: each one, on or off.
+    fn choose_projects(&mut self) {
+        let skip = crate::sync::Config::load(&self.home).map(|c| c.skip).unwrap_or_default();
+        let mut options: Vec<(String, Act)> = self
+            .home
+            .projects()
+            .into_iter()
+            .map(|p| {
+                let goes = !skip.contains(&p.name);
+                (
+                    format!(
+                        "{} {}  {}",
+                        if goes { super::theme::mark::ON } else { super::theme::mark::OFF },
+                        p.name,
+                        if goes { "goes" } else { "stays here" }
+                    ),
+                    Act::ToggleProject(p.name, !goes),
+                )
+            })
+            .collect();
+        options.push(("Done".into(), Act::Nothing));
+        let lines = vec![
+            "A project that stays here is neither sent nor brought in by this computer.".into(),
+            "Its copy in the place, and on the other computers, is left as it is.".into(),
+        ];
+        self.modal =
+            Some(Modal::Choose { title: "Which projects go from this computer".into(), lines, options, cur: 0 });
     }
 
     /// The backups found on this computer, to restore one.
@@ -697,12 +789,44 @@ impl App {
                 }
             }
             Act::PlaceOld(remove) => self.place_go(remove),
-            Act::BackupEnv(env) => {
+            Act::PlaceRun(remove) => self.place_run(remove),
+            Act::ToggleProject(name, goes) => {
+                let flag = if goes { "--take" } else { "--skip" };
+                let ran = data::pg(&self.exe, &self.home.root, None, &["sync", "projects", flag, &name]);
+                if !ran.ok {
+                    self.say(data::first(&ran.out), true);
+                }
+                self.choose_projects();
+            }
+            Act::BackupGo(env) => {
                 let mut args = vec!["sync".to_string(), "backup".into(), self.pending.folder.clone()];
                 if env {
                     args.push("--env".into());
                 }
                 self.act(Act::Pg { args, project: false, then: Then::Message("Backup".into()) });
+            }
+            Act::RestoreGo(p, replace) => {
+                let mut args = vec!["sync".to_string(), "restore".into(), p];
+                if replace {
+                    args.extend(["--replace".into(), "--yes".into()]);
+                }
+                self.act(Act::Pg { args, project: false, then: Then::Message("Restore".into()) });
+            }
+            Act::BackupEnv(env) => {
+                let (mut lines, bytes) =
+                    crate::sync::preflight::memory(&self.home, env, true, u64::MAX / (1 << 20), &[]);
+                lines.extend(crate::sync::preflight::folder(std::path::Path::new(&self.pending.folder), bytes));
+                let ok = lines.iter().all(|(_, ok)| *ok);
+                let said = lines.into_iter().map(|(l, ok)| format!("{} {l}", if ok { "✓" } else { "✗" })).collect();
+                let mut options = vec![("Back up now", Act::BackupGo(env)), ("Cancel", Act::Nothing)];
+                if !ok {
+                    options.reverse();
+                }
+                self.choose(
+                    if ok { "The backup: one zip of all this" } else { "Not ready: look at the lines marked ✗" },
+                    said,
+                    options,
+                );
             }
             Act::DailyEnv(env) => {
                 let mut args = vec![
@@ -747,11 +871,51 @@ impl App {
                 }
             }
             Act::RestoreMode(p, replace) => {
-                let mut args = vec!["sync".to_string(), "restore".into(), p];
-                if replace {
-                    args.extend(["--replace".into(), "--yes".into()]);
+                let mode = if replace { crate::sync::backup::Mode::Replace } else { crate::sync::backup::Mode::Merge };
+                match crate::sync::backup::preview(&self.home, std::path::Path::new(&p), mode) {
+                    Err(e) => self.say(crate::output::error_text(&e), true),
+                    Ok(v) => {
+                        let some = |l: &[String]| {
+                            let shown: Vec<&str> = l.iter().take(4).map(String::as_str).collect();
+                            if l.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}{}", shown.join(", "), if l.len() > 4 { ", …" } else { "" })
+                            }
+                        };
+                        let mut lines = vec![
+                            format!(
+                                "{} new or back{}",
+                                crate::output::count(v.added.len() as i64, "file"),
+                                some(&v.added)
+                            ),
+                            format!(
+                                "{} that differ: {}{}",
+                                v.differ.len(),
+                                if replace {
+                                    "put back as the backup has them"
+                                } else {
+                                    "the memory's stay, the backup's beside them"
+                                },
+                                some(&v.differ)
+                            ),
+                            format!("{} the same", v.same),
+                        ];
+                        if replace {
+                            lines.push(format!(
+                                "{} taken out (the backup has not them){}",
+                                v.removed.len(),
+                                some(&v.removed)
+                            ));
+                        }
+                        lines.push("The memory is copied first; if anything fails it is put back as it was.".into());
+                        self.choose(
+                            "Restoring would do this",
+                            lines,
+                            vec![("Restore now", Act::RestoreGo(p, replace)), ("Cancel", Act::Nothing)],
+                        );
+                    }
                 }
-                self.act(Act::Pg { args, project: false, then: Then::Message("Restore".into()) });
             }
             Act::Insert(t) => {
                 if let Some(o) = self.open.as_mut() {
@@ -902,7 +1066,7 @@ impl App {
                         Then::Status | Then::Setup => self.say(data::first(&ran.out), !ran.ok),
                         Then::Message(title) => self.show(&title, &ran.out),
                         Then::Synced => {
-                            self.show("Sync", &ran.out);
+                            self.show(if ran.ok { "Sync" } else { "It did not work" }, &ran.out);
                             if ran.ok {
                                 self.sync_view = SyncView::Main;
                                 self.set_cur(0);

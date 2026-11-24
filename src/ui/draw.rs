@@ -145,7 +145,9 @@ fn draw_working(f: &mut Frame, app: &App, area: Rect) {
     let ms = j.started.elapsed().as_millis() as usize;
     let secs = ms / 1000;
     let more = if app.jobs.len() > 1 { format!("  (+{} more)", app.jobs.len() - 1) } else { String::new() };
-    let left = format!(" {} {}{more}  ", SPIN[ms / 100 % SPIN.len()], j.what);
+    // how far it is, when pg says (a sync, a move, a check)
+    let far = crate::sync::progress::read(&app.home).map(|p| format!(" · {p}")).unwrap_or_default();
+    let left = format!(" {} {}{far}{more}  ", SPIN[ms / 100 % SPIN.len()], j.what);
     let right = format!("  {secs} s ");
     let w = (area.width as usize).saturating_sub(left.chars().count() + right.chars().count());
     // a lit stretch that runs along the bar and comes back
@@ -805,6 +807,23 @@ fn draw_sync(f: &mut Frame, app: &mut App, area: Rect) {
             SyncRow::SyncNow => {
                 row("Sync now", vec![Span::styled("send what changed here, bring in the others'", theme::faint())])
             }
+            SyncRow::Pause(true) => {
+                row("Resume", vec![Span::styled("sync again; what changed meanwhile goes now", theme::faint())])
+            }
+            SyncRow::Pause(false) => {
+                row("Pause", vec![Span::styled("nothing goes or comes on this computer meanwhile", theme::faint())])
+            }
+            SyncRow::Projects(0) => {
+                row("Projects", vec![Span::styled("all go   Enter: keep some on this computer only", theme::faint())])
+            }
+            SyncRow::Projects(n) => row(
+                "Projects",
+                vec![
+                    Span::styled(format!("{n} stay on this computer"), theme::accent()),
+                    Span::styled("   Enter: choose", theme::faint()),
+                ],
+            ),
+            SyncRow::History => row("All of it", vec![Span::styled("what sync did on this computer", theme::faint())]),
             SyncRow::Connect => row(
                 "Connect",
                 vec![Span::styled(
@@ -1332,7 +1351,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
             let mut body: Vec<Line> =
                 lines.iter().map(|l| Line::from(Span::styled(format!(" {l}"), theme::text()))).collect();
             body.push(Line::from(""));
-            body.push(Line::from(Span::styled(" any key closes", theme::faint())));
+            body.push(Line::from(Span::styled(" c copies the text · any key closes", theme::faint())));
             f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
         }
         Modal::Help => {

@@ -161,6 +161,13 @@ pub enum Act {
     Found(String),
     /// An older copy of the memory at the place chosen taken out.
     RemoveThere,
+    /// Checked and summed up: connect or move now (the old place emptied
+    /// or not); back up now (with the keys or not); restore now.
+    PlaceRun(bool),
+    BackupGo(bool),
+    RestoreGo(String, bool),
+    /// A project sent from this computer, or kept here only.
+    ToggleProject(String, bool),
 }
 
 /// What is done with a background pg command's answer.
@@ -332,6 +339,12 @@ pub enum SyncRow {
     Restore,
     /// A note both computers changed: its copy.
     Conflict(String),
+    /// Syncing paused here (the row resumes it), or not (it pauses).
+    Pause(bool),
+    /// Which projects go from this computer: how many stay here.
+    Projects(usize),
+    /// What sync did here: all of it.
+    History,
     /// The repositories to choose from: a new private one first.
     NewRepo,
     Repo(crate::sync::github::Repo),
@@ -1438,6 +1451,11 @@ impl App {
         let Some(m) = self.modal.clone() else { return };
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match m {
+            Modal::Message { title, lines } if k.code == KeyCode::Char('c') => {
+                self.clipboard_set(format!("{title}\n{}", lines.join("\n")));
+                self.modal = None;
+                self.say("copied", false);
+            }
             Modal::Help | Modal::Message { .. } => self.modal = None,
             Modal::Input { ask, title, mut text } => match k.code {
                 KeyCode::Esc => self.modal = None,

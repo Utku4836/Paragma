@@ -27,6 +27,9 @@ pub mod browse;
 pub mod cloud;
 pub mod fsx;
 pub mod github;
+pub mod history;
+pub mod preflight;
+pub mod progress;
 pub mod repo;
 pub mod store;
 pub mod transfer;
@@ -89,6 +92,10 @@ pub struct Config {
     pub path: String,
     /// The memory's id: the same in every place holding it.
     pub id: String,
+    /// Projects that stay on this computer: neither sent nor brought in.
+    pub skip: Vec<String>,
+    /// Syncing paused on this computer: nothing goes or comes until resumed.
+    pub paused: bool,
 }
 
 /// How the last syncs went.
@@ -143,7 +150,19 @@ impl Config {
             account: s("account"),
             gh: s("gh"),
             connected: v["connected"].as_i64().unwrap_or(0),
+            skip: v["skip"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+            paused: v["paused"].as_bool().unwrap_or(false),
         })
+    }
+
+    /// Whether a file of the projects goes with the memory from this
+    /// computer (its project is not one that stays here).
+    pub fn goes(&self, rel: &str) -> bool {
+        let project = rel.split('/').next().unwrap_or(rel);
+        !self.skip.iter().any(|s| s == project)
     }
 
     /// The config of the usual home, for a choice made before (the size
@@ -158,6 +177,7 @@ impl Config {
             "env": self.env, "env_at": self.env_at, "public": self.public, "account": self.account, "gh": self.gh,
             "connected": self.connected, "attachments": self.attachments, "attach_mb": self.attach_mb,
             "kind": self.kind, "cloud": self.cloud, "path": self.path, "id": self.id,
+            "skip": self.skip, "paused": self.paused,
         });
         crate::project::files::write_atomic(
             &dir(home).join("config.json"),
@@ -383,6 +403,9 @@ pub fn trigger(home: &crate::project::Home) {
         return;
     }
     let _ = std::fs::write(dir(home).join("dirty"), now_ms().to_string());
+    if Config::load(home).is_some_and(|c| c.paused) {
+        return;
+    }
     // when one is running, it sees the new moment before it ends
     if let Ok(Some(lock)) = SyncLock::try_take(home) {
         drop(lock);
@@ -439,6 +462,9 @@ pub(crate) fn detach(c: &mut std::process::Command) -> Result<()> {
 /// The sync started by `trigger`: waits for a quiet moment, syncs, and
 /// again while memory changed meanwhile. Exits when another one runs.
 pub fn background(home: &crate::project::Home) -> Result<()> {
+    if Config::load(home).is_some_and(|c| c.paused) {
+        return Ok(());
+    }
     let Some(_lock) = SyncLock::try_take(home)? else { return Ok(()) };
     let started = std::time::Instant::now();
     loop {
@@ -466,6 +492,7 @@ pub fn sync_now(home: &crate::project::Home) -> Result<Status> {
 
 /// One sync, the lock held; its outcome is kept in status.json.
 fn sync_locked(home: &crate::project::Home) -> Result<Status> {
+    let _done = progress::Done(home);
     let Some(config) = Config::load(home) else { anyhow::bail!("not connected: pg git connect") };
     let mut status = Status::load(home);
     status.tried = crate::output::now();
@@ -498,6 +525,11 @@ fn sync_locked(home: &crate::project::Home) -> Result<Status> {
         Err(e) => status.error = crate::output::error_text(&e),
     }
     status.save(home)?;
+    if !status.error.is_empty() {
+        history::add(home, &format!("sync failed: {}", status.error), false);
+    } else if status.did != repo::Outcome::default().said() {
+        history::add(home, &status.did, true);
+    }
     result.map(|_| status)
 }
 
@@ -533,6 +565,9 @@ pub fn disconnect(home: &crate::project::Home) -> Result<()> {
         && c.kind == "webdav"
     {
         webdav::forget_password(home, &c.remote, &c.account);
+    }
+    if let Some(c) = Config::load(home) {
+        history::add(home, &format!("disconnected from {}", c.place()), true);
     }
     for f in ["config.json", "status.json", "dirty"] {
         let _ = std::fs::remove_file(dir(home).join(f));

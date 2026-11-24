@@ -263,7 +263,7 @@ impl<'a> Mirror<'a> {
         let held = self.held();
         let mut out = Vec::new();
         walk(&self.home.projects_dir(), "", &mut out, &|rel, is_dir| {
-            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel))
+            kept(rel, is_dir, self.env.get()) && (is_dir || !held.contains(rel)) && self.config.goes(rel)
         })?;
         Ok(out)
     }
@@ -285,6 +285,10 @@ impl<'a> Mirror<'a> {
     pub fn sync(&self) -> Result<Outcome> {
         let mut out = Outcome::default();
         let mut base = self.load_base();
+        // the projects that stay here: set aside, untouched, kept as they were
+        let aside: BTreeMap<String, Was> =
+            base.iter().filter(|(k, _)| !self.config.goes(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        base.retain(|k, _| self.config.goes(k));
         match self.marker() {
             Some(m) => {
                 if let Some(to) = m.get("moved_to").filter(|v| !v.is_null()) {
@@ -302,6 +306,17 @@ impl<'a> Mirror<'a> {
             None => self.mark(None)?,
         }
         let listed = self.store.list()?;
+        // the .env files turned off: taken out of the place (each time:
+        // another computer may send them again until it knows)
+        if !self.env.get() {
+            for l in listed.iter().filter(|l| is_env(&l.rel) && kept(&l.rel, false, true) && self.config.goes(&l.rel)) {
+                self.store.remove(&l.rel)?;
+                base.remove(&l.rel);
+                out.sent += 1;
+            }
+        }
+        let listed: Vec<Listed> =
+            if self.env.get() { listed } else { listed.into_iter().filter(|l| !is_env(&l.rel)).collect() };
         let busy: BTreeSet<String> = listed.iter().filter(|l| !l.settled).map(|l| l.rel.clone()).collect();
         let mut there: BTreeMap<String, String> = listed
             .into_iter()
@@ -311,6 +326,7 @@ impl<'a> Mirror<'a> {
                     && !l.rel.starts_with(".paragma-probe")
                     && kept(&l.rel, false, true)
                     && !l.rel.split('/').any(|p| p == ".pg" || p == ".git")
+                    && self.config.goes(&l.rel)
             })
             .map(|l| (l.rel, l.stamp))
             .collect();
@@ -350,6 +366,8 @@ impl<'a> Mirror<'a> {
             }
             by_project.entry(rel.split('/').next().unwrap_or("").to_string()).or_default().push(rel);
         }
+        let total: usize = by_project.values().map(Vec::len).sum();
+        let mut done = 0;
         for (project, files) in by_project {
             let _lock = if project.starts_with('.') || project.is_empty() || !files.iter().all(|f| f.contains('/')) {
                 None
@@ -359,8 +377,11 @@ impl<'a> Mirror<'a> {
             };
             for rel in files {
                 self.one(&rel, &projects, &mut base, &mut there, &mut out)?;
+                done += 1;
+                super::progress::set(self.home, "syncing", done, total);
             }
         }
+        base.extend(aside);
         self.save_base(&base)?;
         Ok(out)
     }
@@ -378,8 +399,10 @@ impl<'a> Mirror<'a> {
         let was = base.get(rel).cloned();
         let stamp = there.get(rel).cloned();
         let here_changed = local.as_ref().map(|b| fingerprint(b)) != was.as_ref().map(|w| w.hash);
-        let there_changed = match (&stamp, &was) {
-            (Some(s), Some(w)) => *s != w.stamp,
+        // a base with no stamp: a file kept here that is not there
+        let was_there = was.as_ref().map(|w| w.stamp.as_str()).filter(|s| !s.is_empty());
+        let there_changed = match (&stamp, was_there) {
+            (Some(s), Some(w)) => s != w,
             (None, None) => false,
             _ => true,
         };
@@ -419,6 +442,13 @@ impl<'a> Mirror<'a> {
                     let bytes = self.store.read(rel)?;
                     take(&bytes, s, base)?;
                     out.got += 1;
+                }
+                // keys are never deleted here because they are gone there
+                // (.env turned off on another computer, said before its
+                // marker came): kept, and not sent again until changed
+                None if is_env(rel) && local.is_some() => {
+                    let hash = local.as_ref().map(|b| fingerprint(b)).unwrap_or(0);
+                    base.insert(rel.to_string(), Was { hash, stamp: String::new() });
                 }
                 None => {
                     if local.is_some() {
@@ -528,6 +558,7 @@ impl<'a> Mirror<'a> {
                     && !r.starts_with(".paragma-probe")
                     && kept(r, false, true)
                     && !r.split('/').any(|p| p == ".pg" || p == ".git")
+                    && self.config.goes(r)
             })
             .collect())
     }
@@ -615,7 +646,10 @@ impl<'a> Mirror<'a> {
         let projects = self.home.projects_dir();
         let mut wrong = Vec::new();
         let there: std::collections::HashSet<String> = self.store.list()?.into_iter().map(|l| l.rel).collect();
-        for rel in self.local_files()? {
+        let local = self.local_files()?;
+        let total = local.len();
+        for (i, rel) in local.into_iter().enumerate() {
+            super::progress::set(self.home, "checking", i + 1, total);
             // a file taken out here meanwhile is not one that went wrong
             let Ok(here) = std::fs::read(projects.join(&rel)) else { continue };
             if !there.contains(&rel) || self.store.read(&rel).ok().as_deref() != Some(here.as_slice()) {
@@ -624,6 +658,11 @@ impl<'a> Mirror<'a> {
         }
         Ok(wrong)
     }
+}
+
+/// A project's keys.
+fn is_env(rel: &str) -> bool {
+    rel.rsplit('/').next().is_some_and(|n| n.ends_with(".env"))
 }
 
 /// Notes and other text: their lines can be joined.
